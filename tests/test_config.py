@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from stat import S_IMODE
 
+import json
 import pytest
 
 from bilifan.config import (
@@ -110,6 +111,32 @@ def test_previous_notice_version_does_not_count_as_consent(tmp_path):
     assert config == ConsentConfig()
     assert has_local_processing_consent(config_path) is False
     assert has_cookies_consent(config_path) is False
+
+
+@pytest.mark.parametrize("accepted_via", [[], {"source": "prompt"}])
+def test_non_string_accepted_via_is_ignored_without_losing_valid_consent(
+    tmp_path, accepted_via
+):
+    config_path = tmp_path / "config.json"
+    local_accepted_at = "2026-06-08T01:15:30+00:00"
+    cookies_accepted_at = "2026-06-08T01:16:00+00:00"
+    config_path.write_text(
+        json.dumps(
+            {
+                "notice_version": NOTICE_VERSION,
+                "local_processing_notice_accepted_at": local_accepted_at,
+                "cookies_notice_accepted_at": cookies_accepted_at,
+                "accepted_via": accepted_via,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = read_config(config_path)
+
+    assert config.accepted_via is None
+    assert config.local_processing_notice_accepted_at == local_accepted_at
+    assert config.cookies_notice_accepted_at == cookies_accepted_at
 
 
 def test_write_consent_rejects_invalid_accepted_via_without_writing_secret(tmp_path):

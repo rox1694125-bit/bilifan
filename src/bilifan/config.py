@@ -55,7 +55,7 @@ def read_config(path: Path) -> ConsentConfig:
         schema_version = 1
 
     accepted_via = data.get("accepted_via")
-    if accepted_via not in ALLOWED_ACCEPTED_VIA:
+    if not isinstance(accepted_via, str) or accepted_via not in ALLOWED_ACCEPTED_VIA:
         accepted_via = None
 
     return ConsentConfig(
