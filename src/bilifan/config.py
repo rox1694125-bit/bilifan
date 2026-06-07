@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Mapping
 
 NOTICE_VERSION = "2026-06-08"
+ALLOWED_ACCEPTED_VIA = frozenset({"cli", "prompt", "yes-i-understand", "test"})
 
 
 @dataclass(frozen=True)
@@ -39,16 +40,41 @@ def read_config(path: Path) -> ConsentConfig:
     if not path.exists():
         return ConsentConfig()
 
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return ConsentConfig()
+
+    if not isinstance(data, dict):
+        return ConsentConfig()
+    if data.get("notice_version") != NOTICE_VERSION:
+        return ConsentConfig()
+
+    schema_version = data.get("schema_version", 1)
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+        schema_version = 1
+
+    accepted_via = data.get("accepted_via")
+    if accepted_via not in ALLOWED_ACCEPTED_VIA:
+        accepted_via = None
+
     return ConsentConfig(
-        schema_version=int(data.get("schema_version", 1)),
-        notice_version=str(data.get("notice_version", NOTICE_VERSION)),
-        local_processing_notice_accepted_at=data.get(
-            "local_processing_notice_accepted_at"
+        schema_version=schema_version,
+        notice_version=NOTICE_VERSION,
+        local_processing_notice_accepted_at=_non_empty_string_or_none(
+            data.get("local_processing_notice_accepted_at")
         ),
-        cookies_notice_accepted_at=data.get("cookies_notice_accepted_at"),
-        accepted_via=data.get("accepted_via"),
+        cookies_notice_accepted_at=_non_empty_string_or_none(
+            data.get("cookies_notice_accepted_at")
+        ),
+        accepted_via=accepted_via,
     )
+
+
+def _non_empty_string_or_none(value: object) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    return None
 
 
 def has_local_processing_consent(path: Path) -> bool:
@@ -67,6 +93,9 @@ def write_consent(
     accepted_via: str = "cli",
     now: datetime | None = None,
 ) -> None:
+    if accepted_via not in ALLOWED_ACCEPTED_VIA:
+        raise ValueError(f"accepted_via must be one of {sorted(ALLOWED_ACCEPTED_VIA)}")
+
     current = read_config(path)
     timestamp = (now or datetime.now(timezone.utc)).isoformat()
     path.parent.mkdir(parents=True, exist_ok=True)
