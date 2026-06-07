@@ -2,6 +2,7 @@ import json
 
 from typer.testing import CliRunner
 
+import bilifan.cli as cli
 from bilifan.cli import app
 
 
@@ -46,6 +47,8 @@ def test_summarize_prepares_offline_preflight_run_with_yes_flag(tmp_path):
 
     assert result.exit_code == 0
     assert "Prepared Bilifan run:" in result.output
+    assert "BV1abcDEF12G_p2/runs/" in result.output
+    assert str(outputs) not in result.output
 
     video_dir = outputs / "BV1abcDEF12G_p2"
     latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
@@ -117,6 +120,64 @@ def test_summarize_invalid_url_writes_sanitized_error_run(tmp_path):
     assert diagnostics["video_id"] == ""
     assert diagnostics["part_index"] == 0
     assert "vd_source" not in diagnostics["sanitized_message"]
+
+
+def test_summarize_invalid_url_requires_consent_before_writing_error_run(tmp_path):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+
+    result = runner.invoke(
+        app,
+        [
+            "summarize",
+            "https://example.com/nope?vd_source=tracking-secret",
+            "--out",
+            str(outputs),
+        ],
+        input="n\n",
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 1
+    assert "Continue?" in result.output
+    assert not (config_home / "config.json").exists()
+    assert not outputs.exists()
+
+
+def test_summarize_invalid_url_retries_error_run_collision_without_leaking_path(
+    tmp_path, monkeypatch
+):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+    original_create_error_run = cli.create_error_run
+    calls = 0
+
+    def fake_create_error_run(out_dir, *, now=None):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise FileExistsError("/Users/jack/outputs/_errors/runs/collision")
+        return original_create_error_run(out_dir, now=now)
+
+    monkeypatch.setattr(cli, "create_error_run", fake_create_error_run)
+
+    result = runner.invoke(
+        app,
+        [
+            "summarize",
+            "https://example.com/nope?vd_source=tracking-secret",
+            "--yes-i-understand",
+            "--out",
+            str(outputs),
+        ],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 2
+    assert calls == 2
+    assert "/Users/jack" not in result.output
+    assert "collision" not in result.output
+    assert len(list((outputs / "_errors" / "runs").glob("*/diagnostics.json"))) == 1
 
 
 def test_summarize_debug_log_is_reserved_for_later_slice(tmp_path):

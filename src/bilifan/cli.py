@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import typer
@@ -10,7 +11,7 @@ from .config import (
     write_consent,
 )
 from .diagnostics import Diagnostics, redact_text, write_diagnostics
-from .runs import create_error_run, create_run
+from .runs import RunPaths, create_error_run, create_run
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -46,10 +47,13 @@ def summarize(
     if debug_log:
         raise typer.BadParameter("--debug-log is reserved for a later slice.")
 
+    uses_cookies = cookies_from_browser is not None or cookies_file is not None
+    _ensure_consent(uses_cookies=uses_cookies, yes_i_understand=yes_i_understand)
+
     try:
         ref = parse_bilibili_url(url)
     except ValueError as exc:
-        run = create_error_run(out)
+        run = _create_error_run_with_retry(out)
         sanitized_message = redact_text(str(exc))
         write_diagnostics(
             run.run_dir / "diagnostics.json",
@@ -68,10 +72,13 @@ def summarize(
         )
         raise typer.BadParameter(sanitized_message) from exc
 
-    uses_cookies = cookies_from_browser is not None or cookies_file is not None
-    _ensure_consent(uses_cookies=uses_cookies, yes_i_understand=yes_i_understand)
+    try:
+        run = create_run(out, ref, overwrite=overwrite)
+    except FileExistsError as exc:
+        raise typer.BadParameter(
+            "Run directory already exists; use --overwrite or retry later."
+        ) from exc
 
-    run = create_run(out, ref, overwrite=overwrite)
     write_diagnostics(
         run.run_dir / "diagnostics.json",
         Diagnostics(
@@ -87,7 +94,23 @@ def summarize(
             warnings=["foundation_slice_only"],
         ),
     )
-    typer.echo(f"Prepared Bilifan run: {run.run_dir}")
+    typer.echo(f"Prepared Bilifan run: {_display_run_path(run)}")
+
+
+def _create_error_run_with_retry(out: Path) -> RunPaths:
+    for attempt in range(5):
+        try:
+            if attempt == 0:
+                return create_error_run(out)
+            next_second = datetime.now(timezone.utc) + timedelta(seconds=attempt)
+            return create_error_run(out, now=next_second)
+        except FileExistsError:
+            continue
+    raise typer.BadParameter("Could not create error diagnostics run; retry later.")
+
+
+def _display_run_path(run: RunPaths) -> str:
+    return f"{run.video_dir.name}/runs/{run.run_id}"
 
 
 def _ensure_consent(*, uses_cookies: bool, yes_i_understand: bool) -> None:
