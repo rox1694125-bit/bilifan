@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,8 +34,10 @@ def create_run(
 
     if run_dir.exists() and not overwrite:
         raise FileExistsError(f"Run directory already exists: {run_dir}")
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
 
-    run_dir.mkdir(parents=True, exist_ok=overwrite)
+    run_dir.mkdir(parents=True, exist_ok=False)
 
     latest = {
         "run_id": run_id,

@@ -51,9 +51,13 @@ def test_create_run_allows_overwrite(tmp_path):
     now = datetime(2026, 6, 8, 1, 15, 30, tzinfo=timezone.utc)
 
     first = create_run(tmp_path / "outputs", ref, now=now)
+    stale_file = first.run_dir / "stale.txt"
+    stale_file.write_text("old content", encoding="utf-8")
+
     second = create_run(tmp_path / "outputs", ref, now=now, overwrite=True)
 
     assert second.run_dir == first.run_dir
+    assert not stale_file.exists()
 
 
 def test_create_error_run_does_not_update_video_latest(tmp_path):
@@ -65,3 +69,12 @@ def test_create_error_run_does_not_update_video_latest(tmp_path):
     assert run.run_dir == run.video_dir / "runs" / "2026-06-08_011530"
     assert run.run_dir.is_dir()
     assert not (run.video_dir / "latest.json").exists()
+
+
+def test_create_error_run_refuses_same_second_collision(tmp_path):
+    now = datetime(2026, 6, 8, 1, 15, 30, tzinfo=timezone.utc)
+
+    create_error_run(tmp_path / "outputs", now=now)
+
+    with pytest.raises(FileExistsError):
+        create_error_run(tmp_path / "outputs", now=now)
