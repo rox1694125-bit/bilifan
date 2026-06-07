@@ -28,6 +28,7 @@ def redact_text(text: str, *, home_markers: list[Path] | None = None) -> str:
     redacted = str(text)
     redacted = _canonicalize_bilibili_urls(redacted)
     redacted = _redact_cookie_paths(redacted)
+    redacted = _redact_bare_cookie_files(redacted)
     redacted = _redact_named_secrets(redacted)
     redacted = _redact_default_paths(redacted)
     redacted = _redact_home_markers(redacted, home_markers)
@@ -82,6 +83,9 @@ _BILIBILI_URL_PATTERN = re.compile(
 _COOKIE_PATH_PATTERN = re.compile(
     r"(?i)(cookie(?:_file|-file|\s+file|_path|-path|\s+path)\s*[:=]\s*)[^\s;]+"
 )
+_BARE_COOKIE_FILE_PATTERN = re.compile(
+    r"(?i)(?<![\w/.-])(?:\.\.?/)*(?:bili-)?cookies\.txt(?![\w/.-])"
+)
 _ENV_SECRET_PATTERN = re.compile(
     r"\b((?:CODEX_ACCESS_TOKEN|OPENAI_API_KEY|CODEX_API_KEY)\s*[:=]\s*)[^\s;&]+"
 )
@@ -123,6 +127,10 @@ def _canonicalize_bilibili_urls(text: str) -> str:
 
 def _redact_cookie_paths(text: str) -> str:
     return _COOKIE_PATH_PATTERN.sub(lambda match: f"{match.group(1)}<redacted>", text)
+
+
+def _redact_bare_cookie_files(text: str) -> str:
+    return _BARE_COOKIE_FILE_PATTERN.sub("<redacted-cookie-file>", text)
 
 
 def _redact_named_secrets(text: str) -> str:

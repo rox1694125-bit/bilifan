@@ -76,6 +76,17 @@ def test_redact_text_removes_sensitive_values_and_canonicalizes_bilibili_urls():
     assert "https://www.bilibili.com/video/BV1abcDEF12G?p=2" in redacted
 
 
+def test_redact_text_removes_bare_cookie_file_names_and_relative_paths():
+    redacted = redact_text(
+        "bili-cookies.txt ./bili-cookies.txt ../bili-cookies.txt cookies.txt"
+    )
+
+    assert "bili-cookies.txt" not in redacted
+    assert "cookies.txt" not in redacted
+    assert "./" not in redacted
+    assert "../" not in redacted
+
+
 def test_validate_artifact_paths_accepts_relative_posix_paths():
     assert validate_artifact_paths(["diagnostics.json", "assets/cover.jpg"]) == [
         "diagnostics.json",
