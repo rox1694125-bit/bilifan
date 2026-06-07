@@ -1,6 +1,30 @@
+from pathlib import Path
+
 import typer
 
+from .bilibili import parse_bilibili_url
+from .config import (
+    default_config_path,
+    has_cookies_consent,
+    has_local_processing_consent,
+    write_consent,
+)
+from .diagnostics import Diagnostics, redact_text, write_diagnostics
+from .runs import create_error_run, create_run
+
 app = typer.Typer(no_args_is_help=True)
+
+LOCAL_PROCESSING_NOTICE = (
+    "Bilifan local processing consent:\n"
+    "Bilifan prepares runs locally on this machine and writes output files under "
+    "the selected --out directory. This foundation slice does not download media, "
+    "call external AI tools, or generate a report."
+)
+COOKIES_NOTICE = (
+    "Bilifan cookies notice:\n"
+    "Cookie options are reserved for local use only. Bilifan does not store cookies "
+    "or cookie file names in reports or config."
+)
 
 
 @app.callback()
@@ -9,9 +33,93 @@ def callback() -> None:
 
 
 @app.command()
-def summarize(url: str) -> None:
+def summarize(
+    url: str,
+    out: Path = typer.Option(Path("./outputs"), "--out"),
+    cookies_from_browser: str | None = typer.Option(None, "--cookies-from-browser"),
+    cookies_file: Path | None = typer.Option(None, "--cookies-file"),
+    yes_i_understand: bool = typer.Option(False, "--yes-i-understand"),
+    overwrite: bool = typer.Option(False, "--overwrite"),
+    debug_log: bool = typer.Option(False, "--debug-log"),
+) -> None:
     """Prepare a local Bilifan run for one Bilibili current-P URL."""
-    typer.echo(f"preflight pending for {url}")
+    if debug_log:
+        raise typer.BadParameter("--debug-log is reserved for a later slice.")
+
+    try:
+        ref = parse_bilibili_url(url)
+    except ValueError as exc:
+        run = create_error_run(out)
+        sanitized_message = redact_text(str(exc))
+        write_diagnostics(
+            run.run_dir / "diagnostics.json",
+            Diagnostics(
+                error_type="InputError",
+                exit_code=2,
+                stage="preflight",
+                video_id="",
+                part_index=0,
+                duration_check=None,
+                transcript_check=None,
+                artifact_paths=["diagnostics.json"],
+                sanitized_message=sanitized_message,
+                warnings=["foundation_slice_only"],
+            ),
+        )
+        raise typer.BadParameter(sanitized_message) from exc
+
+    uses_cookies = cookies_from_browser is not None or cookies_file is not None
+    _ensure_consent(uses_cookies=uses_cookies, yes_i_understand=yes_i_understand)
+
+    run = create_run(out, ref, overwrite=overwrite)
+    write_diagnostics(
+        run.run_dir / "diagnostics.json",
+        Diagnostics(
+            error_type=None,
+            exit_code=0,
+            stage="preflight",
+            video_id=ref.bvid,
+            part_index=ref.part_index,
+            duration_check=None,
+            transcript_check=None,
+            artifact_paths=["diagnostics.json"],
+            sanitized_message="Prepared offline preflight run.",
+            warnings=["foundation_slice_only"],
+        ),
+    )
+    typer.echo(f"Prepared Bilifan run: {run.run_dir}")
+
+
+def _ensure_consent(*, uses_cookies: bool, yes_i_understand: bool) -> None:
+    config_path = default_config_path()
+    needs_local_notice = not has_local_processing_consent(config_path)
+    needs_cookies_notice = uses_cookies and not has_cookies_consent(config_path)
+
+    if not needs_local_notice and not needs_cookies_notice:
+        return
+
+    if yes_i_understand:
+        write_consent(
+            config_path,
+            local_processing=needs_local_notice,
+            cookies=needs_cookies_notice,
+            accepted_via="yes-i-understand",
+        )
+        return
+
+    if needs_local_notice:
+        typer.echo(LOCAL_PROCESSING_NOTICE)
+        accepted = typer.confirm("Continue?", default=False)
+        if not accepted:
+            raise typer.Exit(1)
+        write_consent(config_path, local_processing=True, accepted_via="prompt")
+
+    if needs_cookies_notice:
+        typer.echo(COOKIES_NOTICE)
+        accepted = typer.confirm("Continue with cookies?", default=False)
+        if not accepted:
+            raise typer.Exit(1)
+        write_consent(config_path, cookies=True, accepted_via="prompt")
 
 
 def main() -> None:
