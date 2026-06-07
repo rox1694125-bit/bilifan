@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
+
+
+BVID_PATTERN = re.compile(r"BV[0-9A-Za-z]{10}")
 
 
 @dataclass(frozen=True)
@@ -27,10 +31,13 @@ def parse_bilibili_url(url: str) -> BilibiliPartRef:
         raise ValueError("Expected a supported Bilibili video URL.")
 
     parts = [part for part in parsed.path.split("/") if part]
-    if len(parts) != 2 or parts[0] != "video" or not parts[1].startswith("BV"):
+    if len(parts) != 2 or parts[0] != "video":
         raise ValueError("Expected a supported Bilibili video URL.")
 
     bvid = parts[1]
+    if BVID_PATTERN.fullmatch(bvid) is None:
+        raise ValueError("Expected a supported Bilibili video URL.")
+
     query = parse_qs(parsed.query, keep_blank_values=True)
     raw_part = query.get("p", ["1"])[0]
 

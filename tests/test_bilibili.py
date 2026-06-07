@@ -32,6 +32,9 @@ def test_parse_bilibili_url_defaults_to_part_one():
     [
         "https://example.com/video/BV1abcDEF12G",
         "https://www.bilibili.com/read/cv123",
+        "https://www.bilibili.com/video/BV",
+        "https://www.bilibili.com/video/BVnot-a-real-id",
+        "https://www.bilibili.com/video/BVabc%2Fsecret",
         "https://www.bilibili.com/video/BV1abcDEF12G/extra",
         "not a url",
     ],
