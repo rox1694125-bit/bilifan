@@ -111,6 +111,29 @@ def test_redact_text_removes_standalone_common_bilibili_cookie_keys():
     assert "CURRENT_FNVAL=<redacted>" in redacted
 
 
+def test_redact_text_removes_paths_with_spaces_without_eating_urls():
+    redacted = redact_text(
+        "local=/Users/jack/My Folder/secret.txt "
+        "volume=/Volumes/mySSD/Team Folder/raw.log "
+        "home=~/My Folder/raw.txt "
+        "extra=/private/workspace/My Folder/raw.txt "
+        "url=https://www.bilibili.com/video/BV1abcDEF12G?p=2&vd_source=secret",
+        home_markers=[Path("/private/workspace")],
+    )
+
+    assert "My Folder" not in redacted
+    assert "Team Folder" not in redacted
+    assert "secret.txt" not in redacted
+    assert "raw.log" not in redacted
+    assert "raw.txt" not in redacted
+    assert "/Users/jack" not in redacted
+    assert "/Volumes/mySSD" not in redacted
+    assert "~/My" not in redacted
+    assert "/private/workspace" not in redacted
+    assert "https://www.bilibili.com/video/BV1abcDEF12G?p=2" in redacted
+    assert "vd_source" not in redacted
+
+
 def test_validate_artifact_paths_accepts_relative_posix_paths():
     assert validate_artifact_paths(["diagnostics.json", "assets/cover.jpg"]) == [
         "diagnostics.json",
@@ -243,9 +266,11 @@ def test_write_diagnostics_sanitizes_nested_keys_and_non_json_values(tmp_path):
         part_index=2,
         duration_check={
             "CODEX_ACCESS_TOKEN=key-secret": Path("/Users/jack/raw.txt"),
+            "nan": float("nan"),
+            "inf": float("inf"),
             "Cookie: b_nut=nut-secret": ["ok", Path("/Volumes/mySSD/raw.txt")],
         },
-        transcript_check={"set_value": {Path("/Users/jack/a.txt")}},
+        transcript_check={"set_value": {Path("/Users/jack/a.txt"), float("-inf")}},
         artifact_paths=["diagnostics.json"],
         sanitized_message="ok",
         warnings=[],
@@ -258,7 +283,11 @@ def test_write_diagnostics_sanitizes_nested_keys_and_non_json_values(tmp_path):
     assert "nut-secret" not in serialized
     assert "/Users/jack" not in serialized
     assert "/Volumes/mySSD" not in serialized
+    assert "NaN" not in serialized
+    assert "Infinity" not in serialized
 
     data = json.loads(serialized)
     assert "CODEX_ACCESS_TOKEN=<redacted>" in data["duration_check"]
     assert "Cookie: b_nut=<redacted>" in data["duration_check"]
+    assert data["duration_check"]["nan"] == "<non-finite-float>"
+    assert data["duration_check"]["inf"] == "<non-finite-float>"

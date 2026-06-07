@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -77,7 +78,7 @@ def write_diagnostics(path: Path, diagnostics: Diagnostics) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+        json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
         encoding="utf-8",
     )
 
@@ -104,8 +105,13 @@ _COOKIE_PAIR_PATTERN = re.compile(r"([^=;\s]+)=([^;\s]+)")
 _BILIBILI_COOKIE_PATTERN = re.compile(
     r"\b(SESSDATA|bili_jct|DedeUserID|buvid\w*|sid|b_nut|_uuid|CURRENT_FNVAL)=([^;\s]+)"
 )
-_DEFAULT_PATH_PATTERN = re.compile(r"(?<![\w:/])(?:/Users|/Volumes)/[^\s;\"'<>)]*")
-_TILDE_PATH_PATTERN = re.compile(r"(?<![\w])~/[^\s;\"'<>)]*")
+_PATH_TAIL_PATTERN = (
+    r"(?:[^\s;\r\n\"'<>)]|[ \t]+(?!https?://)(?=[^=;\r\n\"'<>)]*(?:/|\\)))*"
+)
+_DEFAULT_PATH_PATTERN = re.compile(
+    rf"(?<![\w:/])(?:/Users|/Volumes)/{_PATH_TAIL_PATTERN}"
+)
+_TILDE_PATH_PATTERN = re.compile(rf"(?<![\w])~/{_PATH_TAIL_PATTERN}")
 
 
 def _canonicalize_bilibili_urls(text: str) -> str:
@@ -175,7 +181,7 @@ def _redact_home_markers(text: str, home_markers: list[Path] | None) -> str:
         marker_text = str(marker)
         if marker_text and marker_text != "/":
             redacted = re.sub(
-                rf"{re.escape(marker_text)}[^\s;\"'<>)]*",
+                rf"{re.escape(marker_text)}{_PATH_TAIL_PATTERN}",
                 "<redacted-path>",
                 redacted,
             )
@@ -207,6 +213,8 @@ def _sanitize_json_value(value: object) -> object:
         }
     if isinstance(value, list | tuple | set):
         return [_sanitize_json_value(item) for item in value]
-    if value is None or isinstance(value, bool | int | float):
+    if value is None or isinstance(value, bool | int):
         return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else "<non-finite-float>"
     return redact_text(str(value))
