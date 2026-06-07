@@ -12,13 +12,13 @@ MAX_MESSAGE_LENGTH = 4096
 
 @dataclass(frozen=True)
 class Diagnostics:
-    error_type: str
+    error_type: str | None
     exit_code: int
     stage: str
     video_id: str
     part_index: int
-    duration_check: str
-    transcript_check: str
+    duration_check: dict | None
+    transcript_check: dict | None
     artifact_paths: list[str]
     sanitized_message: str
     warnings: list[str]
@@ -29,6 +29,7 @@ def redact_text(text: str, *, home_markers: list[Path] | None = None) -> str:
     redacted = _canonicalize_bilibili_urls(redacted)
     redacted = _redact_cookie_paths(redacted)
     redacted = _redact_named_secrets(redacted)
+    redacted = _redact_default_paths(redacted)
     redacted = _redact_home_markers(redacted, home_markers)
     return redacted[:MAX_MESSAGE_LENGTH]
 
@@ -54,13 +55,15 @@ def validate_artifact_paths(paths: list[str]) -> list[str]:
 def write_diagnostics(path: Path, diagnostics: Diagnostics) -> None:
     artifact_paths = validate_artifact_paths(diagnostics.artifact_paths)
     data = {
-        "error_type": redact_text(diagnostics.error_type),
+        "error_type": (
+            None if diagnostics.error_type is None else redact_text(diagnostics.error_type)
+        ),
         "exit_code": diagnostics.exit_code,
         "stage": redact_text(diagnostics.stage),
         "video_id": redact_text(diagnostics.video_id),
         "part_index": diagnostics.part_index,
-        "duration_check": redact_text(diagnostics.duration_check),
-        "transcript_check": redact_text(diagnostics.transcript_check),
+        "duration_check": _sanitize_json_value(diagnostics.duration_check),
+        "transcript_check": _sanitize_json_value(diagnostics.transcript_check),
         "artifact_paths": artifact_paths,
         "sanitized_message": redact_text(diagnostics.sanitized_message),
         "warnings": [redact_text(warning) for warning in diagnostics.warnings],
@@ -79,13 +82,20 @@ _BILIBILI_URL_PATTERN = re.compile(
 _COOKIE_PATH_PATTERN = re.compile(
     r"(?i)(cookie(?:_file|-file|\s+file|_path|-path|\s+path)\s*[:=]\s*)[^\s;]+"
 )
-_CODEX_ACCESS_TOKEN_PATTERN = re.compile(r"\b(CODEX_ACCESS_TOKEN\s*[:=]\s*)[^\s;&]+")
+_ENV_SECRET_PATTERN = re.compile(
+    r"\b((?:CODEX_ACCESS_TOKEN|OPENAI_API_KEY|CODEX_API_KEY)\s*[:=]\s*)[^\s;&]+"
+)
 _AUTH_BEARER_PATTERN = re.compile(
     r"\b(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+",
     re.IGNORECASE,
 )
 _OPENAI_TOKEN_PATTERN = re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9._-]*")
-_BILIBILI_COOKIE_PATTERN = re.compile(r"\b(SESSDATA|bili_jct|DedeUserID)=([^;\s]+)")
+_JWT_PATTERN = re.compile(r"\beyJ[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+\b")
+_BILIBILI_COOKIE_PATTERN = re.compile(
+    r"\b(SESSDATA|bili_jct|DedeUserID|buvid\w*|sid)=([^;\s]+)"
+)
+_DEFAULT_PATH_PATTERN = re.compile(r"(?<![\w:/])(?:/Users|/Volumes)/[^\s;\"'<>)]*")
+_TILDE_PATH_PATTERN = re.compile(r"(?<![\w])~/[^\s;\"'<>)]*")
 
 
 def _canonicalize_bilibili_urls(text: str) -> str:
@@ -116,24 +126,38 @@ def _redact_cookie_paths(text: str) -> str:
 
 
 def _redact_named_secrets(text: str) -> str:
-    redacted = _CODEX_ACCESS_TOKEN_PATTERN.sub(r"\1<redacted>", text)
+    redacted = _ENV_SECRET_PATTERN.sub(r"\1<redacted>", text)
     redacted = _AUTH_BEARER_PATTERN.sub(r"\1<redacted>", redacted)
     redacted = _BILIBILI_COOKIE_PATTERN.sub(r"\1=<redacted>", redacted)
-    return _OPENAI_TOKEN_PATTERN.sub("<redacted>", redacted)
+    redacted = _OPENAI_TOKEN_PATTERN.sub("<redacted>", redacted)
+    return _JWT_PATTERN.sub("<redacted-jwt>", redacted)
+
+
+def _redact_default_paths(text: str) -> str:
+    redacted = _DEFAULT_PATH_PATTERN.sub("<redacted-path>", text)
+    return _TILDE_PATH_PATTERN.sub("<redacted-path>", redacted)
 
 
 def _redact_home_markers(text: str, home_markers: list[Path] | None) -> str:
-    markers = _default_home_markers() if home_markers is None else home_markers
+    extra_markers = [] if home_markers is None else home_markers
+    markers = _unique_markers([*extra_markers, *_default_home_markers()])
     redacted = text
     for marker in markers:
         marker_text = str(marker)
         if marker_text and marker_text != "/":
-            redacted = redacted.replace(marker_text, "<redacted-path>")
+            redacted = re.sub(
+                rf"{re.escape(marker_text)}[^\s;\"'<>)]*",
+                "<redacted-path>",
+                redacted,
+            )
     return redacted
 
 
 def _default_home_markers() -> list[Path]:
-    markers = [Path.home(), Path("/Users/jack"), Path("/Volumes/mySSD")]
+    return _unique_markers([Path.home(), Path("/Users/jack"), Path("/Volumes/mySSD")])
+
+
+def _unique_markers(markers: list[Path]) -> list[Path]:
     unique_markers: list[Path] = []
     seen: set[str] = set()
     for marker in markers:
@@ -142,3 +166,16 @@ def _default_home_markers() -> list[Path]:
             unique_markers.append(marker)
             seen.add(marker_text)
     return unique_markers
+
+
+def _sanitize_json_value(value: object) -> object:
+    if isinstance(value, str):
+        return redact_text(value)
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_json_value(nested_value)
+            for key, nested_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    return value

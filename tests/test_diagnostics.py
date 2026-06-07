@@ -15,11 +15,22 @@ def test_redact_text_removes_sensitive_values_and_canonicalizes_bilibili_urls():
     raw = "\n".join(
         [
             "cookie_file=/Users/jack/.config/bilifan/cookies.txt",
+            "load cookies from /Users/jack/Downloads/bili-cookies.txt",
             "CODEX_ACCESS_TOKEN=codex-access-secret",
+            "OPENAI_API_KEY=openai-secret",
+            "CODEX_API_KEY: codex-api-secret",
             "Authorization: Bearer sk-live-secret",
             "api_key=sk-proj-openai-secret",
-            "Cookie: SESSDATA=session-secret; bili_jct=csrf-secret; DedeUserID=123456",
+            "jwt=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signature",
+            (
+                "Cookie: SESSDATA=session-secret; bili_jct=csrf-secret; "
+                "DedeUserID=123456; buvid3=buvid-secret; sid=sid-secret"
+            ),
+            "trace=/Users/alice/project/log.txt",
             "output=/Volumes/mySSD/projects/bilifan/out",
+            "cache=/Volumes/external/cache/file.txt",
+            "shell=~/Downloads/raw.txt",
+            "extra=/private/workspace/secret.txt",
             (
                 "url=https://www.bilibili.com/video/BV1abcDEF12G/"
                 "?p=2&spm_id_from=333.999&vd_source=tracking-secret"
@@ -29,25 +40,39 @@ def test_redact_text_removes_sensitive_values_and_canonicalizes_bilibili_urls():
 
     redacted = redact_text(
         raw,
-        home_markers=[Path("/Users/jack"), Path("/Volumes/mySSD")],
+        home_markers=[Path("/private/workspace")],
     )
 
     assert "/Users/jack" not in redacted
+    assert "/Users/alice" not in redacted
     assert "/Volumes/mySSD" not in redacted
+    assert "/Volumes/external" not in redacted
+    assert "~/Downloads" not in redacted
+    assert "/private/workspace" not in redacted
     assert "cookies.txt" not in redacted
+    assert "bili-cookies.txt" not in redacted
     assert "codex-access-secret" not in redacted
+    assert "openai-secret" not in redacted
+    assert "codex-api-secret" not in redacted
     assert "sk-live-secret" not in redacted
     assert "sk-proj-openai-secret" not in redacted
+    assert "eyJhbGciOiJIUzI1NiJ9" not in redacted
     assert "session-secret" not in redacted
     assert "csrf-secret" not in redacted
     assert "123456" not in redacted
+    assert "buvid-secret" not in redacted
+    assert "sid-secret" not in redacted
     assert "spm_id_from" not in redacted
     assert "vd_source" not in redacted
     assert "CODEX_ACCESS_TOKEN=<redacted>" in redacted
+    assert "OPENAI_API_KEY=<redacted>" in redacted
+    assert "CODEX_API_KEY: <redacted>" in redacted
     assert "Authorization: Bearer <redacted>" in redacted
     assert "SESSDATA=<redacted>" in redacted
     assert "bili_jct=<redacted>" in redacted
     assert "DedeUserID=<redacted>" in redacted
+    assert "buvid3=<redacted>" in redacted
+    assert "sid=<redacted>" in redacted
     assert "https://www.bilibili.com/video/BV1abcDEF12G?p=2" in redacted
 
 
@@ -72,8 +97,8 @@ def test_write_diagnostics_writes_only_sanitized_allowlisted_json(tmp_path):
         stage="download",
         video_id="BV1abcDEF12G",
         part_index=2,
-        duration_check="not-run",
-        transcript_check="not-run",
+        duration_check={"status": "failed", "expected_seconds": 120.5},
+        transcript_check=None,
         artifact_paths=["diagnostics.json", "assets/cover.jpg"],
         sanitized_message=(
             "CODEX_ACCESS_TOKEN=codex-access-secret "
@@ -101,6 +126,8 @@ def test_write_diagnostics_writes_only_sanitized_allowlisted_json(tmp_path):
         "warnings",
     ]
     assert data["artifact_paths"] == ["diagnostics.json", "assets/cover.jpg"]
+    assert data["duration_check"] == {"status": "failed", "expected_seconds": 120.5}
+    assert data["transcript_check"] is None
     assert "CODEX_ACCESS_TOKEN=<redacted>" in data["sanitized_message"]
     assert "https://www.bilibili.com/video/BV1abcDEF12G?p=2" in data["sanitized_message"]
     serialized = output_path.read_text(encoding="utf-8")
@@ -120,8 +147,8 @@ def test_write_diagnostics_rejects_unsafe_artifact_paths(tmp_path):
         stage="download",
         video_id="BV1abcDEF12G",
         part_index=2,
-        duration_check="not-run",
-        transcript_check="not-run",
+        duration_check=None,
+        transcript_check=None,
         artifact_paths=["../report.html"],
         sanitized_message="plain message",
         warnings=[],
@@ -131,3 +158,26 @@ def test_write_diagnostics_rejects_unsafe_artifact_paths(tmp_path):
         write_diagnostics(output_path, diagnostics)
 
     assert not output_path.exists()
+
+
+def test_write_diagnostics_preserves_nullable_error_type_and_check_objects(tmp_path):
+    output_path = tmp_path / "diagnostics.json"
+    diagnostics = Diagnostics(
+        error_type=None,
+        exit_code=0,
+        stage="complete",
+        video_id="BV1abcDEF12G",
+        part_index=2,
+        duration_check=None,
+        transcript_check={"status": "ok", "segments": 42},
+        artifact_paths=["diagnostics.json"],
+        sanitized_message="ok",
+        warnings=[],
+    )
+
+    write_diagnostics(output_path, diagnostics)
+
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert data["error_type"] is None
+    assert data["duration_check"] is None
+    assert data["transcript_check"] == {"status": "ok", "segments": 42}
