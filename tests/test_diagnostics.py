@@ -144,11 +144,13 @@ def test_redact_text_removes_labeled_cookie_paths_with_spaces():
     redacted = redact_text(
         "cookie_file=/Users/jack/My Folder/auth.txt "
         "--cookies-file /tmp/My Cookie/auth.txt "
+        'cmd="--cookies-file /tmp/Quoted Cookie/auth.txt" '
         "next=ok"
     )
 
     assert "My Folder" not in redacted
     assert "My Cookie" not in redacted
+    assert "Quoted Cookie" not in redacted
     assert "auth.txt" not in redacted
     assert "/Users/jack" not in redacted
     assert "/tmp" not in redacted
