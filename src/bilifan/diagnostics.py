@@ -36,12 +36,17 @@ def redact_text(text: str, *, home_markers: list[Path] | None = None) -> str:
 
 
 def validate_artifact_paths(paths: list[str]) -> list[str]:
+    if not isinstance(paths, list):
+        raise ValueError("Invalid artifact paths: expected a list of strings.")
+
     validated: list[str] = []
     for raw_path in paths:
         if not isinstance(raw_path, str):
             raise ValueError("Invalid artifact path: expected a string.")
         if not raw_path or raw_path == ".":
             raise ValueError("Invalid artifact path: empty path.")
+        if re.match(r"^[A-Za-z]:/", raw_path):
+            raise ValueError(f"Invalid artifact path: {raw_path!r}.")
         if "\\" in raw_path or raw_path.startswith("~"):
             raise ValueError(f"Invalid artifact path: {raw_path!r}.")
 
@@ -81,7 +86,8 @@ _BILIBILI_URL_PATTERN = re.compile(
     r"https?://(?:www\.)?bilibili\.com/video/BV[0-9A-Za-z]{10}/?(?:\?[^\s\"'<>)]*)?"
 )
 _COOKIE_PATH_PATTERN = re.compile(
-    r"(?i)(cookie(?:_file|-file|\s+file|_path|-path|\s+path)\s*[:=]\s*)[^\s;]+"
+    r"(?i)(?<!\S)((?:--)?cookies?(?:[_-]file|[_-]path)|cookies?\s+(?:file|path)|"
+    r"cookie(?:[_-]file|[_-]path|\s+file|\s+path))(\s*[:=]\s*|\s+)[^\s;]+"
 )
 _BARE_COOKIE_FILE_PATTERN = re.compile(r"(?i)(?<!\S)\S*cookies?\S*\.txt(?!\S)")
 _ENV_SECRET_PATTERN = re.compile(
@@ -93,6 +99,8 @@ _AUTH_BEARER_PATTERN = re.compile(
 )
 _OPENAI_TOKEN_PATTERN = re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9._-]*")
 _JWT_PATTERN = re.compile(r"\beyJ[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+\b")
+_COOKIE_HEADER_PATTERN = re.compile(r"\b(Cookie\s*:\s*)([^\r\n]*)", re.IGNORECASE)
+_COOKIE_PAIR_PATTERN = re.compile(r"([^=;\s]+)=([^;\s]+)")
 _BILIBILI_COOKIE_PATTERN = re.compile(
     r"\b(SESSDATA|bili_jct|DedeUserID|buvid\w*|sid)=([^;\s]+)"
 )
@@ -124,7 +132,10 @@ def _canonicalize_bilibili_urls(text: str) -> str:
 
 
 def _redact_cookie_paths(text: str) -> str:
-    return _COOKIE_PATH_PATTERN.sub(lambda match: f"{match.group(1)}<redacted>", text)
+    return _COOKIE_PATH_PATTERN.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}<redacted>",
+        text,
+    )
 
 
 def _redact_bare_cookie_files(text: str) -> str:
@@ -134,9 +145,21 @@ def _redact_bare_cookie_files(text: str) -> str:
 def _redact_named_secrets(text: str) -> str:
     redacted = _ENV_SECRET_PATTERN.sub(r"\1<redacted>", text)
     redacted = _AUTH_BEARER_PATTERN.sub(r"\1<redacted>", redacted)
+    redacted = _redact_cookie_headers(redacted)
     redacted = _BILIBILI_COOKIE_PATTERN.sub(r"\1=<redacted>", redacted)
     redacted = _OPENAI_TOKEN_PATTERN.sub("<redacted>", redacted)
     return _JWT_PATTERN.sub("<redacted-jwt>", redacted)
+
+
+def _redact_cookie_headers(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        redacted_cookie_values = _COOKIE_PAIR_PATTERN.sub(
+            lambda cookie_match: f"{cookie_match.group(1)}=<redacted>",
+            match.group(2),
+        )
+        return f"{match.group(1)}{redacted_cookie_values}"
+
+    return _COOKIE_HEADER_PATTERN.sub(replace, text)
 
 
 def _redact_default_paths(text: str) -> str:
@@ -179,9 +202,11 @@ def _sanitize_json_value(value: object) -> object:
         return redact_text(value)
     if isinstance(value, dict):
         return {
-            str(key): _sanitize_json_value(nested_value)
+            redact_text(str(key)): _sanitize_json_value(nested_value)
             for key, nested_value in value.items()
         }
-    if isinstance(value, list):
+    if isinstance(value, list | tuple | set):
         return [_sanitize_json_value(item) for item in value]
-    return value
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    return redact_text(str(value))
