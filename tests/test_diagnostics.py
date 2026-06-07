@@ -100,6 +100,17 @@ def test_redact_text_removes_bare_cookie_file_names_and_relative_paths():
     assert "../" not in redacted
 
 
+def test_redact_text_removes_standalone_common_bilibili_cookie_keys():
+    redacted = redact_text("b_nut=nut-secret _uuid=uuid-secret CURRENT_FNVAL=fnval-secret")
+
+    assert "nut-secret" not in redacted
+    assert "uuid-secret" not in redacted
+    assert "fnval-secret" not in redacted
+    assert "b_nut=<redacted>" in redacted
+    assert "_uuid=<redacted>" in redacted
+    assert "CURRENT_FNVAL=<redacted>" in redacted
+
+
 def test_validate_artifact_paths_accepts_relative_posix_paths():
     assert validate_artifact_paths(["diagnostics.json", "assets/cover.jpg"]) == [
         "diagnostics.json",
@@ -109,7 +120,14 @@ def test_validate_artifact_paths_accepts_relative_posix_paths():
 
 @pytest.mark.parametrize(
     "path",
-    ["/tmp/report.html", "../report.html", "C:/Users/jack/report.html", "~/report.html"],
+    [
+        "/tmp/report.html",
+        "../report.html",
+        "C:/Users/jack/report.html",
+        "C:Users/jack/report.html",
+        "C:report.html",
+        "~/report.html",
+    ],
 )
 def test_validate_artifact_paths_rejects_paths_outside_run_dir(path):
     with pytest.raises(ValueError, match="artifact path"):

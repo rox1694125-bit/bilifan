@@ -45,7 +45,7 @@ def validate_artifact_paths(paths: list[str]) -> list[str]:
             raise ValueError("Invalid artifact path: expected a string.")
         if not raw_path or raw_path == ".":
             raise ValueError("Invalid artifact path: empty path.")
-        if re.match(r"^[A-Za-z]:/", raw_path):
+        if re.match(r"^[A-Za-z]:", raw_path):
             raise ValueError(f"Invalid artifact path: {raw_path!r}.")
         if "\\" in raw_path or raw_path.startswith("~"):
             raise ValueError(f"Invalid artifact path: {raw_path!r}.")
@@ -102,7 +102,7 @@ _JWT_PATTERN = re.compile(r"\beyJ[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+\b")
 _COOKIE_HEADER_PATTERN = re.compile(r"\b(Cookie\s*:\s*)([^\r\n]*)", re.IGNORECASE)
 _COOKIE_PAIR_PATTERN = re.compile(r"([^=;\s]+)=([^;\s]+)")
 _BILIBILI_COOKIE_PATTERN = re.compile(
-    r"\b(SESSDATA|bili_jct|DedeUserID|buvid\w*|sid)=([^;\s]+)"
+    r"\b(SESSDATA|bili_jct|DedeUserID|buvid\w*|sid|b_nut|_uuid|CURRENT_FNVAL)=([^;\s]+)"
 )
 _DEFAULT_PATH_PATTERN = re.compile(r"(?<![\w:/])(?:/Users|/Volumes)/[^\s;\"'<>)]*")
 _TILDE_PATH_PATTERN = re.compile(r"(?<![\w])~/[^\s;\"'<>)]*")
