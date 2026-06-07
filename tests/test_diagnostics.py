@@ -78,11 +78,14 @@ def test_redact_text_removes_sensitive_values_and_canonicalizes_bilibili_urls():
 
 def test_redact_text_removes_bare_cookie_file_names_and_relative_paths():
     redacted = redact_text(
-        "bili-cookies.txt ./bili-cookies.txt ../bili-cookies.txt cookies.txt"
+        "bili-cookies.txt ./bili-cookies.txt ../bili-cookies.txt "
+        "/tmp/bili-cookies.txt C:\\Users\\jack\\cookies.txt cookies.txt"
     )
 
     assert "bili-cookies.txt" not in redacted
     assert "cookies.txt" not in redacted
+    assert "/tmp" not in redacted
+    assert "C:\\Users" not in redacted
     assert "./" not in redacted
     assert "../" not in redacted
 

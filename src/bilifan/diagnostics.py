@@ -83,9 +83,7 @@ _BILIBILI_URL_PATTERN = re.compile(
 _COOKIE_PATH_PATTERN = re.compile(
     r"(?i)(cookie(?:_file|-file|\s+file|_path|-path|\s+path)\s*[:=]\s*)[^\s;]+"
 )
-_BARE_COOKIE_FILE_PATTERN = re.compile(
-    r"(?i)(?<![\w/.-])(?:\.\.?/)*(?:bili-)?cookies\.txt(?![\w/.-])"
-)
+_BARE_COOKIE_FILE_PATTERN = re.compile(r"(?i)(?<!\S)\S*cookies?\S*\.txt(?!\S)")
 _ENV_SECRET_PATTERN = re.compile(
     r"\b((?:CODEX_ACCESS_TOKEN|OPENAI_API_KEY|CODEX_API_KEY)\s*[:=]\s*)[^\s;&]+"
 )
