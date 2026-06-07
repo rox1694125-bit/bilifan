@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .bilibili import BilibiliPartRef
+
+
+RUN_OUTPUT_ID_PATTERN = re.compile(r"BV[0-9A-Za-z]{10}_p[1-9][0-9]*")
 
 
 @dataclass(frozen=True)
@@ -21,6 +25,21 @@ def _run_id(now: datetime | None = None) -> tuple[str, datetime]:
     return current.strftime("%Y-%m-%d_%H%M%S"), current
 
 
+def _validated_output_id(ref: BilibiliPartRef) -> str:
+    output_id = ref.output_id
+    if RUN_OUTPUT_ID_PATTERN.fullmatch(output_id) is None:
+        raise ValueError(f"Invalid run output id: {output_id!r}")
+    return output_id
+
+
+def _ensure_run_dir_stays_in_out_dir(out_dir: Path, run_dir: Path) -> None:
+    resolved_out_dir = out_dir.resolve(strict=False)
+    resolved_run_dir = run_dir.resolve(strict=False)
+
+    if not resolved_run_dir.is_relative_to(resolved_out_dir):
+        raise ValueError(f"Run directory resolves outside output directory: {run_dir}")
+
+
 def create_run(
     out_dir: Path,
     ref: BilibiliPartRef,
@@ -29,8 +48,9 @@ def create_run(
     overwrite: bool = False,
 ) -> RunPaths:
     run_id, current = _run_id(now)
-    video_dir = out_dir / ref.output_id
+    video_dir = out_dir / _validated_output_id(ref)
     run_dir = video_dir / "runs" / run_id
+    _ensure_run_dir_stays_in_out_dir(out_dir, run_dir)
 
     if run_dir.exists() and not overwrite:
         raise FileExistsError(f"Run directory already exists: {run_dir}")
