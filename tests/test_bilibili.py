@@ -32,6 +32,7 @@ def test_parse_bilibili_url_defaults_to_part_one():
     [
         "https://example.com/video/BV1abcDEF12G",
         "https://www.bilibili.com/read/cv123",
+        "https://www.bilibili.com/video/BV1abcDEF12G/extra",
         "not a url",
     ],
 )
@@ -40,6 +41,13 @@ def test_parse_bilibili_url_rejects_unsupported_urls(url):
         parse_bilibili_url(url)
 
 
-def test_parse_bilibili_url_rejects_invalid_part_index():
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.bilibili.com/video/BV1abcDEF12G?p=0",
+        "https://www.bilibili.com/video/BV1abcDEF12G?p=",
+    ],
+)
+def test_parse_bilibili_url_rejects_invalid_part_index(url):
     with pytest.raises(ValueError, match="positive integer"):
-        parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=0")
+        parse_bilibili_url(url)
