@@ -88,7 +88,8 @@ _BILIBILI_URL_PATTERN = re.compile(
 )
 _COOKIE_PATH_PATTERN = re.compile(
     r"(?i)(?<!\S)((?:--)?cookies?(?:[_-]file|[_-]path)|cookies?\s+(?:file|path)|"
-    r"cookie(?:[_-]file|[_-]path|\s+file|\s+path))(\s*[:=]\s*|\s+)[^\s;]+"
+    r"cookie(?:[_-]file|[_-]path|\s+file|\s+path))(\s*[:=]\s*|\s+)"
+    r"(?:(?![;\r\n\"'<>)]|\s+https?://|\s+[A-Za-z_][A-Za-z0-9_.-]*=).)+"
 )
 _BARE_COOKIE_FILE_PATTERN = re.compile(r"(?i)(?<!\S)\S*cookies?\S*\.txt(?!\S)")
 _ENV_SECRET_PATTERN = re.compile(
@@ -106,7 +107,7 @@ _BILIBILI_COOKIE_PATTERN = re.compile(
     r"\b(SESSDATA|bili_jct|DedeUserID|buvid\w*|sid|b_nut|_uuid|CURRENT_FNVAL)=([^;\s]+)"
 )
 _PATH_TAIL_PATTERN = (
-    r"(?:[^\s;\r\n\"'<>)]|[ \t]+(?!https?://)(?=[^=;\r\n\"'<>)]*(?:/|\\)))*"
+    r"(?:(?![;\r\n\"'<>)]|\s+https?://|\s+[A-Za-z_][A-Za-z0-9_.-]*=).)*"
 )
 _DEFAULT_PATH_PATTERN = re.compile(
     rf"(?<![\w:/])(?:/Users|/Volumes)/{_PATH_TAIL_PATTERN}"

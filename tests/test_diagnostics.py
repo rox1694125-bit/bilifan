@@ -114,15 +114,21 @@ def test_redact_text_removes_standalone_common_bilibili_cookie_keys():
 def test_redact_text_removes_paths_with_spaces_without_eating_urls():
     redacted = redact_text(
         "local=/Users/jack/My Folder/secret.txt "
+        "single=/Users/jack/My Secret.txt "
         "volume=/Volumes/mySSD/Team Folder/raw.log "
+        "volume_single=/Volumes/mySSD/Team Secret.log "
         "home=~/My Folder/raw.txt "
+        "home_single=~/My Raw.txt "
         "extra=/private/workspace/My Folder/raw.txt "
         "url=https://www.bilibili.com/video/BV1abcDEF12G?p=2&vd_source=secret",
         home_markers=[Path("/private/workspace")],
     )
 
     assert "My Folder" not in redacted
+    assert "My Secret.txt" not in redacted
     assert "Team Folder" not in redacted
+    assert "Team Secret.log" not in redacted
+    assert "My Raw.txt" not in redacted
     assert "secret.txt" not in redacted
     assert "raw.log" not in redacted
     assert "raw.txt" not in redacted
@@ -132,6 +138,21 @@ def test_redact_text_removes_paths_with_spaces_without_eating_urls():
     assert "/private/workspace" not in redacted
     assert "https://www.bilibili.com/video/BV1abcDEF12G?p=2" in redacted
     assert "vd_source" not in redacted
+
+
+def test_redact_text_removes_labeled_cookie_paths_with_spaces():
+    redacted = redact_text(
+        "cookie_file=/Users/jack/My Folder/auth.txt "
+        "--cookies-file /tmp/My Cookie/auth.txt "
+        "next=ok"
+    )
+
+    assert "My Folder" not in redacted
+    assert "My Cookie" not in redacted
+    assert "auth.txt" not in redacted
+    assert "/Users/jack" not in redacted
+    assert "/tmp" not in redacted
+    assert "next=ok" in redacted
 
 
 def test_validate_artifact_paths_accepts_relative_posix_paths():
