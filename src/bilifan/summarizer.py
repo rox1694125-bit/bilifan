@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable
@@ -15,6 +17,13 @@ from .diagnostics import redact_text
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 CODEX_EXEC_TIMEOUT_SECONDS = 60 * 60
+CODEX_EXEC_ENV_VAR = "BILIFAN_CODEX_BIN"
+CODEX_EXEC_CANDIDATES = (
+    Path("/Applications/Codex.app/Contents/Resources/codex"),
+    Path.home() / ".codex" / "bin" / "codex",
+    Path("/opt/homebrew/bin/codex"),
+    Path("/usr/local/bin/codex"),
+)
 
 
 CHUNK_SUMMARY_SCHEMA: dict[str, Any] = {
@@ -176,7 +185,7 @@ def run_codex_chunk_summary(
         output_path = tmp_path / "chunk_summary.json"
         _write_json(schema_path, CHUNK_SUMMARY_SCHEMA)
         cmd = [
-            "codex",
+            resolve_codex_executable(),
             "exec",
             "--ephemeral",
             "--json",
@@ -214,6 +223,35 @@ def run_codex_chunk_summary(
         if not output_path.is_file():
             raise SummarizationError("codex exec did not write a final JSON message.")
         return _read_json(output_path, "codex exec final message")
+
+
+def resolve_codex_executable() -> str:
+    configured = os.environ.get(CODEX_EXEC_ENV_VAR)
+    if configured:
+        configured_path = Path(configured).expanduser()
+        if _is_executable_file(configured_path):
+            return str(configured_path)
+        raise SummarizationError(
+            f"{CODEX_EXEC_ENV_VAR} points to a missing or non-executable Codex CLI: "
+            f"{configured_path}"
+        )
+
+    found = shutil.which("codex")
+    if found:
+        return found
+
+    for candidate in CODEX_EXEC_CANDIDATES:
+        if _is_executable_file(candidate.expanduser()):
+            return str(candidate)
+
+    raise SummarizationError(
+        "Codex CLI executable not found. Start Bilifan from a shell where `codex` "
+        "works, install Codex CLI, or set BILIFAN_CODEX_BIN=/path/to/codex."
+    )
+
+
+def _is_executable_file(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
 
 
 def build_chunk_prompt(

@@ -3,6 +3,7 @@ import subprocess
 
 import pytest
 
+import bilifan.summarizer as summarizer
 from bilifan.bilibili import BilibiliPartRef
 from bilifan.summarizer import (
     CHUNK_SUMMARY_SCHEMA,
@@ -98,7 +99,8 @@ def test_run_codex_chunk_summary_invokes_codex_exec_and_reads_output(tmp_path):
     )
 
     cmd = calls[0]["cmd"]
-    assert cmd[:3] == ["codex", "exec", "--ephemeral"]
+    assert cmd[1:3] == ["exec", "--ephemeral"]
+    assert cmd[0].endswith("codex")
     assert "--json" in cmd
     assert "--skip-git-repo-check" in cmd
     assert cmd[cmd.index("--model") + 1] == "gpt-5.5"
@@ -106,6 +108,65 @@ def test_run_codex_chunk_summary_invokes_codex_exec_and_reads_output(tmp_path):
     assert calls[0]["input"].startswith("你是 Bilifan")
     assert calls[0]["cwd"] == tmp_path
     assert partial["chapters"][0]["title"] == "开场"
+
+
+def test_run_codex_chunk_summary_uses_packaged_codex_when_not_on_path(
+    tmp_path, monkeypatch
+):
+    calls = []
+    fallback_codex = tmp_path / "Codex.app" / "Contents" / "Resources" / "codex"
+    fallback_codex.parent.mkdir(parents=True)
+    fallback_codex.write_text("#!/bin/sh\n", encoding="utf-8")
+    fallback_codex.chmod(0o755)
+
+    monkeypatch.delenv("BILIFAN_CODEX_BIN", raising=False)
+    monkeypatch.setattr(summarizer.shutil, "which", lambda name: None)
+    monkeypatch.setattr(summarizer, "CODEX_EXEC_CANDIDATES", (fallback_codex,))
+
+    def fake_runner(cmd, **kwargs):
+        calls.append(cmd)
+        output_path = tmp_path / cmd[cmd.index("--output-last-message") + 1]
+        if not output_path.is_absolute():
+            output_path = tmp_path / output_path
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(_valid_partial(), ensure_ascii=False), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    run_codex_chunk_summary(
+        metadata=_metadata(),
+        chunk=_chunks()["chunks"][0],
+        run_dir=tmp_path,
+        model="gpt-5.5",
+        style="学习笔记",
+        runner=fake_runner,
+    )
+
+    assert calls[0][0] == str(fallback_codex)
+
+
+def test_run_codex_chunk_summary_reports_actionable_message_when_codex_missing(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("BILIFAN_CODEX_BIN", raising=False)
+    monkeypatch.setattr(summarizer.shutil, "which", lambda name: None)
+    monkeypatch.setattr(summarizer, "CODEX_EXEC_CANDIDATES", ())
+
+    def fake_runner(cmd, **kwargs):
+        raise AssertionError("runner should not be called when codex cannot be resolved")
+
+    with pytest.raises(SummarizationError) as exc_info:
+        run_codex_chunk_summary(
+            metadata=_metadata(),
+            chunk=_chunks()["chunks"][0],
+            run_dir=tmp_path,
+            model="gpt-5.5",
+            style="学习笔记",
+            runner=fake_runner,
+        )
+
+    message = str(exc_info.value)
+    assert "Codex CLI executable not found" in message
+    assert "BILIFAN_CODEX_BIN" in message
 
 
 def test_run_codex_chunk_summary_raises_when_codex_fails(tmp_path):
