@@ -18,6 +18,12 @@ def test_token_auth_accepts_matching_header_or_query():
     auth.require(header_token=None, query_token="secret-token")
 
 
+def test_token_auth_accepts_matching_query_when_header_is_wrong():
+    auth = TokenAuth("secret-token")
+
+    auth.require(header_token="wrong", query_token="secret-token")
+
+
 def test_token_auth_rejects_missing_or_wrong_token():
     auth = TokenAuth("secret-token")
 

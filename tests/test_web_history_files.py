@@ -62,6 +62,19 @@ def test_list_latest_runs_reads_outputs_latest_json(tmp_path):
     assert items[0]["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120000"
 
 
+@pytest.mark.parametrize("metadata", [{}, {"title": 123}, {"title": ""}])
+def test_list_latest_runs_falls_back_to_output_id_for_missing_or_invalid_title(
+    tmp_path, metadata
+):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    (run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    items = list_latest_runs(outputs)
+
+    assert items[0]["title"] == "BV1abcDEF12G_p1"
+
+
 def test_list_run_files_only_includes_whitelisted_files(tmp_path):
     outputs = tmp_path / "outputs"
     _make_run(outputs)

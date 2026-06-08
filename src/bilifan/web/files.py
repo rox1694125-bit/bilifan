@@ -46,7 +46,7 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
                 "run_key": f"{output_id}/runs/{run_id}",
                 "output_id": output_id,
                 "run_id": run_id,
-                "title": _text(metadata.get("title")),
+                "title": _text(metadata.get("title")) or output_id,
                 "status": status,
                 "stage": _text(diagnostics.get("stage")),
                 "generated_at": _text(latest.get("generated_at")),
