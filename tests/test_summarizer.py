@@ -259,6 +259,47 @@ def test_summarize_chunks_normalizes_small_chunk_boundary_drift(tmp_path):
     assert saved_partial["chapters"][0]["end"] == 119.42
 
 
+def test_summarize_chunks_normalizes_small_segment_anchor_drift(tmp_path):
+    chunks = _chunks()
+    chunks["chunks"][0]["end"] = 160
+    chunks["chunks"][0]["segments"] = [
+        {"source_index": 0, "start": 0, "end": 60, "text": "这是转写内容"},
+        {
+            "source_index": 1,
+            "start": 148.04000000000002,
+            "end": 160,
+            "text": "第二段",
+        },
+    ]
+    partial = _valid_partial()
+    partial["chapters"][0]["start"] = 147
+    partial["chapters"][0]["end"] = 160
+
+    def fake_runner(cmd, **kwargs):
+        output_path = tmp_path / cmd[cmd.index("--output-last-message") + 1]
+        if not output_path.is_absolute():
+            output_path = tmp_path / output_path
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(partial, ensure_ascii=False), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    chapters = summarize_chunks(
+        ref=REF,
+        metadata=_metadata(),
+        chunks=chunks,
+        run_dir=tmp_path,
+        runner=fake_runner,
+    )
+
+    saved_partial = json.loads(
+        (tmp_path / "partial_summaries" / "chunk_001.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert chapters["chapters"][0]["start"] == 148.04000000000002
+    assert saved_partial["chapters"][0]["start"] == 148.04000000000002
+
+
 def test_summarize_chunks_writes_raw_partial_before_rejecting_invalid_summary(tmp_path):
     invalid_partial = _valid_partial()
     invalid_partial["chapters"][0]["start"] = 180

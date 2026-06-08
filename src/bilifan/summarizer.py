@@ -25,6 +25,8 @@ CODEX_EXEC_CANDIDATES = (
     Path("/usr/local/bin/codex"),
 )
 CHAPTER_BOUNDARY_TOLERANCE_SECONDS = 2.0
+CHAPTER_SEGMENT_ANCHOR_TOLERANCE_SECONDS = 2.0
+TIMESTAMP_EPSILON_SECONDS = 0.001
 
 
 CHUNK_SUMMARY_SCHEMA: dict[str, Any] = {
@@ -158,7 +160,7 @@ def summarize_chunks(
         partial_path = partial_dir / f"chunk_{chunk_index:03d}.json"
         _write_json(partial_path, partial)
         _validate_json(partial, CHUNK_SUMMARY_SCHEMA, "chunk summary")
-        _normalize_partial_chunk_boundaries(partial, chunk)
+        _normalize_partial_chapter_timestamps(partial, chunk)
         _validate_partial_matches_chunk(partial, chunk)
         partial["chunk_index"] = chunk_index
         _write_json(partial_path, partial)
@@ -348,7 +350,7 @@ def _chunk_index(chunk: dict[str, Any]) -> int:
     return chunk_index
 
 
-def _normalize_partial_chunk_boundaries(
+def _normalize_partial_chapter_timestamps(
     partial: dict[str, Any],
     chunk: dict[str, Any],
 ) -> None:
@@ -356,6 +358,7 @@ def _normalize_partial_chunk_boundaries(
     chunk_end = _float_value(chunk.get("end"))
     if chunk_start is None or chunk_end is None or chunk_end < chunk_start:
         return
+    transcript_segments = _prompt_segments(chunk)
 
     for chapter in partial.get("chapters", []):
         if not isinstance(chapter, dict):
@@ -364,11 +367,53 @@ def _normalize_partial_chunk_boundaries(
         end = _float_value(chapter.get("end"))
         if start is None or end is None:
             continue
+
         if start < chunk_start and chunk_start - start <= CHAPTER_BOUNDARY_TOLERANCE_SECONDS:
             chapter["start"] = chunk_start
             start = chunk_start
         if end > chunk_end and end - chunk_end <= CHAPTER_BOUNDARY_TOLERANCE_SECONDS:
             chapter["end"] = chunk_end
+        if transcript_segments:
+            chapter["start"] = _normalized_segment_anchor(start, transcript_segments)
+
+
+def _normalized_segment_anchor(
+    timestamp: float,
+    transcript_segments: list[dict[str, Any]],
+) -> float:
+    containing_segment = _segment_containing_timestamp(timestamp, transcript_segments)
+    if containing_segment is not None:
+        if (
+            abs(containing_segment["start"] - timestamp)
+            <= CHAPTER_SEGMENT_ANCHOR_TOLERANCE_SECONDS
+        ):
+            return containing_segment["start"]
+        return timestamp
+
+    nearest_segment = min(
+        transcript_segments,
+        key=lambda segment: abs(segment["start"] - timestamp),
+    )
+    if (
+        abs(nearest_segment["start"] - timestamp)
+        <= CHAPTER_SEGMENT_ANCHOR_TOLERANCE_SECONDS
+    ):
+        return nearest_segment["start"]
+    return timestamp
+
+
+def _segment_containing_timestamp(
+    timestamp: float,
+    transcript_segments: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    for segment in transcript_segments:
+        if (
+            segment["start"] - TIMESTAMP_EPSILON_SECONDS
+            <= timestamp
+            <= segment["end"] + TIMESTAMP_EPSILON_SECONDS
+        ):
+            return segment
+    return None
 
 
 def _validate_partial_matches_chunk(
@@ -429,10 +474,7 @@ def _timestamp_in_segments(
     timestamp: float,
     transcript_segments: list[dict[str, Any]],
 ) -> bool:
-    return any(
-        segment["start"] <= timestamp <= segment["end"]
-        for segment in transcript_segments
-    )
+    return _segment_containing_timestamp(timestamp, transcript_segments) is not None
 
 
 def _validate_json(payload: dict[str, Any], schema: dict[str, Any], label: str) -> None:
