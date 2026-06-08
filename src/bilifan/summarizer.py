@@ -180,6 +180,7 @@ def run_codex_chunk_summary(
             "exec",
             "--ephemeral",
             "--json",
+            "--skip-git-repo-check",
             "--model",
             model,
             "--output-schema",

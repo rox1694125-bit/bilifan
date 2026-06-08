@@ -100,6 +100,7 @@ def test_run_codex_chunk_summary_invokes_codex_exec_and_reads_output(tmp_path):
     cmd = calls[0]["cmd"]
     assert cmd[:3] == ["codex", "exec", "--ephemeral"]
     assert "--json" in cmd
+    assert "--skip-git-repo-check" in cmd
     assert cmd[cmd.index("--model") + 1] == "gpt-5.5"
     assert "--output-schema" in cmd
     assert calls[0]["input"].startswith("你是 Bilifan")
