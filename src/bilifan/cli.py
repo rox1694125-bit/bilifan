@@ -1,6 +1,9 @@
+import socket
+import webbrowser
 from pathlib import Path
 
 import typer
+import uvicorn
 
 from .chunking import ChunkingError, LongVideoConfirmationRequired
 from .config import (
@@ -21,6 +24,8 @@ from .pipeline import (
 from .renderer import PdfExportError
 from .summarizer import SummarizationError
 from .transcript import TranscriptError
+from .web.app import create_app
+from .web.security import generate_token
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -114,6 +119,28 @@ def summarize(
     typer.echo(f"Prepared Bilifan run: {result.run_key}")
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8765, "--port"),
+    no_open: bool = typer.Option(False, "--no-open"),
+) -> None:
+    """Serve the local Bilifan Web UI."""
+    host = _ensure_localhost_host(host)
+    token = generate_token()
+    app_instance = create_app(
+        outputs=Path("./outputs"),
+        token=token,
+        open_browser=not no_open,
+    )
+    selected_port = _find_available_port(host, port)
+    url = f"http://127.0.0.1:{selected_port}/?token={token}"
+    typer.echo(url)
+    if not no_open:
+        _open_browser(url)
+    uvicorn.run(app_instance, host=host, port=selected_port, log_level="info")
+
+
 def _ensure_consent(*, uses_cookies: bool, yes_i_understand: bool) -> None:
     config_path = default_config_path()
     needs_local_notice = not has_local_processing_consent(config_path)
@@ -144,6 +171,29 @@ def _ensure_consent(*, uses_cookies: bool, yes_i_understand: bool) -> None:
         if not accepted:
             raise typer.Exit(1)
         write_consent(config_path, cookies=True, accepted_via="prompt")
+
+
+def _ensure_localhost_host(host: str) -> str:
+    if host != "127.0.0.1":
+        raise typer.BadParameter("MVP only supports --host 127.0.0.1.")
+    return host
+
+
+def _find_available_port(host: str, preferred_port: int) -> int:
+    port = preferred_port
+    while True:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((host, port))
+            except OSError:
+                port += 1
+                continue
+        return port
+
+
+def _open_browser(url: str) -> None:
+    webbrowser.open(url)
 
 
 def main() -> None:

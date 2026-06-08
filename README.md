@@ -85,6 +85,34 @@ Prepared Bilifan run: BV..._p2/runs/<timestamp>
 `report.html` is the success artifact. `report.pdf` is best effort unless
 `--require-pdf` is passed.
 
+## Local Web UI
+
+Start the local Web UI with:
+
+```bash
+python -m bilifan serve --no-open
+```
+
+By default `bilifan serve` binds only to `127.0.0.1`, uses `./outputs` as the
+fixed history/output directory, generates a one-time access token, and prints a
+URL like:
+
+```text
+http://127.0.0.1:8765/?token=<token>
+```
+
+Open that URL in your browser. Without `--no-open`, the CLI will try to open it
+automatically with your local default browser.
+
+Current MVP boundaries:
+
+- Web UI access is protected by the printed token in the URL.
+- The server only supports local `127.0.0.1` binding in this MVP.
+- Web UI job outputs are always read from and written to `./outputs`.
+- The Web UI does not support entering cookies.
+- The CLI still supports `--cookies-file` and `--cookies-from-browser` for
+  local runs.
+
 ## Runtime Requirements
 
 - Python 3.11+

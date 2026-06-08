@@ -1084,3 +1084,149 @@ def test_summarize_debug_log_is_reserved_for_later_slice(tmp_path):
 
     assert result.exit_code == 2
     assert "--debug-log is reserved for a later slice" in result.output
+
+
+def test_serve_prints_url_and_starts_uvicorn(monkeypatch):
+    calls: dict[str, object] = {}
+
+    def fake_generate_token():
+        calls["generate_token"] = True
+        return "fixed-token"
+
+    def fake_create_app(*, outputs, token, open_browser):
+        calls["create_app"] = {
+            "outputs": outputs,
+            "token": token,
+            "open_browser": open_browser,
+        }
+        return "app-instance"
+
+    def fake_find_available_port(host, preferred_port):
+        calls["find_port"] = {
+            "host": host,
+            "preferred_port": preferred_port,
+        }
+        return 8765
+
+    def fake_open_browser(url):
+        calls["open_browser"] = url
+
+    def fake_uvicorn_run(app_instance, *, host, port, log_level):
+        calls["uvicorn_run"] = {
+            "app_instance": app_instance,
+            "host": host,
+            "port": port,
+            "log_level": log_level,
+        }
+
+    monkeypatch.setattr(cli, "generate_token", fake_generate_token)
+    monkeypatch.setattr(cli, "create_app", fake_create_app)
+    monkeypatch.setattr(cli, "_find_available_port", fake_find_available_port)
+    monkeypatch.setattr(cli, "_open_browser", fake_open_browser)
+    monkeypatch.setattr(cli.uvicorn, "run", fake_uvicorn_run)
+
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 0
+    assert "http://127.0.0.1:8765/?token=fixed-token" in result.output
+    assert calls["create_app"] == {
+        "outputs": cli.Path("./outputs"),
+        "token": "fixed-token",
+        "open_browser": True,
+    }
+    assert calls["find_port"] == {
+        "host": "127.0.0.1",
+        "preferred_port": 8765,
+    }
+    assert calls["open_browser"] == "http://127.0.0.1:8765/?token=fixed-token"
+    assert calls["uvicorn_run"] == {
+        "app_instance": "app-instance",
+        "host": "127.0.0.1",
+        "port": 8765,
+        "log_level": "info",
+    }
+
+
+def test_serve_no_open_does_not_open_browser(monkeypatch):
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(cli, "generate_token", lambda: "fixed-token")
+
+    def fake_create_app(*, outputs, token, open_browser):
+        calls["create_app"] = {
+            "outputs": outputs,
+            "token": token,
+            "open_browser": open_browser,
+        }
+        return "app-instance"
+
+    def fake_open_browser(url):
+        calls["open_browser"] = url
+
+    def fake_uvicorn_run(app_instance, *, host, port, log_level):
+        calls["uvicorn_run"] = {
+            "app_instance": app_instance,
+            "host": host,
+            "port": port,
+            "log_level": log_level,
+        }
+
+    monkeypatch.setattr(cli, "create_app", fake_create_app)
+    monkeypatch.setattr(cli, "_find_available_port", lambda host, preferred_port: 8765)
+    monkeypatch.setattr(cli, "_open_browser", fake_open_browser)
+    monkeypatch.setattr(cli.uvicorn, "run", fake_uvicorn_run)
+
+    result = runner.invoke(app, ["serve", "--no-open"])
+
+    assert result.exit_code == 0
+    assert "http://127.0.0.1:8765/?token=fixed-token" in result.output
+    assert calls["create_app"] == {
+        "outputs": cli.Path("./outputs"),
+        "token": "fixed-token",
+        "open_browser": False,
+    }
+    assert "open_browser" not in calls
+    assert calls["uvicorn_run"] == {
+        "app_instance": "app-instance",
+        "host": "127.0.0.1",
+        "port": 8765,
+        "log_level": "info",
+    }
+
+
+def test_serve_rejects_non_localhost_host():
+    result = runner.invoke(app, ["serve", "--host", "0.0.0.0"])
+
+    assert result.exit_code == 2
+    assert "127.0.0.1" in result.output
+
+
+def test_serve_uses_next_available_port(monkeypatch):
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(cli, "generate_token", lambda: "fixed-token")
+    monkeypatch.setattr(cli, "create_app", lambda **kwargs: "app-instance")
+    monkeypatch.setattr(cli, "_find_available_port", lambda host, preferred_port: 8766)
+    monkeypatch.setattr(cli, "_open_browser", lambda url: calls.setdefault("url", url))
+
+    def fake_uvicorn_run(app_instance, *, host, port, log_level):
+        calls["uvicorn_run"] = {
+            "app_instance": app_instance,
+            "host": host,
+            "port": port,
+            "log_level": log_level,
+        }
+
+    monkeypatch.setattr(cli.uvicorn, "run", fake_uvicorn_run)
+
+    result = runner.invoke(app, ["serve", "--port", "8765"])
+
+    assert result.exit_code == 0
+    assert "http://127.0.0.1:8766/?token=fixed-token" in result.output
+    assert calls["url"] == "http://127.0.0.1:8766/?token=fixed-token"
+    assert calls["uvicorn_run"] == {
+        "app_instance": "app-instance",
+        "host": "127.0.0.1",
+        "port": 8766,
+        "log_level": "info",
+    }
