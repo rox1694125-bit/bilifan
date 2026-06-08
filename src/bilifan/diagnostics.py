@@ -25,7 +25,12 @@ class Diagnostics:
     warnings: list[str]
 
 
-def redact_text(text: str, *, home_markers: list[Path] | None = None) -> str:
+def redact_text(
+    text: str,
+    *,
+    home_markers: list[Path] | None = None,
+    max_length: int | None = MAX_MESSAGE_LENGTH,
+) -> str:
     redacted = str(text)
     redacted = _canonicalize_bilibili_urls(redacted)
     redacted = _redact_cookie_paths(redacted)
@@ -33,7 +38,7 @@ def redact_text(text: str, *, home_markers: list[Path] | None = None) -> str:
     redacted = _redact_named_secrets(redacted)
     redacted = _redact_default_paths(redacted)
     redacted = _redact_home_markers(redacted, home_markers)
-    return redacted[:MAX_MESSAGE_LENGTH]
+    return redacted if max_length is None else redacted[:max_length]
 
 
 def validate_artifact_paths(paths: list[str]) -> list[str]:

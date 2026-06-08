@@ -5,6 +5,7 @@ from pathlib import Path
 import typer
 
 from .bilibili import parse_bilibili_url
+from .chunking import ChunkingError, LongVideoConfirmationRequired, build_chunks
 from .config import (
     default_config_path,
     has_cookies_consent,
@@ -57,12 +58,9 @@ def summarize(
     """Prepare a local Bilifan run for one Bilibili current-P URL."""
     _reserved_mvp_options = (
         output_format,
-        transcriber,
-        force_whisper,
         llm_provider,
         llm_model,
         require_pdf,
-        allow_long_video,
     )
     if debug_log:
         raise typer.BadParameter("--debug-log is reserved for a later slice.")
@@ -188,16 +186,100 @@ def summarize(
         raise typer.Exit(1) from exc
 
     _write_json(run.run_dir / "transcript.json", transcript)
-    transcript_warnings = ["transcript_only"]
+    try:
+        chunks = build_chunks(
+            transcript,
+            media,
+            allow_long_video=allow_long_video,
+            long_video_confirmed=yes_i_understand,
+        )
+    except LongVideoConfirmationRequired as exc:
+        if not typer.confirm(f"{exc.sanitized_message} Continue?"):
+            _write_chunking_failure_diagnostics(
+                run,
+                ref,
+                media,
+                transcript,
+                sanitized_message=exc.sanitized_message,
+                warnings=["chunking_confirmation_required"],
+            )
+            raise typer.Exit(1) from exc
+        try:
+            chunks = build_chunks(
+                transcript,
+                media,
+                allow_long_video=allow_long_video,
+                long_video_confirmed=True,
+            )
+        except ChunkingError as retry_exc:
+            sanitized_message = redact_text(str(retry_exc))
+            _write_chunking_failure_diagnostics(
+                run,
+                ref,
+                media,
+                transcript,
+                sanitized_message=sanitized_message,
+                warnings=["chunking_failed"],
+            )
+            typer.echo(sanitized_message, err=True)
+            raise typer.Exit(1) from retry_exc
+    except ChunkingError as exc:
+        sanitized_message = redact_text(str(exc))
+        _write_chunking_failure_diagnostics(
+            run,
+            ref,
+            media,
+            transcript,
+            sanitized_message=sanitized_message,
+            warnings=["chunking_failed"],
+        )
+        typer.echo(sanitized_message, err=True)
+        raise typer.Exit(1) from exc
+
+    _write_json(run.run_dir / "chunks.json", chunks)
+    chunking_warnings = ["chunking_only"]
     if transcript["transcript_check"]["status"] == "transcript_incomplete":
-        transcript_warnings.append("transcript_incomplete")
+        chunking_warnings.append("transcript_incomplete")
 
     write_diagnostics(
         run.run_dir / "diagnostics.json",
         Diagnostics(
             error_type=None,
             exit_code=0,
-            stage="transcript",
+            stage="chunking",
+            video_id=ref.bvid,
+            part_index=ref.part_index,
+            duration_check=media["duration_check"],
+            transcript_check=transcript["transcript_check"],
+            artifact_paths=[
+                "diagnostics.json",
+                "metadata.json",
+                media["audio_path"],
+                "transcript.json",
+                "chunks.json",
+            ],
+            sanitized_message="Chunk generation completed.",
+            warnings=chunking_warnings,
+        ),
+    )
+    typer.echo(f"Prepared Bilifan run: {_display_run_path(run)}")
+
+
+def _write_chunking_failure_diagnostics(
+    run: RunPaths,
+    ref,
+    media: dict,
+    transcript: dict,
+    *,
+    sanitized_message: str,
+    warnings: list[str],
+) -> None:
+    write_diagnostics(
+        run.run_dir / "diagnostics.json",
+        Diagnostics(
+            error_type="ChunkingError",
+            exit_code=1,
+            stage="chunking",
             video_id=ref.bvid,
             part_index=ref.part_index,
             duration_check=media["duration_check"],
@@ -208,11 +290,10 @@ def summarize(
                 media["audio_path"],
                 "transcript.json",
             ],
-            sanitized_message="Transcript generation completed.",
-            warnings=transcript_warnings,
+            sanitized_message=sanitized_message,
+            warnings=warnings,
         ),
     )
-    typer.echo(f"Prepared Bilifan run: {_display_run_path(run)}")
 
 
 def _create_error_run_with_retry(out: Path) -> RunPaths:

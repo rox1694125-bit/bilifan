@@ -270,7 +270,7 @@ def _normalize_segments(
             continue
         start = _float_value(segment.get("start"))
         end = _float_value(segment.get("end"))
-        text = redact_text(_first_text(segment.get("text")).strip())
+        text = redact_text(_first_text(segment.get("text")).strip(), max_length=None)
         if start is None or end is None or end <= start or not text:
             continue
         normalized.append(
