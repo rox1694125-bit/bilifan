@@ -15,6 +15,7 @@ from .config import (
 from .diagnostics import Diagnostics, redact_text, write_diagnostics
 from .media import MediaDownloadError, download_current_part_audio
 from .metadata import MetadataIngestError, fetch_current_part_metadata
+from .renderer import PdfExportError, export_report_pdf, render_report_html
 from .runs import RunPaths, create_error_run, create_run
 from .summarizer import SummarizationError, summarize_chunks
 from .transcript import TranscriptError, build_transcript
@@ -59,11 +60,12 @@ def summarize(
 ) -> None:
     """Prepare a local Bilifan run for one Bilibili current-P URL."""
     _reserved_mvp_options = (
-        output_format,
         require_pdf,
     )
     if debug_log:
         raise typer.BadParameter("--debug-log is reserved for a later slice.")
+    requested_formats = _parse_output_formats(output_format)
+    should_export_pdf = "pdf" in requested_formats or require_pdf
 
     uses_cookies = cookies_from_browser is not None or cookies_file is not None
     _ensure_consent(uses_cookies=uses_cookies, yes_i_understand=yes_i_understand)
@@ -275,30 +277,68 @@ def summarize(
         raise typer.Exit(1) from exc
 
     _write_json(run.run_dir / "chapters.json", chapters)
-    summarization_warnings = ["summarization_only"]
+    report_html = render_report_html(
+        ref=ref,
+        metadata=metadata,
+        transcript=transcript,
+        chapters=chapters,
+        run_dir=run.run_dir,
+    )
+    render_warnings: list[str] = []
+    render_artifacts = [
+        "diagnostics.json",
+        "metadata.json",
+        media["audio_path"],
+        "transcript.json",
+        "chunks.json",
+        "chapters.json",
+        report_html.name,
+    ]
+    if should_export_pdf:
+        try:
+            report_pdf = export_report_pdf(
+                html_path=report_html,
+                pdf_path=run.run_dir / "report.pdf",
+            )
+            render_artifacts.append(report_pdf.name)
+        except PdfExportError as exc:
+            sanitized_message = redact_text(str(exc))
+            if require_pdf:
+                write_diagnostics(
+                    run.run_dir / "diagnostics.json",
+                    Diagnostics(
+                        error_type="PdfExportError",
+                        exit_code=1,
+                        stage="render",
+                        video_id=ref.bvid,
+                        part_index=ref.part_index,
+                        duration_check=media["duration_check"],
+                        transcript_check=transcript["transcript_check"],
+                        artifact_paths=render_artifacts,
+                        sanitized_message=sanitized_message,
+                        warnings=["pdf_failed"],
+                    ),
+                )
+                typer.echo(sanitized_message, err=True)
+                raise typer.Exit(1) from exc
+            render_warnings.append("pdf_failed")
+
     if transcript["transcript_check"]["status"] == "transcript_incomplete":
-        summarization_warnings.append("transcript_incomplete")
+        render_warnings.append("transcript_incomplete")
 
     write_diagnostics(
         run.run_dir / "diagnostics.json",
         Diagnostics(
             error_type=None,
             exit_code=0,
-            stage="summarization",
+            stage="render",
             video_id=ref.bvid,
             part_index=ref.part_index,
             duration_check=media["duration_check"],
             transcript_check=transcript["transcript_check"],
-            artifact_paths=[
-                "diagnostics.json",
-                "metadata.json",
-                media["audio_path"],
-                "transcript.json",
-                "chunks.json",
-                "chapters.json",
-            ],
-            sanitized_message="Summarization completed.",
-            warnings=summarization_warnings,
+            artifact_paths=render_artifacts,
+            sanitized_message="Report rendering completed.",
+            warnings=render_warnings,
         ),
     )
     typer.echo(f"Prepared Bilifan run: {_display_run_path(run)}")
@@ -344,6 +384,22 @@ def _partial_summary_artifacts(run_dir: Path) -> list[str]:
         for path in sorted(partial_dir.glob("*.json"))
         if path.is_file()
     ]
+
+
+def _parse_output_formats(raw_format: str) -> set[str]:
+    formats = {
+        item.strip().lower()
+        for item in raw_format.split(",")
+        if item.strip()
+    }
+    if not formats:
+        raise typer.BadParameter("--format must include html, pdf, or html,pdf.")
+    unsupported = formats - {"html", "pdf"}
+    if unsupported:
+        raise typer.BadParameter(
+            "Unsupported --format value: " + ", ".join(sorted(unsupported))
+        )
+    return formats
 
 
 def _create_error_run_with_retry(out: Path) -> RunPaths:

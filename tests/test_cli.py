@@ -228,6 +228,36 @@ def _install_fake_summarize_chunks(monkeypatch):
     return calls
 
 
+def _install_fake_report_render(monkeypatch, *, pdf_success=True):
+    calls = []
+
+    def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
+        calls.append(
+            {
+                "stage": "html",
+                "ref": ref,
+                "metadata": metadata,
+                "transcript": transcript,
+                "chapters": chapters,
+                "run_dir": run_dir,
+            }
+        )
+        html_path = run_dir / "report.html"
+        html_path.write_text("<html><body>report</body></html>", encoding="utf-8")
+        return html_path
+
+    def fake_export_report_pdf(*, html_path, pdf_path):
+        calls.append({"stage": "pdf", "html_path": html_path, "pdf_path": pdf_path})
+        if not pdf_success:
+            raise cli.PdfExportError("Chrome failed for /Users/jack/report.html")
+        pdf_path.write_bytes(b"%PDF")
+        return pdf_path
+
+    monkeypatch.setattr(cli, "render_report_html", fake_render_report_html)
+    monkeypatch.setattr(cli, "export_report_pdf", fake_export_report_pdf)
+    return calls
+
+
 def test_cli_help_lists_summarize_command():
     result = runner.invoke(app, ["--help"])
 
@@ -261,6 +291,7 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
     _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_report_render(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -282,7 +313,7 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     assert run_dir.is_dir()
     assert diagnostics["error_type"] is None
     assert diagnostics["exit_code"] == 0
-    assert diagnostics["stage"] == "summarization"
+    assert diagnostics["stage"] == "render"
     assert diagnostics["video_id"] == "BV1abcDEF12G"
     assert diagnostics["part_index"] == 2
     assert diagnostics["duration_check"]["status"] == "ok"
@@ -294,8 +325,10 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
         "transcript.json",
         "chunks.json",
         "chapters.json",
+        "report.html",
+        "report.pdf",
     ]
-    assert diagnostics["warnings"] == ["summarization_only"]
+    assert diagnostics["warnings"] == []
     assert metadata["input_url_sanitized"] == (
         "https://www.bilibili.com/video/BV1abcDEF12G?p=2"
     )
@@ -311,6 +344,8 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     chapters = json.loads((run_dir / "chapters.json").read_text(encoding="utf-8"))
     assert chapters["style"] == "学习笔记"
     assert chapters["chapters"][0]["title"] == "开场"
+    assert (run_dir / "report.html").is_file()
+    assert (run_dir / "report.pdf").is_file()
     assert (config_home / "config.json").exists()
 
 
@@ -321,6 +356,7 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
     _install_fake_audio_download(monkeypatch)
     transcript_calls = _install_fake_transcript_build(monkeypatch)
     summary_calls = _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_report_render(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -361,6 +397,7 @@ def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
     _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_report_render(monkeypatch)
 
     for url, output_id in REAL_BILIBILI_URLS:
         result = runner.invoke(
@@ -386,7 +423,7 @@ def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
         )
         assert diagnostics["video_id"] == bvid
         assert diagnostics["part_index"] == int(part)
-        assert diagnostics["stage"] == "summarization"
+        assert diagnostics["stage"] == "render"
 
 
 def test_summarize_records_cookie_notice_without_storing_cookie_file_name(
@@ -398,6 +435,7 @@ def test_summarize_records_cookie_notice_without_storing_cookie_file_name(
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
     _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_report_render(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -713,6 +751,7 @@ def test_summarize_incomplete_transcript_writes_file_with_warning(
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch, duration_seconds=120)
     _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_report_render(monkeypatch)
 
     def fake_build_transcript(
         metadata,
@@ -763,10 +802,11 @@ def test_summarize_incomplete_transcript_writes_file_with_warning(
     assert transcript["transcript_check"]["status"] == "transcript_incomplete"
     assert diagnostics["exit_code"] == 0
     assert diagnostics["transcript_check"]["status"] == "transcript_incomplete"
-    assert diagnostics["stage"] == "summarization"
+    assert diagnostics["stage"] == "render"
     assert (run_dir / "chunks.json").is_file()
     assert (run_dir / "chapters.json").is_file()
-    assert diagnostics["warnings"] == ["summarization_only", "transcript_incomplete"]
+    assert (run_dir / "report.html").is_file()
+    assert diagnostics["warnings"] == ["transcript_incomplete"]
 
 
 def test_summarize_chunking_confirmation_decline_writes_diagnostics(
@@ -778,6 +818,7 @@ def test_summarize_chunking_confirmation_decline_writes_diagnostics(
     _install_fake_audio_download(monkeypatch, duration_seconds=90 * 60)
     _install_fake_transcript_build(monkeypatch)
     _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_report_render(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -807,6 +848,126 @@ def test_summarize_chunking_confirmation_decline_writes_diagnostics(
     assert diagnostics["stage"] == "chunking"
     assert diagnostics["warnings"] == ["chunking_confirmation_required"]
     assert not (run_dir / "chunks.json").exists()
+
+
+def test_summarize_pdf_failure_is_warning_when_pdf_is_not_required(
+    tmp_path, monkeypatch
+):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+    _install_fake_metadata_fetch(monkeypatch)
+    _install_fake_audio_download(monkeypatch)
+    _install_fake_transcript_build(monkeypatch)
+    _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_report_render(monkeypatch, pdf_success=False)
+
+    result = runner.invoke(
+        app,
+        ["summarize", URL, "--yes-i-understand", "--out", str(outputs)],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 0
+    video_dir = outputs / "BV1abcDEF12G_p2"
+    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
+    run_dir = video_dir / latest["run_dir"]
+    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+
+    assert (run_dir / "report.html").is_file()
+    assert not (run_dir / "report.pdf").exists()
+    assert diagnostics["stage"] == "render"
+    assert diagnostics["warnings"] == ["pdf_failed"]
+    assert diagnostics["artifact_paths"][-1] == "report.html"
+
+
+def test_summarize_require_pdf_returns_nonzero_when_pdf_fails(
+    tmp_path, monkeypatch
+):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+    _install_fake_metadata_fetch(monkeypatch)
+    _install_fake_audio_download(monkeypatch)
+    _install_fake_transcript_build(monkeypatch)
+    _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_report_render(monkeypatch, pdf_success=False)
+
+    result = runner.invoke(
+        app,
+        [
+            "summarize",
+            URL,
+            "--require-pdf",
+            "--yes-i-understand",
+            "--out",
+            str(outputs),
+        ],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 1
+    assert "Chrome failed" in result.output
+    assert "/Users/jack" not in result.output
+
+    video_dir = outputs / "BV1abcDEF12G_p2"
+    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
+    run_dir = video_dir / latest["run_dir"]
+    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+
+    assert (run_dir / "report.html").is_file()
+    assert not (run_dir / "report.pdf").exists()
+    assert diagnostics["error_type"] == "PdfExportError"
+    assert diagnostics["stage"] == "render"
+    assert diagnostics["warnings"] == ["pdf_failed"]
+
+
+def test_summarize_format_html_skips_pdf_export(tmp_path, monkeypatch):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+    _install_fake_metadata_fetch(monkeypatch)
+    _install_fake_audio_download(monkeypatch)
+    _install_fake_transcript_build(monkeypatch)
+    _install_fake_summarize_chunks(monkeypatch)
+    render_calls = _install_fake_report_render(monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "summarize",
+            URL,
+            "--format",
+            "html",
+            "--yes-i-understand",
+            "--out",
+            str(outputs),
+        ],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 0
+    assert [call["stage"] for call in render_calls] == ["html"]
+
+
+def test_summarize_invalid_format_fails_before_creating_run(tmp_path):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+
+    result = runner.invoke(
+        app,
+        [
+            "summarize",
+            URL,
+            "--format",
+            "png",
+            "--yes-i-understand",
+            "--out",
+            str(outputs),
+        ],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 2
+    assert "Unsupported --format value" in result.output
+    assert not outputs.exists()
 
 
 def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
