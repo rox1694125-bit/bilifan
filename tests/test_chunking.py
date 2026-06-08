@@ -41,6 +41,10 @@ def test_build_chunks_uses_single_pass_for_short_video():
     assert chunks["chunks"][0]["start"] == 0.0
     assert chunks["chunks"][0]["end"] == 120.0
     assert chunks["chunks"][0]["text"] == "第一段\n第二段"
+    assert chunks["chunks"][0]["segments"] == [
+        {"source_index": 0, "start": 0.0, "end": 60.0, "text": "第一段"},
+        {"source_index": 1, "start": 60.0, "end": 120.0, "text": "第二段"},
+    ]
 
 
 def test_build_chunks_uses_dynamic_chunks_for_45_to_180_minutes():

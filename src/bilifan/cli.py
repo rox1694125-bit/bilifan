@@ -16,6 +16,7 @@ from .diagnostics import Diagnostics, redact_text, write_diagnostics
 from .media import MediaDownloadError, download_current_part_audio
 from .metadata import MetadataIngestError, fetch_current_part_metadata
 from .runs import RunPaths, create_error_run, create_run
+from .summarizer import SummarizationError, summarize_chunks
 from .transcript import TranscriptError, build_transcript
 
 app = typer.Typer(no_args_is_help=True)
@@ -24,7 +25,8 @@ LOCAL_PROCESSING_NOTICE = (
     "Bilifan local processing consent:\n"
     "Bilifan prepares runs locally on this machine, downloads current-P audio for "
     "local processing, and writes output files under the selected --out directory. "
-    "This slice does not call external AI tools or generate a report."
+    "By default it calls your configured Codex CLI to summarize transcript chunks, "
+    "which may send transcript text to the model service behind that Codex account."
 )
 COOKIES_NOTICE = (
     "Bilifan cookies notice:\n"
@@ -58,8 +60,6 @@ def summarize(
     """Prepare a local Bilifan run for one Bilibili current-P URL."""
     _reserved_mvp_options = (
         output_format,
-        llm_provider,
-        llm_model,
         require_pdf,
     )
     if debug_log:
@@ -237,16 +237,54 @@ def summarize(
         raise typer.Exit(1) from exc
 
     _write_json(run.run_dir / "chunks.json", chunks)
-    chunking_warnings = ["chunking_only"]
+    try:
+        chapters = summarize_chunks(
+            ref=ref,
+            metadata=metadata,
+            chunks=chunks,
+            run_dir=run.run_dir,
+            provider=llm_provider,
+            model=llm_model,
+            style="学习笔记",
+        )
+    except SummarizationError as exc:
+        sanitized_message = redact_text(str(exc))
+        write_diagnostics(
+            run.run_dir / "diagnostics.json",
+            Diagnostics(
+                error_type="SummarizationError",
+                exit_code=1,
+                stage="summarization",
+                video_id=ref.bvid,
+                part_index=ref.part_index,
+                duration_check=media["duration_check"],
+                transcript_check=transcript["transcript_check"],
+                artifact_paths=[
+                    "diagnostics.json",
+                    "metadata.json",
+                    media["audio_path"],
+                    "transcript.json",
+                    "chunks.json",
+                    *_partial_summary_artifacts(run.run_dir),
+                ],
+                sanitized_message=sanitized_message,
+                warnings=["summarization_failed"],
+            ),
+        )
+        typer.echo(sanitized_message, err=True)
+        raise typer.Exit(1) from exc
+
+    _write_json(run.run_dir / "chapters.json", chapters)
+    summarization_warnings = ["summarization_only"]
     if transcript["transcript_check"]["status"] == "transcript_incomplete":
-        chunking_warnings.append("transcript_incomplete")
+        summarization_warnings.append("transcript_incomplete")
 
     write_diagnostics(
         run.run_dir / "diagnostics.json",
         Diagnostics(
             error_type=None,
             exit_code=0,
-            stage="chunking",
+            stage="summarization",
             video_id=ref.bvid,
             part_index=ref.part_index,
             duration_check=media["duration_check"],
@@ -257,9 +295,10 @@ def summarize(
                 media["audio_path"],
                 "transcript.json",
                 "chunks.json",
+                "chapters.json",
             ],
-            sanitized_message="Chunk generation completed.",
-            warnings=chunking_warnings,
+            sanitized_message="Summarization completed.",
+            warnings=summarization_warnings,
         ),
     )
     typer.echo(f"Prepared Bilifan run: {_display_run_path(run)}")
@@ -294,6 +333,17 @@ def _write_chunking_failure_diagnostics(
             warnings=warnings,
         ),
     )
+
+
+def _partial_summary_artifacts(run_dir: Path) -> list[str]:
+    partial_dir = run_dir / "partial_summaries"
+    if not partial_dir.is_dir():
+        return []
+    return [
+        f"partial_summaries/{path.name}"
+        for path in sorted(partial_dir.glob("*.json"))
+        if path.is_file()
+    ]
 
 
 def _create_error_run_with_retry(out: Path) -> RunPaths:

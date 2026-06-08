@@ -6,6 +6,7 @@ import bilifan.cli as cli
 from bilifan.cli import app
 from bilifan.media import MediaDownloadError
 from bilifan.metadata import MetadataIngestError
+from bilifan.summarizer import SummarizationError
 from bilifan.transcript import TranscriptError
 
 
@@ -160,6 +161,73 @@ def _install_fake_transcript_build(monkeypatch):
     return calls
 
 
+def _install_fake_summarize_chunks(monkeypatch):
+    calls = []
+
+    def fake_summarize_chunks(
+        *,
+        ref,
+        metadata,
+        chunks,
+        run_dir,
+        provider="codex-exec",
+        model="gpt-5.5",
+        style="学习笔记",
+    ):
+        calls.append(
+            {
+                "ref": ref,
+                "metadata": metadata,
+                "chunks": chunks,
+                "run_dir": run_dir,
+                "provider": provider,
+                "model": model,
+                "style": style,
+            }
+        )
+        partial_dir = run_dir / "partial_summaries"
+        partial_dir.mkdir(parents=True, exist_ok=True)
+        (partial_dir / "chunk_001.json").write_text(
+            json.dumps(
+                {
+                    "chunk_index": 1,
+                    "chapters": [
+                        {
+                            "title": "开场",
+                            "start": 0,
+                            "end": chunks["chunks"][0]["end"],
+                            "summary": "学习笔记摘要",
+                            "key_points": ["要点"],
+                            "quotes": [],
+                            "visual_anchors": [],
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "style": style,
+            "chapters": [
+                {
+                    "chapter_index": 1,
+                    "title": "开场",
+                    "start": 0,
+                    "end": chunks["chunks"][0]["end"],
+                    "timestamp_url": ref.timestamp_url(0),
+                    "summary": "学习笔记摘要",
+                    "key_points": ["要点"],
+                    "quotes": [],
+                    "visual_anchors": [],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(cli, "summarize_chunks", fake_summarize_chunks)
+    return calls
+
+
 def test_cli_help_lists_summarize_command():
     result = runner.invoke(app, ["--help"])
 
@@ -180,6 +248,7 @@ def test_summarize_declines_local_processing_consent_without_writing_config(tmp_
 
     assert result.exit_code == 1
     assert "local processing consent" in result.output
+    assert "Codex CLI" in result.output
     assert "Continue?" in result.output
     assert not (config_home / "config.json").exists()
     assert not outputs.exists()
@@ -191,6 +260,7 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     _install_fake_metadata_fetch(monkeypatch, title="CLI metadata title")
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
+    _install_fake_summarize_chunks(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -212,7 +282,7 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     assert run_dir.is_dir()
     assert diagnostics["error_type"] is None
     assert diagnostics["exit_code"] == 0
-    assert diagnostics["stage"] == "chunking"
+    assert diagnostics["stage"] == "summarization"
     assert diagnostics["video_id"] == "BV1abcDEF12G"
     assert diagnostics["part_index"] == 2
     assert diagnostics["duration_check"]["status"] == "ok"
@@ -223,8 +293,9 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
         ".bilifan/cache/BV1abcDEF12G_p2.mp3",
         "transcript.json",
         "chunks.json",
+        "chapters.json",
     ]
-    assert diagnostics["warnings"] == ["chunking_only"]
+    assert diagnostics["warnings"] == ["summarization_only"]
     assert metadata["input_url_sanitized"] == (
         "https://www.bilibili.com/video/BV1abcDEF12G?p=2"
     )
@@ -237,6 +308,9 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     chunks = json.loads((run_dir / "chunks.json").read_text(encoding="utf-8"))
     assert chunks["strategy"]["mode"] == "single_pass"
     assert chunks["chunk_count"] == 1
+    chapters = json.loads((run_dir / "chapters.json").read_text(encoding="utf-8"))
+    assert chapters["style"] == "学习笔记"
+    assert chapters["chapters"][0]["title"] == "开场"
     assert (config_home / "config.json").exists()
 
 
@@ -246,6 +320,7 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch)
     transcript_calls = _install_fake_transcript_build(monkeypatch)
+    summary_calls = _install_fake_summarize_chunks(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -275,6 +350,8 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
     assert "Prepared Bilifan run:" in result.output
     assert transcript_calls[0]["force_whisper"] is True
     assert transcript_calls[0]["transcriber"] == "auto"
+    assert summary_calls[0]["provider"] == "codex-exec"
+    assert summary_calls[0]["model"] == "gpt-5.5"
 
 
 def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
@@ -283,6 +360,7 @@ def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
+    _install_fake_summarize_chunks(monkeypatch)
 
     for url, output_id in REAL_BILIBILI_URLS:
         result = runner.invoke(
@@ -308,7 +386,7 @@ def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
         )
         assert diagnostics["video_id"] == bvid
         assert diagnostics["part_index"] == int(part)
-        assert diagnostics["stage"] == "chunking"
+        assert diagnostics["stage"] == "summarization"
 
 
 def test_summarize_records_cookie_notice_without_storing_cookie_file_name(
@@ -319,6 +397,7 @@ def test_summarize_records_cookie_notice_without_storing_cookie_file_name(
     calls = _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
+    _install_fake_summarize_chunks(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -571,6 +650,7 @@ def test_summarize_transcript_failure_writes_diagnostics_after_media(
     outputs = tmp_path / "outputs"
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch, duration_seconds=120)
+    _install_fake_summarize_chunks(monkeypatch)
 
     def fake_build_transcript(
         metadata,
@@ -632,6 +712,7 @@ def test_summarize_incomplete_transcript_writes_file_with_warning(
     outputs = tmp_path / "outputs"
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch, duration_seconds=120)
+    _install_fake_summarize_chunks(monkeypatch)
 
     def fake_build_transcript(
         metadata,
@@ -682,9 +763,10 @@ def test_summarize_incomplete_transcript_writes_file_with_warning(
     assert transcript["transcript_check"]["status"] == "transcript_incomplete"
     assert diagnostics["exit_code"] == 0
     assert diagnostics["transcript_check"]["status"] == "transcript_incomplete"
-    assert diagnostics["stage"] == "chunking"
+    assert diagnostics["stage"] == "summarization"
     assert (run_dir / "chunks.json").is_file()
-    assert diagnostics["warnings"] == ["chunking_only", "transcript_incomplete"]
+    assert (run_dir / "chapters.json").is_file()
+    assert diagnostics["warnings"] == ["summarization_only", "transcript_incomplete"]
 
 
 def test_summarize_chunking_confirmation_decline_writes_diagnostics(
@@ -695,6 +777,7 @@ def test_summarize_chunking_confirmation_decline_writes_diagnostics(
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch, duration_seconds=90 * 60)
     _install_fake_transcript_build(monkeypatch)
+    _install_fake_summarize_chunks(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -724,6 +807,69 @@ def test_summarize_chunking_confirmation_decline_writes_diagnostics(
     assert diagnostics["stage"] == "chunking"
     assert diagnostics["warnings"] == ["chunking_confirmation_required"]
     assert not (run_dir / "chunks.json").exists()
+
+
+def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
+    tmp_path, monkeypatch
+):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+    _install_fake_metadata_fetch(monkeypatch)
+    _install_fake_audio_download(monkeypatch)
+    _install_fake_transcript_build(monkeypatch)
+
+    def fake_summarize_chunks(
+        *,
+        ref,
+        metadata,
+        chunks,
+        run_dir,
+        provider="codex-exec",
+        model="gpt-5.5",
+        style="学习笔记",
+    ):
+        partial_dir = run_dir / "partial_summaries"
+        partial_dir.mkdir(parents=True, exist_ok=True)
+        (partial_dir / "chunk_001.json").write_text(
+            '{"chunk_index": 1, "chapters": []}',
+            encoding="utf-8",
+        )
+        raise SummarizationError(
+            "codex exec failed with OPENAI_API_KEY=secret /Users/jack/raw"
+        )
+
+    monkeypatch.setattr(cli, "summarize_chunks", fake_summarize_chunks)
+
+    result = runner.invoke(
+        app,
+        ["summarize", URL, "--yes-i-understand", "--out", str(outputs)],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 1
+    assert "codex exec failed" in result.output
+    assert "secret" not in result.output
+    assert "/Users/jack" not in result.output
+
+    video_dir = outputs / "BV1abcDEF12G_p2"
+    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
+    run_dir = video_dir / latest["run_dir"]
+    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+
+    assert (run_dir / "chunks.json").is_file()
+    assert not (run_dir / "chapters.json").exists()
+    assert diagnostics["error_type"] == "SummarizationError"
+    assert diagnostics["stage"] == "summarization"
+    assert diagnostics["artifact_paths"] == [
+        "diagnostics.json",
+        "metadata.json",
+        ".bilifan/cache/BV1abcDEF12G_p2.mp3",
+        "transcript.json",
+        "chunks.json",
+        "partial_summaries/chunk_001.json",
+    ]
+    assert "secret" not in diagnostics["sanitized_message"]
+    assert "/Users/jack" not in diagnostics["sanitized_message"]
 
 
 def test_summarize_debug_log_is_reserved_for_later_slice(tmp_path):

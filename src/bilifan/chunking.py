@@ -169,6 +169,15 @@ def _chunk_payload(
 ) -> dict[str, Any]:
     selected = segments[start_index:end_index]
     text = "\n".join(segment["text"] for segment in selected)
+    chunk_segments = [
+        {
+            "source_index": segment["source_index"],
+            "start": segment["start"],
+            "end": segment["end"],
+            "text": segment["text"],
+        }
+        for segment in selected
+    ]
     return {
         "chunk_index": chunk_index,
         "start": selected[0]["start"],
@@ -178,6 +187,7 @@ def _chunk_payload(
         "segment_end_index": selected[-1]["source_index"],
         "segment_count": len(selected),
         "estimated_tokens": estimate_text_tokens(text),
+        "segments": chunk_segments,
         "text": text,
     }
 
