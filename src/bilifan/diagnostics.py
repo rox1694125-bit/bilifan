@@ -87,8 +87,10 @@ _BILIBILI_URL_PATTERN = re.compile(
     r"https?://(?:www\.)?bilibili\.com/video/BV[0-9A-Za-z]{10}/?(?:\?[^\s\"'<>)]*)?"
 )
 _COOKIE_PATH_PATTERN = re.compile(
-    r"(?i)(?<![\w-])((?:--)?cookies?(?:[_-]file|[_-]path)|cookies?\s+(?:file|path)|"
-    r"cookie(?:[_-]file|[_-]path|\s+file|\s+path))(\s*[:=]\s*|\s+)"
+    r"(?i)(?<![\w-])((?:--)?cookies?(?:[_-]file|[_-]path|[_-]from[_-]browser)|"
+    r"cookies?\s+(?:file|path|from\s+browser)|"
+    r"cookie(?:[_-]file|[_-]path|[_-]from[_-]browser|\s+file|\s+path|\s+from\s+browser))"
+    r"(\s*[:=]\s*|\s+)"
     r"(?:(?![;\r\n\"'<>)]|\s+https?://|\s+[A-Za-z_][A-Za-z0-9_.-]*=).)+"
 )
 _BARE_COOKIE_FILE_PATTERN = re.compile(r"(?i)(?<!\S)\S*cookies?\S*\.txt(?!\S)")

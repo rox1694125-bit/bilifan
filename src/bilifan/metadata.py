@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
-from urllib.request import urlretrieve
+from urllib.parse import urlparse, urlunparse
+from urllib.request import urlopen
 
 from . import __version__
 from .bilibili import BilibiliPartRef
@@ -15,6 +17,10 @@ from .diagnostics import redact_text
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+METADATA_TIMEOUT_SECONDS = 120
+COVER_DOWNLOAD_TIMEOUT_SECONDS = 20
+MAX_COVER_BYTES = 5 * 1024 * 1024
+ALLOWED_COVER_HOST_SUFFIXES = (".hdslb.com",)
 
 
 class MetadataIngestError(RuntimeError):
@@ -33,7 +39,9 @@ def build_yt_dlp_metadata_command(
     cookies_file: Path | None = None,
 ) -> list[str]:
     cmd = [
-        "yt-dlp",
+        sys.executable,
+        "-m",
+        "yt_dlp",
         "--dump-single-json",
         "--skip-download",
         "--no-warnings",
@@ -59,7 +67,20 @@ def fetch_current_part_metadata(
         cookies_from_browser=cookies_from_browser,
         cookies_file=cookies_file,
     )
-    result = runner(cmd, check=False, capture_output=True, text=True)
+    try:
+        result = runner(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=METADATA_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise MetadataIngestError(
+            f"yt-dlp timed out after {METADATA_TIMEOUT_SECONDS} seconds.",
+        ) from exc
+    except OSError as exc:
+        raise MetadataIngestError(f"yt-dlp failed to start: {exc}") from exc
     if result.returncode != 0:
         detail = result.stderr or result.stdout or "yt-dlp returned no error output."
         raise MetadataIngestError(
@@ -98,6 +119,10 @@ def metadata_from_yt_dlp_json(
 ) -> dict[str, Any]:
     parts = _parts(payload, ref)
     current_part = _current_part(parts, ref.part_index)
+    if _has_explicit_part_list(payload) and not current_part:
+        raise MetadataIngestError(
+            f"yt-dlp metadata did not contain requested part p={ref.part_index}."
+        )
     raw_current_entry = _current_entry(payload, ref.part_index)
 
     return {
@@ -106,7 +131,7 @@ def metadata_from_yt_dlp_json(
         "input_url_sanitized": ref.sanitized_url,
         "video_id": ref.bvid,
         "part_index": ref.part_index,
-        "cid": _first_text(payload.get("cid"), current_part.get("cid")),
+        "cid": _first_text(current_part.get("cid"), payload.get("cid")),
         "title": _first_text(payload.get("title"), payload.get("fulltitle")),
         "part_title": _first_text(
             _entry_title(raw_current_entry),
@@ -117,7 +142,7 @@ def metadata_from_yt_dlp_json(
         "owner_name": _owner_name(payload),
         "description": _first_text(payload.get("description")),
         "tags": _tags(payload),
-        "cover_url": _cover_url(payload),
+        "cover_url": _sanitize_public_url(_cover_url(payload)),
         "cover_path": cover_path,
         "duration": _duration_for_current_part(payload, raw_current_entry),
         "parts": parts,
@@ -162,6 +187,10 @@ def _current_part(parts: list[dict[str, Any]], part_index: int) -> dict[str, Any
         if part.get("part_index") == part_index:
             return part
     return {}
+
+
+def _has_explicit_part_list(payload: dict[str, Any]) -> bool:
+    return isinstance(payload.get("entries"), list) or isinstance(payload.get("pages"), list)
 
 
 def _current_entry(payload: dict[str, Any], part_index: int) -> dict[str, Any]:
@@ -278,7 +307,7 @@ def _subtitles(payload: dict[str, Any]) -> list[dict[str, str]]:
                 {
                     "language": _first_text(language),
                     "name": _first_text(entry.get("name")),
-                    "url": _first_text(entry.get("url")),
+                    "url": _sanitize_public_url(_first_text(entry.get("url"))),
                     "ext": _first_text(entry.get("ext")),
                 }
             )
@@ -286,16 +315,33 @@ def _subtitles(payload: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _download_cover(run_dir: Path, cover_url: str) -> str:
-    if not cover_url:
+    safe_cover_url = _sanitize_public_url(cover_url)
+    if not safe_cover_url or not _is_allowed_cover_url(safe_cover_url):
         return ""
 
     cover_path = run_dir / "assets" / "cover.jpg"
     try:
         cover_path.parent.mkdir(parents=True, exist_ok=True)
-        urlretrieve(cover_url, cover_path)
+        with urlopen(safe_cover_url, timeout=COVER_DOWNLOAD_TIMEOUT_SECONDS) as response:
+            data = response.read(MAX_COVER_BYTES + 1)
+        if len(data) > MAX_COVER_BYTES:
+            return ""
+        cover_path.write_bytes(data)
     except (OSError, URLError, ValueError):
         return ""
     return "assets/cover.jpg"
+
+
+def _sanitize_public_url(raw_url: str) -> str:
+    parsed = urlparse(raw_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+
+
+def _is_allowed_cover_url(raw_url: str) -> bool:
+    host = urlparse(raw_url).hostname or ""
+    return any(host == suffix.removeprefix(".") or host.endswith(suffix) for suffix in ALLOWED_COVER_HOST_SUFFIXES)
 
 
 def _yt_dlp_version() -> str:

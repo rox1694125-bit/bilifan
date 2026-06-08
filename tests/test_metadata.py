@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from bilifan.bilibili import parse_bilibili_url
 from bilifan.metadata import (
     MetadataIngestError,
+    build_yt_dlp_metadata_command,
     fetch_current_part_metadata,
     metadata_from_yt_dlp_json,
 )
@@ -39,6 +41,7 @@ def test_fetch_yt_dlp_uses_sanitized_url_and_keeps_cookies_out_of_metadata(tmp_p
     )
 
     cmd = calls[0][0]
+    assert cmd[:3] == [sys.executable, "-m", "yt_dlp"]
     assert "--dump-single-json" in cmd
     assert "--skip-download" in cmd
     assert "--no-warnings" in cmd
@@ -60,15 +63,25 @@ def test_fetch_yt_dlp_uses_sanitized_url_and_keeps_cookies_out_of_metadata(tmp_p
     assert "/Users/jack" not in result_text
 
 
+def test_build_yt_dlp_command_uses_current_python_module_entrypoint():
+    ref = parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=1")
+
+    cmd = build_yt_dlp_metadata_command(ref)
+
+    assert cmd[:3] == [sys.executable, "-m", "yt_dlp"]
+    assert "yt-dlp" not in cmd[:1]
+
+
 def test_metadata_from_yt_dlp_json_maps_current_part_fields():
     ref = parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=2")
     payload = {
         "id": ref.bvid,
+        "cid": "top-level-cid",
         "title": "Collection title",
         "description": "Description text",
         "uploader": "Owner Name",
         "tags": ["tag-a", "tag-b"],
-        "thumbnail": "https://i0.hdslb.com/bfs/archive/cover.jpg",
+        "thumbnail": "https://i0.hdslb.com/bfs/archive/cover.jpg?token=secret",
         "duration": 618,
         "entries": [
             {
@@ -90,7 +103,7 @@ def test_metadata_from_yt_dlp_json_maps_current_part_fields():
             "zh-Hans": [
                 {
                     "name": "Chinese",
-                    "url": "https://example.com/subtitle.srt",
+                    "url": "https://example.com/subtitle.srt?token=secret",
                     "ext": "srt",
                 }
             ]
@@ -136,6 +149,26 @@ def test_metadata_from_yt_dlp_json_maps_current_part_fields():
     assert result["ffmpeg_version"] == ""
 
 
+def test_metadata_from_yt_dlp_json_rejects_missing_requested_part():
+    ref = parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=2")
+    payload = {
+        "title": "Collection title",
+        "entries": [
+            {"page": 1, "cid": "111", "part": "Part one", "duration": 300},
+        ],
+    }
+
+    with pytest.raises(MetadataIngestError, match="requested part p=2"):
+        metadata_from_yt_dlp_json(
+            ref,
+            payload,
+            generated_at="2026-06-08T00:00:00+00:00",
+            yt_dlp_version="2026.3.17",
+            ffmpeg_version="",
+            cover_path="",
+        )
+
+
 def test_fetch_current_part_metadata_raises_redacted_error_on_yt_dlp_failure(tmp_path):
     raw_url = (
         "https://www.bilibili.com/video/BV1abcDEF12G"
@@ -150,6 +183,7 @@ def test_fetch_current_part_metadata_raises_redacted_error_on_yt_dlp_failure(tmp
             "",
             (
                 "failed with --cookies-file /Users/jack/Downloads/bili-cookies.txt "
+                "--cookies-from-browser chrome "
                 f"for {raw_url} Cookie: SESSDATA=secret; bili_jct=token"
             ),
         )
@@ -169,5 +203,25 @@ def test_fetch_current_part_metadata_raises_redacted_error_on_yt_dlp_failure(tmp
     assert "vd_source" not in message
     assert "secret-token" not in message
     assert "bili-cookies.txt" not in message
+    assert "chrome" not in message
     assert "/Users/jack" not in message
     assert "SESSDATA=secret" not in message
+
+
+def test_fetch_current_part_metadata_wraps_timeout_and_start_failure(tmp_path):
+    ref = parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=1")
+
+    def timeout_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, timeout=kwargs["timeout"])
+
+    with pytest.raises(MetadataIngestError, match="timed out"):
+        fetch_current_part_metadata(ref, tmp_path, runner=timeout_run)
+
+    def start_failure_run(cmd, **kwargs):
+        raise FileNotFoundError("/Users/jack/.venv/bin/yt-dlp")
+
+    with pytest.raises(MetadataIngestError) as excinfo:
+        fetch_current_part_metadata(ref, tmp_path, runner=start_failure_run)
+
+    assert "failed to start" in str(excinfo.value)
+    assert "/Users/jack" not in str(excinfo.value)
