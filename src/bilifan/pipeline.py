@@ -64,6 +64,10 @@ def default_progress(stage: str, status: str, message: str) -> None:
     return None
 
 
+def validate_output_format(raw_format: str) -> None:
+    _parse_output_formats(raw_format)
+
+
 def run_summarize_pipeline(
     request: PipelineRequest,
     *,
@@ -215,9 +219,15 @@ def run_summarize_pipeline(
             long_video_confirmed=request.yes_i_understand,
         )
     except LongVideoConfirmationRequired as exc:
-        if request.confirm_long_video is None or not request.confirm_long_video(
-            exc.sanitized_message
-        ):
+        if request.confirm_long_video is None:
+            _progress(
+                progress_callback,
+                PipelineStage.CHUNKING,
+                "failed",
+                exc.sanitized_message,
+            )
+            raise
+        if not request.confirm_long_video(exc.sanitized_message):
             _write_chunking_failure_diagnostics(
                 run,
                 ref,

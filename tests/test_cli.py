@@ -979,6 +979,30 @@ def test_summarize_invalid_format_fails_before_creating_run(tmp_path):
     assert not outputs.exists()
 
 
+def test_summarize_invalid_format_fails_before_consent(tmp_path):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+
+    result = runner.invoke(
+        app,
+        [
+            "summarize",
+            URL,
+            "--format",
+            "png",
+            "--out",
+            str(outputs),
+        ],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 2
+    assert "Unsupported --format value: png" in result.output
+    assert "Continue?" not in result.output
+    assert not (config_home / "config.json").exists()
+    assert not outputs.exists()
+
+
 def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
     tmp_path, monkeypatch
 ):

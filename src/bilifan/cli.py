@@ -12,7 +12,7 @@ from .config import (
 from .diagnostics import redact_text
 from .media import MediaDownloadError
 from .metadata import MetadataIngestError
-from .pipeline import PipelineRequest, run_summarize_pipeline
+from .pipeline import PipelineRequest, run_summarize_pipeline, validate_output_format
 from .renderer import PdfExportError
 from .summarizer import SummarizationError
 from .transcript import TranscriptError
@@ -58,6 +58,10 @@ def summarize(
     """Prepare a local Bilifan run for one Bilibili current-P URL."""
     if debug_log:
         raise typer.BadParameter("--debug-log is reserved for a later slice.")
+    try:
+        validate_output_format(output_format)
+    except ValueError as exc:
+        raise typer.BadParameter(redact_text(str(exc))) from exc
 
     uses_cookies = cookies_from_browser is not None or cookies_file is not None
     _ensure_consent(uses_cookies=uses_cookies, yes_i_understand=yes_i_understand)

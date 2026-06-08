@@ -1,6 +1,10 @@
+import json
 from pathlib import Path
 
+import pytest
+
 import bilifan.pipeline as pipeline
+from bilifan.chunking import LongVideoConfirmationRequired
 from bilifan.pipeline import (
     PipelineRequest,
     PipelineResult,
@@ -256,4 +260,124 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
         ("chunking", "running"),
         ("summarization", "running"),
         ("render", "running"),
+    ]
+
+
+def test_run_summarize_pipeline_without_long_video_callback_does_not_write_failure_diagnostics(
+    tmp_path, monkeypatch
+):
+    progress_events: list[tuple[str, str, str]] = []
+
+    def record_progress(stage: str, status: str, message: str) -> None:
+        progress_events.append((stage, status, message))
+
+    def fake_fetch_current_part_metadata(
+        ref,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        return {
+            "bilifan_version": "0.1.0",
+            "generated_at": "2026-06-08T00:00:00+00:00",
+            "input_url_sanitized": ref.sanitized_url,
+            "video_id": ref.bvid,
+            "part_index": ref.part_index,
+            "cid": "123456",
+            "title": "Long video",
+            "part_title": "Long video",
+            "owner_name": "Mock Owner",
+            "description": "",
+            "tags": [],
+            "cover_url": "",
+            "cover_path": "",
+            "duration": 100 * 60,
+            "parts": [],
+            "subtitles": [],
+            "yt_dlp_version": "mock",
+            "ffmpeg_version": "",
+        }
+
+    def fake_download_current_part_audio(
+        ref,
+        metadata,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        audio_path = f".bilifan/cache/{ref.output_id}.mp3"
+        (run_dir / audio_path).parent.mkdir(parents=True, exist_ok=True)
+        (run_dir / audio_path).write_bytes(b"audio")
+        return {
+            "audio_path": audio_path,
+            "duration_seconds": 100 * 60,
+            "duration_check": {
+                "status": "ok",
+                "metadata_seconds": metadata.get("duration"),
+                "audio_seconds": 100 * 60,
+                "difference_ratio": 0,
+                "tolerance_ratio": 0.05,
+                "attempts": 1,
+            },
+        }
+
+    def fake_build_transcript(
+        metadata,
+        media,
+        run_dir,
+        *,
+        force_whisper=False,
+        transcriber="auto",
+    ):
+        return {
+            "source": "whisper",
+            "language": "zh",
+            "model": "turbo",
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": media["duration_seconds"],
+                    "text": "long transcript",
+                    "language": "zh",
+                    "source": "whisper",
+                }
+            ],
+            "transcript_check": {
+                "status": "ok",
+                "audio_seconds": media["duration_seconds"],
+                "last_segment_end": media["duration_seconds"],
+                "difference_seconds": 0,
+                "tolerance_seconds": 10,
+                "segment_count": 1,
+            },
+        }
+
+    monkeypatch.setattr(
+        pipeline, "fetch_current_part_metadata", fake_fetch_current_part_metadata
+    )
+    monkeypatch.setattr(
+        pipeline, "download_current_part_audio", fake_download_current_part_audio
+    )
+    monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
+
+    with pytest.raises(LongVideoConfirmationRequired):
+        pipeline.run_summarize_pipeline(
+            PipelineRequest(
+                url="https://www.bilibili.com/video/BV1abcDEF12G",
+                out=tmp_path,
+                output_format="html",
+            ),
+            progress_callback=record_progress,
+        )
+
+    latest = json.loads(
+        (tmp_path / "BV1abcDEF12G_p1" / "latest.json").read_text(encoding="utf-8")
+    )
+    run_dir = tmp_path / "BV1abcDEF12G_p1" / latest["run_dir"]
+
+    assert not (run_dir / "diagnostics.json").exists()
+    assert ("chunking", "failed") in [
+        (stage, status) for stage, status, _message in progress_events
     ]
