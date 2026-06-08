@@ -5,7 +5,7 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-OUTPUT_ID_PATTERN = re.compile(r"BV[0-9A-Za-z]{10}_p[1-9][0-9]*")
+OUTPUT_ID_PATTERN = re.compile(r"(?:BV[0-9A-Za-z]{10}_p[1-9][0-9]*|_errors)")
 RUN_ID_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}")
 CHUNK_FILE_PATTERN = re.compile(r"chunk_[0-9]+\.json")
 ROOT_FILES = {
@@ -62,7 +62,7 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
                 "status": status,
                 "stage": _text(diagnostics.get("stage")),
                 "generated_at": _text(latest.get("generated_at")),
-                "artifacts": _artifact_names(run_dir),
+                "artifacts": _artifact_links(f"{output_id}/runs/{run_id}", run_dir),
             }
         )
     return sorted(items, key=lambda item: item["generated_at"], reverse=True)
@@ -138,14 +138,15 @@ def _read_json_object(path: Path | None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _artifact_names(run_dir: Path) -> dict[str, str]:
+def _artifact_links(run_key: str, run_dir: Path) -> dict[str, str]:
+    prefix = f"/api/runs/{run_key}/files"
     artifacts: dict[str, str] = {}
     if _safe_existing_file(run_dir, "report.html") is not None:
-        artifacts["html"] = "report.html"
+        artifacts["html"] = f"{prefix}/report.html"
     if _safe_existing_file(run_dir, "report.pdf") is not None:
-        artifacts["pdf"] = "report.pdf"
+        artifacts["pdf"] = f"{prefix}/report.pdf"
     if _safe_existing_file(run_dir, "diagnostics.json") is not None:
-        artifacts["diagnostics"] = "diagnostics.json"
+        artifacts["diagnostics"] = f"{prefix}/diagnostics.json"
     return artifacts
 
 

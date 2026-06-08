@@ -1,14 +1,31 @@
 import json
 import threading
+import time
 
 from fastapi.testclient import TestClient
 
-from bilifan.pipeline import PipelineResult
+from bilifan.pipeline import PipelineResult, PipelineRunError
 from bilifan.web.app import create_app
+from bilifan.web.jobs import JobManager
 
 
 def _headers(token="test-token"):
     return {"X-Bilifan-Token": token}
+
+
+def _accept_consent(client):
+    response = client.post("/api/consent", headers=_headers())
+    assert response.status_code == 200
+
+
+def _wait_for_status(client, status: str, *, timeout: float = 2.0):
+    deadline = time.monotonic() + timeout
+    state = client.get("/api/jobs/current", headers=_headers()).json()
+    while state["status"] != status and time.monotonic() < deadline:
+        time.sleep(0.01)
+        state = client.get("/api/jobs/current", headers=_headers()).json()
+    assert state["status"] == status
+    return state
 
 
 def _make_run(outputs, output_id="BV1abcDEF12G_p1", run_id="2026-06-08_120000"):
@@ -74,7 +91,8 @@ def test_query_token_works_for_config_and_file_route(tmp_path):
     assert file_response.text == "<html></html>"
 
 
-def test_job_success_lifecycle(tmp_path):
+def test_job_success_lifecycle(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
     calls = []
 
     def fake_pipeline(request, *, progress_callback):
@@ -104,6 +122,7 @@ def test_job_success_lifecycle(tmp_path):
         run_jobs_inline=True,
     )
     client = TestClient(app)
+    _accept_consent(client)
 
     response = client.post(
         "/api/jobs",
@@ -118,6 +137,7 @@ def test_job_success_lifecycle(tmp_path):
     )
 
     assert response.status_code == 200
+    assert response.json()["status"] == "running"
     state = client.get("/api/jobs/current", headers=_headers()).json()
     assert state["status"] == "succeeded"
     assert state["stage"] == "render"
@@ -127,11 +147,12 @@ def test_job_success_lifecycle(tmp_path):
         "html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
         "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
     }
-    assert state["progress"][0] == {"stage": "preflight", "status": "pending"}
+    assert all(item["status"] == "done" for item in state["progress"])
     assert calls[0].output_format == "html"
 
 
-def test_job_payload_uses_web_defaults(tmp_path):
+def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
     calls = []
 
     def fake_pipeline(request, *, progress_callback):
@@ -153,6 +174,7 @@ def test_job_payload_uses_web_defaults(tmp_path):
         run_jobs_inline=True,
     )
     client = TestClient(app)
+    _accept_consent(client)
 
     response = client.post(
         "/api/jobs",
@@ -168,7 +190,23 @@ def test_job_payload_uses_web_defaults(tmp_path):
     assert calls[0].allow_long_video is False
 
 
-def test_running_job_conflict(tmp_path):
+def test_job_requires_local_processing_consent(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    app = create_app(outputs=tmp_path / "outputs", token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/jobs",
+        headers=_headers(),
+        json={"url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1"},
+    )
+
+    assert response.status_code == 409
+    assert "consent" in response.json()["detail"]
+
+
+def test_running_job_conflict(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
     release = threading.Event()
     started = threading.Event()
 
@@ -197,6 +235,7 @@ def test_running_job_conflict(tmp_path):
         run_jobs_inline=False,
     )
     client = TestClient(app)
+    _accept_consent(client)
 
     payload = {
         "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
@@ -212,6 +251,7 @@ def test_running_job_conflict(tmp_path):
 
     assert first.status_code == 200
     assert second.status_code == 409
+    _wait_for_status(client, "succeeded")
 
 
 def test_run_files_endpoint_returns_safe_file_list(tmp_path):
@@ -276,7 +316,10 @@ def test_run_file_endpoint_maps_not_found_and_invalid_paths(tmp_path):
     assert non_whitelisted.status_code == 400
 
 
-def test_job_failure_lifecycle_sanitizes_error_message_and_marks_stage_failed(tmp_path):
+def test_job_failure_lifecycle_sanitizes_error_message_and_marks_stage_failed(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
     secret = "sk-test-secret-token"
 
     def fake_pipeline(request, *, progress_callback):
@@ -291,6 +334,7 @@ def test_job_failure_lifecycle_sanitizes_error_message_and_marks_stage_failed(tm
         run_jobs_inline=True,
     )
     client = TestClient(app)
+    _accept_consent(client)
 
     response = client.post(
         "/api/jobs",
@@ -314,7 +358,75 @@ def test_job_failure_lifecycle_sanitizes_error_message_and_marks_stage_failed(tm
     assert "<redacted>" in state["message"] or "<redacted-path>" in state["message"]
 
 
-def test_job_progress_message_is_sanitized(tmp_path):
+def test_job_pipeline_run_error_exposes_diagnostics_link(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+
+    def fake_pipeline(request, *, progress_callback):
+        progress_callback("metadata", "running", "Fetching metadata.")
+        raise PipelineRunError(
+            "metadata failed",
+            run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
+            diagnostics_path=request.out
+            / "BV1abcDEF12G_p1"
+            / "runs"
+            / "2026-06-08_120000"
+            / "diagnostics.json",
+            artifact_paths=["diagnostics.json"],
+            warnings=["metadata_failed"],
+        )
+
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/jobs",
+        headers=_headers(),
+        json={"url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1"},
+    )
+
+    assert response.status_code == 200
+    state = client.get("/api/jobs/current", headers=_headers()).json()
+    assert state["status"] == "failed"
+    assert state["artifacts"] == {
+        "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json"
+    }
+    assert state["warnings"] == ["metadata_failed"]
+
+
+def test_job_ignores_late_progress_from_previous_job(tmp_path):
+    callbacks = []
+
+    def fake_pipeline(request, *, progress_callback):
+        callbacks.append(progress_callback)
+        progress_callback("metadata", "running", "running")
+        return PipelineResult(
+            run_key=f"BV1abcDEF12G_p1/runs/2026-06-08_12000{len(callbacks)}",
+            run_dir=tmp_path,
+            diagnostics_path=tmp_path / "diagnostics.json",
+            artifact_paths=[],
+            warnings=[],
+        )
+
+    manager = JobManager(runner=fake_pipeline, run_jobs_inline=True)
+    manager.start(object())
+    manager.start(object())
+
+    callbacks[0]("metadata", "running", "late first job")
+
+    state = manager.current().as_dict()
+    assert state["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120002"
+    assert state["message"] == "Report ready."
+
+
+def test_job_progress_message_is_sanitized(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
     secret = "SESSDATA=secret"
     release = threading.Event()
     started = threading.Event()
@@ -344,6 +456,7 @@ def test_job_progress_message_is_sanitized(tmp_path):
         run_jobs_inline=False,
     )
     client = TestClient(app)
+    _accept_consent(client)
 
     response = client.post(
         "/api/jobs",
@@ -357,3 +470,4 @@ def test_job_progress_message_is_sanitized(tmp_path):
     release.set()
     assert secret not in state["message"]
     assert str(tmp_path) not in state["message"]
+    _wait_for_status(client, "succeeded")

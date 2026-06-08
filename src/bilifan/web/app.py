@@ -85,6 +85,12 @@ def create_app(
         payload: JobCreatePayload,
         _: None = Depends(require_token),
     ) -> dict[str, object]:
+        config = read_config(default_config_path())
+        if config.local_processing_notice_accepted_at is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Local processing consent is required before starting a job.",
+            )
         request = PipelineRequest(
             url=payload.url,
             out=outputs,

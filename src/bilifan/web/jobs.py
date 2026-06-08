@@ -5,7 +5,7 @@ from threading import Lock, Thread
 from uuid import uuid4
 
 from bilifan.diagnostics import redact_text
-from bilifan.pipeline import PipelineResult
+from bilifan.pipeline import PipelineResult, PipelineRunError
 
 STAGES = [
     "preflight",
@@ -77,22 +77,43 @@ class JobManager:
                 warnings=list(self._current.warnings),
             )
 
-    def progress(self, stage: str, status: str, message: str) -> None:
+    def _progress(self, job_id: str, stage: str, status: str, message: str) -> None:
         with self._lock:
+            if self._current.job_id != job_id or self._current.status != "running":
+                return
             self._current.stage = stage
             self._current.message = redact_text(message)
-            if self._current.status == "running" or status == "failed":
-                self._current.status = "failed" if status == "failed" else "running"
+            if status == "failed":
+                self._current.status = "failed"
             for item in self._current.progress:
                 if item["stage"] == stage:
                     item["status"] = status
                     break
 
     def _run(self, state: JobState, request) -> None:
+        def progress_callback(stage: str, status: str, message: str) -> None:
+            self._progress(state.job_id, stage, status, message)
+
         try:
-            result = self._runner(request, progress_callback=self.progress)
+            result = self._runner(request, progress_callback=progress_callback)
             if not isinstance(result, PipelineResult):
                 raise RuntimeError("Pipeline runner returned no result.")
+        except PipelineRunError as exc:
+            with self._lock:
+                if self._current.job_id != state.job_id:
+                    return
+                self._current.message = redact_text(str(exc))
+                self._current.status = "failed"
+                failed_stage = self._current.stage or "preflight"
+                self._current.stage = failed_stage
+                self._current.run_key = exc.run_key
+                self._current.artifacts = _artifact_links(exc.run_key, exc.artifact_paths)
+                self._current.warnings = list(exc.warnings)
+                for item in self._current.progress:
+                    if item["stage"] == failed_stage:
+                        item["status"] = "failed"
+                        break
+            return
         except Exception as exc:
             message = redact_text(str(exc))
             with self._lock:
@@ -118,6 +139,8 @@ class JobManager:
             self._current.run_key = result.run_key
             self._current.artifacts = artifacts
             self._current.warnings = list(result.warnings)
+            for item in self._current.progress:
+                item["status"] = "done"
 
 
 def _artifact_links(run_key: str, artifact_paths: list[str]) -> dict[str, str]:

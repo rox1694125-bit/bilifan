@@ -12,7 +12,12 @@ from .config import (
 from .diagnostics import redact_text
 from .media import MediaDownloadError
 from .metadata import MetadataIngestError
-from .pipeline import PipelineRequest, run_summarize_pipeline, validate_output_format
+from .pipeline import (
+    PipelineRequest,
+    PipelineRunError,
+    run_summarize_pipeline,
+    validate_output_format,
+)
 from .renderer import PdfExportError
 from .summarizer import SummarizationError
 from .transcript import TranscriptError
@@ -89,6 +94,11 @@ def summarize(
         )
     except ValueError as exc:
         raise typer.BadParameter(redact_text(str(exc))) from exc
+    except PipelineRunError as exc:
+        if exc.exit_code == 2:
+            raise typer.BadParameter(redact_text(str(exc))) from exc
+        typer.echo(redact_text(str(exc)), err=True)
+        raise typer.Exit(exc.exit_code) from exc
     except (
         MetadataIngestError,
         MediaDownloadError,

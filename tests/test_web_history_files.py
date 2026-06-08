@@ -71,6 +71,11 @@ def test_list_latest_runs_reads_outputs_latest_json(tmp_path):
     assert items[0]["status"] == "succeeded"
     assert items[0]["stage"] == "render"
     assert items[0]["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120000"
+    assert items[0]["artifacts"] == {
+        "html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
+        "pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf",
+        "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
+    }
 
 
 @pytest.mark.parametrize("metadata", [{}, {"title": 123}, {"title": ""}])
@@ -285,6 +290,17 @@ def test_resolve_run_file_accepts_numeric_partial_summary_chunk(tmp_path):
     )
 
     assert path.name == "chunk_001.json"
+
+
+def test_resolve_run_file_allows_error_run_diagnostics(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = outputs / "_errors" / "runs" / "2026-06-08_120000"
+    run_dir.mkdir(parents=True)
+    (run_dir / "diagnostics.json").write_text("{}", encoding="utf-8")
+
+    path = resolve_run_file(outputs, "_errors", "2026-06-08_120000", "diagnostics.json")
+
+    assert path == run_dir / "diagnostics.json"
 
 
 def test_resolve_run_file_rejects_symlink_escape(tmp_path):
