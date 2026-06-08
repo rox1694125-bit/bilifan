@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Mapping
 
 NOTICE_VERSION = "2026-06-08"
-ALLOWED_ACCEPTED_VIA = frozenset({"cli", "prompt", "yes-i-understand", "test"})
+ALLOWED_ACCEPTED_VIA = frozenset(
+    {"cli", "prompt", "yes-i-understand", "test", "web-ui"}
+)
 
 
 @dataclass(frozen=True)

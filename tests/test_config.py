@@ -157,3 +157,11 @@ def test_write_consent_rejects_invalid_accepted_via_without_writing_secret(tmp_p
 
     assert config_path.read_text(encoding="utf-8") == original_content
     assert sensitive_value not in config_path.read_text(encoding="utf-8")
+
+
+def test_write_consent_accepts_web_ui_source(tmp_path):
+    config_path = tmp_path / "config" / "bilifan" / "config.json"
+
+    write_consent(config_path, local_processing=True, accepted_via="web-ui")
+
+    assert read_config(config_path).accepted_via == "web-ui"
