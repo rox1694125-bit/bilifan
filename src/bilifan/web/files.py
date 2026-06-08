@@ -7,6 +7,7 @@ from typing import Any
 
 OUTPUT_ID_PATTERN = re.compile(r"BV[0-9A-Za-z]{10}_p[1-9][0-9]*")
 RUN_ID_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}")
+CHUNK_FILE_PATTERN = re.compile(r"chunk_[0-9]+\.json")
 ROOT_FILES = {
     "metadata.json",
     "transcript.json",
@@ -28,7 +29,7 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
             continue
         try:
             latest = json.loads(latest_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError):
+        except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError):
             continue
         if not isinstance(latest, dict):
             continue
@@ -112,7 +113,7 @@ def _run_id_from_latest(latest: dict[str, Any]) -> str:
 def _read_json_object(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -133,7 +134,7 @@ def _text(value: Any) -> str:
 
 
 def _is_valid_chunk_file(name: str) -> bool:
-    return name.startswith("chunk_") and name.endswith(".json")
+    return CHUNK_FILE_PATTERN.fullmatch(name) is not None
 
 
 def _is_allowed_run_file(path: PurePosixPath) -> bool:
