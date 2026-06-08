@@ -28,7 +28,7 @@ class JobState:
         default_factory=lambda: [{"stage": stage, "status": "pending"} for stage in STAGES]
     )
     run_key: str | None = None
-    artifacts: list[dict[str, str]] = field(default_factory=list)
+    artifacts: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
@@ -39,7 +39,7 @@ class JobState:
             "message": self.message,
             "progress": [dict(item) for item in self.progress],
             "run_key": self.run_key,
-            "artifacts": [dict(item) for item in self.artifacts],
+            "artifacts": dict(self.artifacts),
             "warnings": list(self.warnings),
         }
 
@@ -73,14 +73,14 @@ class JobManager:
                 message=self._current.message,
                 progress=[dict(item) for item in self._current.progress],
                 run_key=self._current.run_key,
-                artifacts=[dict(item) for item in self._current.artifacts],
+                artifacts=dict(self._current.artifacts),
                 warnings=list(self._current.warnings),
             )
 
     def progress(self, stage: str, status: str, message: str) -> None:
         with self._lock:
             self._current.stage = stage
-            self._current.message = message
+            self._current.message = redact_text(message)
             if self._current.status == "running" or status == "failed":
                 self._current.status = "failed" if status == "failed" else "running"
             for item in self._current.progress:
@@ -108,19 +108,25 @@ class JobManager:
                         break
             return
 
-        artifacts = [
-            {
-                "name": path,
-                "url": f"/api/runs/{result.run_key}/files/{path}",
-            }
-            for path in result.artifact_paths
-        ]
+        artifacts = _artifact_links(result.run_key, result.artifact_paths)
         with self._lock:
             if self._current.job_id != state.job_id:
                 return
             self._current.status = "succeeded"
             self._current.stage = "render"
-            self._current.message = ""
+            self._current.message = "Report ready."
             self._current.run_key = result.run_key
             self._current.artifacts = artifacts
             self._current.warnings = list(result.warnings)
+
+
+def _artifact_links(run_key: str, artifact_paths: list[str]) -> dict[str, str]:
+    prefix = f"/api/runs/{run_key}/files"
+    artifacts: dict[str, str] = {}
+    if "report.html" in artifact_paths:
+        artifacts["html"] = f"{prefix}/report.html"
+    if "report.pdf" in artifact_paths:
+        artifacts["pdf"] = f"{prefix}/report.pdf"
+    if "diagnostics.json" in artifact_paths:
+        artifacts["diagnostics"] = f"{prefix}/diagnostics.json"
+    return artifacts

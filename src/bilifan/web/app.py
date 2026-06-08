@@ -14,13 +14,20 @@ from .jobs import JobManager
 from .security import TokenAuth
 from .ui import render_app_html
 
+WEB_DEFAULTS = {
+    "format": "html,pdf",
+    "force_whisper": False,
+    "require_pdf": False,
+    "allow_long_video": False,
+}
+
 
 class JobCreatePayload(BaseModel):
     url: str
-    format: str
-    force_whisper: bool
-    require_pdf: bool
-    allow_long_video: bool
+    format: str = WEB_DEFAULTS["format"]
+    force_whisper: bool = WEB_DEFAULTS["force_whisper"]
+    require_pdf: bool = WEB_DEFAULTS["require_pdf"]
+    allow_long_video: bool = WEB_DEFAULTS["allow_long_video"]
 
 
 def create_app(
@@ -56,7 +63,8 @@ def create_app(
                 "cookies": config.cookies_notice_accepted_at is not None,
                 "accepted_via": config.accepted_via,
                 "notice_version": config.notice_version,
-            }
+            },
+            "defaults": dict(WEB_DEFAULTS),
         }
 
     @app.post("/api/consent")
@@ -90,7 +98,7 @@ def create_app(
         state = jobs.start(request)
         if state is None:
             raise HTTPException(status_code=409, detail="A job is already running.")
-        return state.as_dict()
+        return {"job_id": state.job_id, "status": "running"}
 
     @app.get("/api/jobs/current")
     def current_job(_: None = Depends(require_token)) -> dict[str, object]:

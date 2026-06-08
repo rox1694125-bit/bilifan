@@ -43,6 +43,12 @@ def test_config_and_consent_endpoints(tmp_path, monkeypatch):
 
     before = client.get("/api/config", headers=_headers()).json()
     assert before["consent"]["local_processing"] is False
+    assert before["defaults"] == {
+        "format": "html,pdf",
+        "force_whisper": False,
+        "require_pdf": False,
+        "allow_long_video": False,
+    }
 
     response = client.post("/api/consent", headers=_headers())
     assert response.status_code == 200
@@ -115,9 +121,51 @@ def test_job_success_lifecycle(tmp_path):
     state = client.get("/api/jobs/current", headers=_headers()).json()
     assert state["status"] == "succeeded"
     assert state["stage"] == "render"
+    assert state["message"] == "Report ready."
     assert state["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120000"
+    assert state["artifacts"] == {
+        "html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
+        "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
+    }
     assert state["progress"][0] == {"stage": "preflight", "status": "pending"}
     assert calls[0].output_format == "html"
+
+
+def test_job_payload_uses_web_defaults(tmp_path):
+    calls = []
+
+    def fake_pipeline(request, *, progress_callback):
+        calls.append(request)
+        run_dir = request.out / "BV1abcDEF12G_p1" / "runs" / "2026-06-08_120000"
+        return PipelineResult(
+            run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
+            run_dir=run_dir,
+            diagnostics_path=run_dir / "diagnostics.json",
+            artifact_paths=[],
+            warnings=[],
+        )
+
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/jobs",
+        headers=_headers(),
+        json={"url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "running"
+    assert calls[0].output_format == "html,pdf"
+    assert calls[0].force_whisper is False
+    assert calls[0].require_pdf is False
+    assert calls[0].allow_long_video is False
 
 
 def test_running_job_conflict(tmp_path):
@@ -264,3 +312,48 @@ def test_job_failure_lifecycle_sanitizes_error_message_and_marks_stage_failed(tm
     assert secret not in state["message"]
     assert str(tmp_path) not in state["message"]
     assert "<redacted>" in state["message"] or "<redacted-path>" in state["message"]
+
+
+def test_job_progress_message_is_sanitized(tmp_path):
+    secret = "SESSDATA=secret"
+    release = threading.Event()
+    started = threading.Event()
+
+    def fake_pipeline(request, *, progress_callback):
+        progress_callback("metadata", "running", f"using {secret} at {tmp_path}/cookies.txt")
+        started.set()
+        release.wait(timeout=5)
+        return PipelineResult(
+            run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
+            run_dir=tmp_path / "outputs" / "BV1abcDEF12G_p1" / "runs" / "2026-06-08_120000",
+            diagnostics_path=tmp_path
+            / "outputs"
+            / "BV1abcDEF12G_p1"
+            / "runs"
+            / "2026-06-08_120000"
+            / "diagnostics.json",
+            artifact_paths=[],
+            warnings=[],
+        )
+
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=False,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/jobs",
+        headers=_headers(),
+        json={"url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1"},
+    )
+
+    assert response.status_code == 200
+    assert started.wait(timeout=2)
+    state = client.get("/api/jobs/current", headers=_headers()).json()
+    release.set()
+    assert secret not in state["message"]
+    assert str(tmp_path) not in state["message"]
