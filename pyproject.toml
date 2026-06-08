@@ -30,3 +30,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "metadata_smoke: hits live Bilibili URLs through yt-dlp; set BILIFAN_METADATA_SMOKE=1 to run",
+]

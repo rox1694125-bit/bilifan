@@ -41,11 +41,27 @@ def summarize(
     out: Path = typer.Option(Path("./outputs"), "--out"),
     cookies_from_browser: str | None = typer.Option(None, "--cookies-from-browser"),
     cookies_file: Path | None = typer.Option(None, "--cookies-file"),
+    output_format: str = typer.Option("html,pdf", "--format"),
+    transcriber: str = typer.Option("auto", "--transcriber"),
+    force_whisper: bool = typer.Option(False, "--force-whisper"),
+    llm_provider: str = typer.Option("codex-exec", "--llm-provider"),
+    llm_model: str = typer.Option("gpt-5.5", "--llm-model"),
+    require_pdf: bool = typer.Option(False, "--require-pdf"),
+    allow_long_video: bool = typer.Option(False, "--allow-long-video"),
     yes_i_understand: bool = typer.Option(False, "--yes-i-understand"),
     overwrite: bool = typer.Option(False, "--overwrite"),
     debug_log: bool = typer.Option(False, "--debug-log"),
 ) -> None:
     """Prepare a local Bilifan run for one Bilibili current-P URL."""
+    _reserved_mvp_options = (
+        output_format,
+        transcriber,
+        force_whisper,
+        llm_provider,
+        llm_model,
+        require_pdf,
+        allow_long_video,
+    )
     if debug_log:
         raise typer.BadParameter("--debug-log is reserved for a later slice.")
 

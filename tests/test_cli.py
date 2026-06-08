@@ -137,6 +137,39 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     assert (config_home / "config.json").exists()
 
 
+def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkeypatch):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+    _install_fake_metadata_fetch(monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "summarize",
+            URL,
+            "--format",
+            "html,pdf",
+            "--transcriber",
+            "auto",
+            "--force-whisper",
+            "--llm-provider",
+            "codex-exec",
+            "--llm-model",
+            "gpt-5.5",
+            "--require-pdf",
+            "--allow-long-video",
+            "--yes-i-understand",
+            "--out",
+            str(outputs),
+        ],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 0
+    assert "No such option" not in result.output
+    assert "Prepared Bilifan run:" in result.output
+
+
 def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
     config_home = tmp_path / "config-home"
     outputs = tmp_path / "outputs"
