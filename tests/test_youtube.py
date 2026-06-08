@@ -57,6 +57,38 @@ def test_youtube_metadata_mapping():
     assert metadata["subtitles"][0]["source"] == "manual"
 
 
+def test_youtube_metadata_keeps_only_supported_vtt_subtitles_first():
+    adapter = YouTubeAdapter()
+    raw = {
+        "id": "dQw4w9WgXcQ",
+        "title": "Example",
+        "duration": 123,
+        "subtitles": {
+            "en": [
+                {"url": "https://example.com/en.json3", "ext": "json3"},
+                {"url": "https://example.com/en.vtt", "ext": "vtt"},
+            ]
+        },
+        "automatic_captions": {
+            "zh": [
+                {"url": "https://example.com/zh.ttml", "ext": "ttml"},
+                {"url": "https://example.com/zh.vtt", "ext": "vtt"},
+            ]
+        },
+    }
+
+    metadata = adapter.map_metadata(
+        raw,
+        canonical_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    )
+
+    assert [track["url"] for track in metadata["subtitles"]] == [
+        "https://example.com/en.vtt",
+        "https://example.com/zh.vtt",
+    ]
+    assert all(track["ext"] == "vtt" for track in metadata["subtitles"])
+
+
 def test_parse_youtube_vtt_segments():
     segments = parse_youtube_vtt(
         "WEBVTT\n\n00:00:01.000 --> 00:00:03.500\nHello world\n"
@@ -90,6 +122,41 @@ def test_build_transcript_prefers_youtube_vtt_subtitle(tmp_path):
 
     assert transcript["source"] == "youtube-subtitle"
     assert transcript["language"] == "en"
+    assert transcript["segments"][0]["text"] == "Hello world"
+
+
+def test_build_transcript_uses_vtt_when_youtube_non_vtt_is_listed_first(tmp_path):
+    metadata = {
+        "platform": "youtube",
+        "subtitles": [
+            {
+                "language": "en",
+                "url": "https://example.test/en.json3",
+                "ext": "json3",
+                "source": "manual",
+            },
+            {
+                "language": "en",
+                "url": "https://example.test/en.vtt",
+                "ext": "vtt",
+                "source": "manual",
+            },
+        ],
+    }
+    media = {"duration_seconds": 3.5, "audio_path": ".bilifan/cache/audio.mp3"}
+
+    def fake_fetcher(url):
+        assert url == "https://example.test/en.vtt"
+        return b"WEBVTT\n\n00:00:01.000 --> 00:00:03.500\nHello world\n"
+
+    transcript = build_transcript(
+        metadata,
+        media,
+        tmp_path,
+        subtitle_fetcher=fake_fetcher,
+    )
+
+    assert transcript["source"] == "youtube-subtitle"
     assert transcript["segments"][0]["text"] == "Hello world"
 
 
@@ -188,6 +255,39 @@ def test_youtube_download_audio_uses_yt_dlp_and_ffprobe(tmp_path):
 
     assert media["audio_path"] == ".bilifan/cache/YTdQw4w9WgXcQ_p1.mp3"
     assert media["duration_check"]["status"] == "ok"
+
+
+def test_youtube_download_audio_fails_on_duration_mismatch(tmp_path):
+    adapter = YouTubeAdapter()
+    ref = adapter.parse_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    calls = []
+
+    def fake_downloader(cmd, **kwargs):
+        calls.append(cmd)
+        audio_path = tmp_path / ".bilifan" / "cache" / "YTdQw4w9WgXcQ_p1.mp3"
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
+        audio_path.write_bytes(b"audio")
+        return CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    def fake_probe(cmd, **kwargs):
+        return CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps({"format": {"duration": "30.0"}}),
+            stderr="",
+        )
+
+    with pytest.raises(MediaDownloadError, match="duration differs"):
+        adapter.download_audio(
+            ref,
+            {"duration": 3},
+            tmp_path,
+            SourceOptions(),
+            downloader=fake_downloader,
+            probe_runner=fake_probe,
+        )
+
+    assert len(calls) == 2
 
 
 def test_youtube_download_rejects_cookies_for_public_mvp(tmp_path):

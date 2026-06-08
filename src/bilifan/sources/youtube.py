@@ -153,66 +153,77 @@ class YouTubeAdapter:
         if options.cookies_file is not None or options.cookies_from_browser is not None:
             raise MediaDownloadError("YouTube cookies are not supported in the public-video MVP.")
 
+        output_id = self.output_id(ref)
         cache_dir = run_dir / ".bilifan" / "cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        output_id = self.output_id(ref)
-        _remove_existing_audio_outputs(cache_dir, output_id)
-        cmd = [
-            sys.executable,
-            "-m",
-            "yt_dlp",
-            "--no-warnings",
-            "--no-playlist",
-            "-f",
-            "bestaudio",
-            "--extract-audio",
-            "--audio-format",
-            "mp3",
-            "--audio-quality",
-            "0",
-            "--paths",
-            str(cache_dir),
-            "--output",
-            f"{output_id}.%(ext)s",
-            ref.canonical_url,
-        ]
-        try:
-            result = downloader(
-                cmd,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=DOWNLOAD_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise MediaDownloadError("yt-dlp YouTube audio download timed out.") from exc
-        except OSError as exc:
-            raise MediaDownloadError(f"yt-dlp YouTube audio failed to start: {exc}") from exc
-        if result.returncode != 0:
-            detail = result.stderr or result.stdout or "yt-dlp returned no error output."
-            raise MediaDownloadError(
-                f"yt-dlp YouTube audio failed with exit code {result.returncode}: {detail}",
-                source_exit_code=result.returncode,
-            )
+        last_check: dict[str, Any] | None = None
 
-        audio_path = cache_dir / f"{output_id}.mp3"
-        if not audio_path.is_file():
-            raise MediaDownloadError(
-                "yt-dlp YouTube audio did not produce expected file: "
-                f".bilifan/cache/{output_id}.mp3"
+        for attempt in range(1, 3):
+            _remove_existing_audio_outputs(cache_dir, output_id)
+            cmd = [
+                sys.executable,
+                "-m",
+                "yt_dlp",
+                "--no-warnings",
+                "--no-playlist",
+                "-f",
+                "bestaudio",
+                "--extract-audio",
+                "--audio-format",
+                "mp3",
+                "--audio-quality",
+                "0",
+                "--paths",
+                str(cache_dir),
+                "--output",
+                f"{output_id}.%(ext)s",
+                ref.canonical_url,
+            ]
+            try:
+                result = downloader(
+                    cmd,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=DOWNLOAD_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise MediaDownloadError("yt-dlp YouTube audio download timed out.") from exc
+            except OSError as exc:
+                raise MediaDownloadError(
+                    f"yt-dlp YouTube audio failed to start: {exc}"
+                ) from exc
+            if result.returncode != 0:
+                detail = result.stderr or result.stdout or "yt-dlp returned no error output."
+                raise MediaDownloadError(
+                    f"yt-dlp YouTube audio failed with exit code {result.returncode}: {detail}",
+                    source_exit_code=result.returncode,
+                )
+
+            audio_path = cache_dir / f"{output_id}.mp3"
+            if not audio_path.is_file():
+                raise MediaDownloadError(
+                    "yt-dlp YouTube audio did not produce expected file: "
+                    f".bilifan/cache/{output_id}.mp3"
+                )
+            audio_seconds = ffprobe_duration_seconds(audio_path, runner=probe_runner)
+            last_check = check_duration_match(
+                metadata_seconds=_duration_value(metadata.get("duration")),
+                audio_seconds=audio_seconds,
+                attempts=attempt,
             )
-        audio_seconds = ffprobe_duration_seconds(audio_path, runner=probe_runner)
-        duration_check = check_duration_match(
-            metadata_seconds=_duration_value(metadata.get("duration")),
-            audio_seconds=audio_seconds,
-            attempts=1,
+            if last_check["status"] != "duration_mismatch":
+                return {
+                    "audio_path": f".bilifan/cache/{output_id}.mp3",
+                    "audio_source": "yt-dlp",
+                    "duration_seconds": audio_seconds,
+                    "duration_check": last_check,
+                }
+
+        raise MediaDownloadError(
+            "audio duration differs from metadata by more than 5% after retry.",
+            duration_check=last_check,
         )
-        return {
-            "audio_path": f".bilifan/cache/{output_id}.mp3",
-            "audio_source": "yt-dlp",
-            "duration_seconds": audio_seconds,
-            "duration_check": duration_check,
-        }
 
     def _video_id(self, parsed) -> str:
         host = parsed.netloc.lower()
@@ -277,7 +288,7 @@ def _subtitle_tracks(subtitles: Any, automatic: Any) -> list[dict[str, str]]:
                     continue
                 url = _first_text(entry.get("url"))
                 ext = _first_text(entry.get("ext"))
-                if not url:
+                if not url or ext.lower() != "vtt":
                     continue
                 tracks.append(
                     {

@@ -305,6 +305,15 @@ def _first_subtitle(metadata: dict[str, Any]) -> dict[str, Any] | None:
     subtitles = metadata.get("subtitles")
     if not isinstance(subtitles, list):
         return None
+    if _first_text(metadata.get("platform")) == "youtube":
+        for subtitle in subtitles:
+            if (
+                isinstance(subtitle, dict)
+                and _first_text(subtitle.get("url"))
+                and _first_text(subtitle.get("ext")).lower() == "vtt"
+            ):
+                return subtitle
+        return None
     for subtitle in subtitles:
         if isinstance(subtitle, dict) and _first_text(subtitle.get("url")):
             return subtitle

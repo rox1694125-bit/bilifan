@@ -63,6 +63,44 @@ def _run_dir(tmp_path: Path) -> Path:
     return run_dir
 
 
+def _youtube_run_dir(tmp_path: Path) -> Path:
+    run_dir = tmp_path / "outputs" / "YTdQw4w9WgXcQ_p1" / "runs" / "2026-06-09_120000"
+    run_dir.mkdir(parents=True)
+    _write_json(
+        run_dir / "metadata.json",
+        {
+            "platform": "youtube",
+            "video_id": "dQw4w9WgXcQ",
+            "part_index": 1,
+            "input_url_sanitized": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "title": "YouTube retry title",
+            "part_title": "YouTube retry title",
+            "owner_name": "Channel",
+            "duration": 3,
+            "metadata_source": "fixture",
+        },
+    )
+    _write_json(
+        run_dir / "transcript.json",
+        {
+            "source": "youtube-subtitle",
+            "language": "en",
+            "segments": [{"start": 0, "end": 3, "text": "Hello"}],
+            "transcript_check": {"status": "ok", "segment_count": 1},
+        },
+    )
+    _write_json(
+        run_dir / "chunks.json",
+        {
+            "chunk_count": 1,
+            "media_duration_seconds": 3,
+            "chunks": [{"chunk_index": 1, "start": 0, "end": 3, "text": "Hello"}],
+        },
+    )
+    _write_json(run_dir / "diagnostics.json", {"duration_check": {"status": "ok"}})
+    return run_dir
+
+
 def _chapters():
     return {
         "style": "学习笔记",
@@ -100,6 +138,39 @@ def test_retry_bundle_writes_bundle_and_success_diagnostics(tmp_path):
     assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p1"
     assert diagnostics["error_type"] is None
     assert diagnostics["stage"] == "bundle"
+
+
+def test_retry_youtube_bundle_preserves_platform_and_source_id(tmp_path):
+    run_dir = _youtube_run_dir(tmp_path)
+    _write_json(
+        run_dir / "chapters.json",
+        {
+            "style": "学习笔记",
+            "chapters": [
+                {
+                    "chapter_index": 1,
+                    "title": "Intro",
+                    "start": 0,
+                    "end": 3,
+                    "timestamp_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=0s",
+                    "summary": "Summary",
+                    "key_points": [],
+                    "quotes": [],
+                    "visual_anchors": [],
+                }
+            ],
+        },
+    )
+
+    result = retry_run(run_dir, from_stage="bundle")
+
+    bundle = json.loads((run_dir / "content_bundle.json").read_text(encoding="utf-8"))
+    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+    assert result.run_key == "YTdQw4w9WgXcQ_p1/runs/2026-06-09_120000"
+    assert bundle["bundle_id"] == "youtube:dQw4w9WgXcQ:p1"
+    assert bundle["source"]["platform"] == "youtube"
+    assert bundle["source"]["id"] == "dQw4w9WgXcQ"
+    assert diagnostics["video_id"] == "dQw4w9WgXcQ"
 
 
 def test_retry_render_rewrites_report_and_bundle(tmp_path, monkeypatch):
@@ -266,3 +337,50 @@ def test_retry_summarization_failure_writes_failed_diagnostics(tmp_path, monkeyp
     assert diagnostics["stage"] == "summarization"
     assert diagnostics["exit_code"] == 1
     assert "secret" not in diagnostics["sanitized_message"]
+
+
+def test_retry_summarization_failure_does_not_expose_stale_downstream_artifacts(
+    tmp_path, monkeypatch
+):
+    run_dir = _run_dir(tmp_path)
+    _write_json(run_dir / "chapters.json", _chapters())
+    (run_dir / "notes.md").write_text("stale notes", encoding="utf-8")
+    (run_dir / "report.html").write_text("<html>stale</html>", encoding="utf-8")
+    (run_dir / "report.pdf").write_bytes(b"stale pdf")
+    _write_json(run_dir / "content_bundle.json", {"stale": True})
+
+    def fake_summarize_chunks(**kwargs):
+        raise SummarizationError("summary failed")
+
+    monkeypatch.setattr(retry_module, "summarize_chunks", fake_summarize_chunks)
+
+    with pytest.raises(RetryError, match="summary failed"):
+        retry_run(run_dir, from_stage="summarization", output_format="html")
+
+    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+    assert "report.html" not in diagnostics["artifact_paths"]
+    assert "report.pdf" not in diagnostics["artifact_paths"]
+    assert "content_bundle.json" not in diagnostics["artifact_paths"]
+
+
+def test_retry_render_failure_does_not_expose_stale_report_or_bundle(
+    tmp_path, monkeypatch
+):
+    run_dir = _run_dir(tmp_path)
+    _write_json(run_dir / "chapters.json", _chapters())
+    (run_dir / "report.html").write_text("<html>stale</html>", encoding="utf-8")
+    (run_dir / "report.pdf").write_bytes(b"stale pdf")
+    _write_json(run_dir / "content_bundle.json", {"stale": True})
+
+    def fake_render_report_html(**kwargs):
+        raise ValueError("render failed")
+
+    monkeypatch.setattr(retry_module, "render_report_html", fake_render_report_html)
+
+    with pytest.raises(RetryError, match="render failed"):
+        retry_run(run_dir, from_stage="render", output_format="html")
+
+    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+    assert "report.html" not in diagnostics["artifact_paths"]
+    assert "report.pdf" not in diagnostics["artifact_paths"]
+    assert "content_bundle.json" not in diagnostics["artifact_paths"]

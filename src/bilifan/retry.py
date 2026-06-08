@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .bilibili import parse_bilibili_url
 from .bundle import write_content_bundle
@@ -35,6 +36,40 @@ class RetryResult:
 class RetryError(RuntimeError):
     def __init__(self, message: str) -> None:
         super().__init__(redact_text(message))
+
+
+@dataclass(frozen=True)
+class _RetryRef:
+    platform: str
+    source_id: str
+    part_id: str
+    canonical_url: str
+
+    @property
+    def bvid(self) -> str:
+        return self.source_id
+
+    @property
+    def part_index(self) -> int:
+        if self.part_id.startswith("p"):
+            try:
+                return int(self.part_id[1:])
+            except ValueError:
+                return 1
+        return 1
+
+    @property
+    def sanitized_url(self) -> str:
+        return self.canonical_url
+
+    def timestamp_url(self, seconds: float) -> str:
+        timestamp = max(0, int(seconds))
+        if self.platform == "youtube":
+            return f"https://www.youtube.com/watch?v={self.source_id}&t={timestamp}s"
+        return (
+            f"https://www.bilibili.com/video/{self.source_id}"
+            f"?p={self.part_index}&t={timestamp}"
+        )
 
 
 def retry_run(
@@ -198,9 +233,9 @@ def _render_and_bundle(
             transcript=transcript,
             chapters=chapters,
             artifact_paths=artifact_paths,
-            platform="bilibili",
-            source_id=ref.bvid,
-            part_id=f"p{ref.part_index}",
+            platform=ref.platform,
+            source_id=ref.source_id,
+            part_id=ref.part_id,
             llm_provider=llm_provider,
             llm_model=llm_model,
         )
@@ -252,9 +287,9 @@ def _bundle_only(
             transcript=transcript,
             chapters=chapters,
             artifact_paths=artifact_paths,
-            platform="bilibili",
-            source_id=ref.bvid,
-            part_id=f"p{ref.part_index}",
+            platform=ref.platform,
+            source_id=ref.source_id,
+            part_id=ref.part_id,
             llm_provider=llm_provider,
             llm_model=llm_model,
         )
@@ -336,7 +371,9 @@ def _write_failure_diagnostics(
     message: str,
     artifact_paths: list[str] | None = None,
 ) -> None:
-    existing_artifacts = artifact_paths if artifact_paths is not None else _existing_artifact_paths(run_dir)
+    existing_artifacts = (
+        artifact_paths if artifact_paths is not None else _base_artifact_paths(run_dir)
+    )
     write_diagnostics(
         run_dir / "diagnostics.json",
         Diagnostics(
@@ -453,19 +490,62 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
 
 
 def _ref_from_metadata(metadata: dict[str, Any]):
+    platform = _metadata_platform(metadata)
     video_id = metadata.get("video_id")
     part_index = metadata.get("part_index")
+    if isinstance(video_id, str) and isinstance(part_index, int) and platform == "youtube":
+        return _RetryRef(
+            platform="youtube",
+            source_id=video_id,
+            part_id=f"p{part_index}",
+            canonical_url=_metadata_url(
+                metadata,
+                f"https://www.youtube.com/watch?v={video_id}",
+            ),
+        )
     if isinstance(video_id, str) and isinstance(part_index, int):
-        return parse_bilibili_url(
-            f"https://www.bilibili.com/video/{video_id}?p={part_index}"
+        try:
+            ref = parse_bilibili_url(
+                f"https://www.bilibili.com/video/{video_id}?p={part_index}"
+            )
+        except ValueError as exc:
+            raise RetryError("Cannot retry without valid Bilibili metadata.") from exc
+        return _RetryRef(
+            platform="bilibili",
+            source_id=ref.bvid,
+            part_id=f"p{ref.part_index}",
+            canonical_url=ref.sanitized_url,
         )
     sanitized_url = metadata.get("input_url_sanitized")
     if isinstance(sanitized_url, str) and sanitized_url:
         try:
-            return parse_bilibili_url(sanitized_url)
+            ref = parse_bilibili_url(sanitized_url)
         except ValueError as exc:
             raise RetryError("Cannot retry without valid Bilibili metadata.") from exc
+        return _RetryRef(
+            platform="bilibili",
+            source_id=ref.bvid,
+            part_id=f"p{ref.part_index}",
+            canonical_url=ref.sanitized_url,
+        )
     raise RetryError("Cannot retry without Bilibili video_id and part_index metadata.")
+
+
+def _metadata_platform(metadata: dict[str, Any]) -> str:
+    platform = metadata.get("platform")
+    if isinstance(platform, str) and platform:
+        return platform
+    raw_url = metadata.get("input_url_sanitized")
+    if isinstance(raw_url, str):
+        host = urlparse(raw_url).netloc.lower()
+        if host in {"www.youtube.com", "youtube.com", "youtu.be"}:
+            return "youtube"
+    return "bilibili"
+
+
+def _metadata_url(metadata: dict[str, Any], fallback: str) -> str:
+    raw_url = metadata.get("input_url_sanitized")
+    return raw_url if isinstance(raw_url, str) and raw_url else fallback
 
 
 def _run_key(run_dir: Path) -> str:
