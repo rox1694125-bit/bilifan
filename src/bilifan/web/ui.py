@@ -9,7 +9,7 @@ def render_app_html() -> str:
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Bilifan Workbench</title>
+          <title>Bilifan Web UI</title>
           <style>
             :root {
               color-scheme: light;
@@ -44,6 +44,16 @@ def render_app_html() -> str:
               grid-template-columns: 320px minmax(0, 1fr);
               gap: 16px;
               align-items: start;
+            }
+            .brandbar {
+              display: flex;
+              align-items: baseline;
+              justify-content: space-between;
+              gap: 12px;
+              margin-bottom: 16px;
+            }
+            .brandbar h1 {
+              font-size: 20px;
             }
             .panel {
               background: var(--panel);
@@ -258,6 +268,7 @@ def render_app_html() -> str:
               .checks {
                 grid-template-columns: 1fr;
               }
+              .brandbar,
               .banner-row,
               .actions {
                 align-items: stretch;
@@ -268,6 +279,10 @@ def render_app_html() -> str:
         </head>
         <body>
           <main class="shell">
+            <header class="brandbar">
+              <h1>Bilifan Web UI</h1>
+              <p class="subtle">local summary workbench</p>
+            </header>
             <div class="layout">
               <aside class="panel">
                 <div class="panel-header">
@@ -300,7 +315,7 @@ def render_app_html() -> str:
                       <div class="field-grid">
                         <label for="url-input">
                           视频 URL
-                          <input id="url-input" name="url" type="text" autocomplete="off" spellcheck="false">
+                          <input id="url-input" name="url" type="url" required autocomplete="off" spellcheck="false">
                         </label>
                         <label for="format-select">
                           输出格式
@@ -355,6 +370,7 @@ def render_app_html() -> str:
 
             const state = {
               consentAccepted: false,
+              currentStatus: "idle",
               pollingTimer: null,
             };
 
@@ -415,7 +431,7 @@ def render_app_html() -> str:
             }
 
             function updateStartButton() {
-              elements.startButton.disabled = !state.consentAccepted;
+              elements.startButton.disabled = !state.consentAccepted || state.currentStatus === "running";
             }
 
             function renderStageList(progress, activeStage, jobStatus) {
@@ -546,6 +562,8 @@ def render_app_html() -> str:
             async function loadCurrentJob() {
               try {
                 const data = await apiFetch("/api/jobs/current");
+                state.currentStatus = typeof data.status === "string" ? data.status : "idle";
+                updateStartButton();
                 renderStageList(data.progress, data.stage, data.status);
                 renderLinks(data.artifacts, data.run_key);
                 if (data.status === "failed") {
@@ -591,7 +609,14 @@ def render_app_html() -> str:
                 require_pdf: elements.requirePdf.checked,
                 allow_long_video: elements.allowLongVideo.checked,
               };
+              if (!payload.url) {
+                setJobMessage("请输入 B 站 URL。", true);
+                elements.urlInput.focus();
+                return;
+              }
               try {
+                state.currentStatus = "running";
+                updateStartButton();
                 const data = await apiFetch("/api/jobs", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
@@ -601,8 +626,20 @@ def render_app_html() -> str:
                 await loadCurrentJob();
               } catch (error) {
                 const message = error.message || "启动失败。";
-                const isConflict = message.includes("already running") || message.includes("consent");
-                setJobMessage(message, isConflict || Boolean(message));
+                const consentError = message.includes("consent");
+                const runningConflict = message.includes("already running");
+                if (consentError) {
+                  state.consentAccepted = false;
+                  state.currentStatus = "idle";
+                  await loadConfig();
+                } else if (runningConflict) {
+                  state.currentStatus = "running";
+                  await loadCurrentJob();
+                } else {
+                  state.currentStatus = "idle";
+                  updateStartButton();
+                }
+                setJobMessage(message, consentError || runningConflict || Boolean(message));
               }
             }
 
