@@ -93,6 +93,7 @@ def test_export_report_pdf_invokes_chrome_headless(tmp_path):
     cmd = calls[0]["cmd"]
     assert cmd[0].endswith("Google Chrome")
     assert "--headless=new" in cmd
+    assert "--no-pdf-header-footer" in cmd
     assert f"--print-to-pdf={pdf_path}" in cmd
     assert html_path.resolve().as_uri() in cmd
 

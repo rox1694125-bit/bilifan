@@ -67,6 +67,7 @@ def export_report_pdf(
         "--headless=new",
         "--disable-gpu",
         "--no-sandbox",
+        "--no-pdf-header-footer",
         f"--print-to-pdf={pdf_path}",
         html_path.resolve().as_uri(),
     ]
