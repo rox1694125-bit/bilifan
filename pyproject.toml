@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "httpx>=0.28.1",
   "pytest>=8,<9",
 ]
 
@@ -38,9 +39,4 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
   "metadata_smoke: hits live Bilibili URLs through yt-dlp; set BILIFAN_METADATA_SMOKE=1 to run",
-]
-
-[dependency-groups]
-dev = [
-    "httpx>=0.28.1",
 ]
