@@ -27,8 +27,14 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
         output_id = latest_path.parent.name
         if OUTPUT_ID_PATTERN.fullmatch(output_id) is None:
             continue
+        video_dir = _safe_existing_dir(outputs, output_id)
+        if video_dir is None:
+            continue
+        latest_file = _safe_existing_file(video_dir, "latest.json")
+        if latest_file is None:
+            continue
         try:
-            latest = json.loads(latest_path.read_text(encoding="utf-8"))
+            latest = json.loads(latest_file.read_text(encoding="utf-8"))
         except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError):
             continue
         if not isinstance(latest, dict):
@@ -159,17 +165,17 @@ def _is_allowed_run_file(path: PurePosixPath) -> bool:
     )
 
 
-def _safe_existing_file(run_dir: Path, relative_path: str) -> Path | None:
-    resolved_run_dir = run_dir.resolve(strict=False)
-    resolved = (run_dir / relative_path).resolve(strict=False)
-    if not resolved.is_relative_to(resolved_run_dir):
+def _safe_existing_file(root_dir: Path, relative_path: str) -> Path | None:
+    resolved_root_dir = root_dir.resolve(strict=False)
+    resolved = (root_dir / relative_path).resolve(strict=False)
+    if not resolved.is_relative_to(resolved_root_dir):
         return None
     return resolved if resolved.is_file() else None
 
 
-def _safe_existing_dir(run_dir: Path, relative_path: str) -> Path | None:
-    resolved_run_dir = run_dir.resolve(strict=False)
-    resolved = (run_dir / relative_path).resolve(strict=False)
-    if not resolved.is_relative_to(resolved_run_dir):
+def _safe_existing_dir(root_dir: Path, relative_path: str) -> Path | None:
+    resolved_root_dir = root_dir.resolve(strict=False)
+    resolved = (root_dir / relative_path).resolve(strict=False)
+    if not resolved.is_relative_to(resolved_root_dir):
         return None
     return resolved if resolved.is_dir() else None

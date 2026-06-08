@@ -96,6 +96,30 @@ def test_list_latest_runs_skips_invalid_utf8_latest_json(tmp_path):
     assert items == []
 
 
+def test_list_latest_runs_skips_latest_json_symlink_escape(tmp_path):
+    outputs = tmp_path / "outputs"
+    video_dir = outputs / "BV1abcDEF12G_p1"
+    video_dir.mkdir(parents=True)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_latest = outside_dir / "latest.json"
+    outside_latest.write_text(
+        json.dumps(
+            {
+                "run_id": "2026-06-08_120000",
+                "run_dir": "runs/2026-06-08_120000",
+                "generated_at": "2026-06-08T12:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _replace_with_symlink_or_skip(video_dir / "latest.json", outside_latest)
+
+    items = list_latest_runs(outputs)
+
+    assert items == []
+
+
 def test_list_latest_runs_falls_back_to_output_id_for_invalid_utf8_metadata(tmp_path):
     outputs = tmp_path / "outputs"
     run_dir = _make_run(outputs)
