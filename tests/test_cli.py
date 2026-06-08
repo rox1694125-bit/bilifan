@@ -4,6 +4,7 @@ from typer.testing import CliRunner
 
 import bilifan.cli as cli
 from bilifan.cli import app
+from bilifan.metadata import MetadataIngestError
 
 
 runner = CliRunner()
@@ -25,6 +26,49 @@ REAL_BILIBILI_URLS = [
         "BV1ETEF6VEHu_p1",
     ),
 ]
+
+
+def _install_fake_metadata_fetch(monkeypatch, *, title="Mock metadata title"):
+    calls = []
+
+    def fake_fetch_current_part_metadata(
+        ref,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        calls.append(
+            {
+                "ref": ref,
+                "run_dir": run_dir,
+                "cookies_from_browser": cookies_from_browser,
+                "cookies_file": cookies_file,
+            }
+        )
+        return {
+            "bilifan_version": "0.1.0",
+            "generated_at": "2026-06-08T00:00:00+00:00",
+            "input_url_sanitized": ref.sanitized_url,
+            "video_id": ref.bvid,
+            "part_index": ref.part_index,
+            "cid": "123456",
+            "title": title,
+            "part_title": title,
+            "owner_name": "Mock Owner",
+            "description": "",
+            "tags": [],
+            "cover_url": "",
+            "cover_path": "",
+            "duration": 0,
+            "parts": [],
+            "subtitles": [],
+            "yt_dlp_version": "mock",
+            "ffmpeg_version": "",
+        }
+
+    monkeypatch.setattr(cli, "fetch_current_part_metadata", fake_fetch_current_part_metadata)
+    return calls
 
 
 def test_cli_help_lists_summarize_command():
@@ -52,9 +96,10 @@ def test_summarize_declines_local_processing_consent_without_writing_config(tmp_
     assert not outputs.exists()
 
 
-def test_summarize_prepares_offline_preflight_run_with_yes_flag(tmp_path):
+def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     config_home = tmp_path / "config-home"
     outputs = tmp_path / "outputs"
+    _install_fake_metadata_fetch(monkeypatch, title="CLI metadata title")
 
     result = runner.invoke(
         app,
@@ -71,22 +116,31 @@ def test_summarize_prepares_offline_preflight_run_with_yes_flag(tmp_path):
     latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
     run_dir = video_dir / latest["run_dir"]
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+    metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
 
     assert run_dir.is_dir()
     assert diagnostics["error_type"] is None
     assert diagnostics["exit_code"] == 0
-    assert diagnostics["stage"] == "preflight"
+    assert diagnostics["stage"] == "metadata"
     assert diagnostics["video_id"] == "BV1abcDEF12G"
     assert diagnostics["part_index"] == 2
     assert diagnostics["duration_check"] is None
     assert diagnostics["transcript_check"] is None
-    assert diagnostics["warnings"] == ["foundation_slice_only"]
+    assert diagnostics["artifact_paths"] == ["diagnostics.json", "metadata.json"]
+    assert diagnostics["warnings"] == ["metadata_only"]
+    assert metadata["input_url_sanitized"] == (
+        "https://www.bilibili.com/video/BV1abcDEF12G?p=2"
+    )
+    assert metadata["video_id"] == "BV1abcDEF12G"
+    assert metadata["part_index"] == 2
+    assert metadata["title"] == "CLI metadata title"
     assert (config_home / "config.json").exists()
 
 
-def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path):
+def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
     config_home = tmp_path / "config-home"
     outputs = tmp_path / "outputs"
+    _install_fake_metadata_fetch(monkeypatch)
 
     for url, output_id in REAL_BILIBILI_URLS:
         result = runner.invoke(
@@ -112,12 +166,15 @@ def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path):
         )
         assert diagnostics["video_id"] == bvid
         assert diagnostics["part_index"] == int(part)
-        assert diagnostics["stage"] == "preflight"
+        assert diagnostics["stage"] == "metadata"
 
 
-def test_summarize_records_cookie_notice_without_storing_cookie_file_name(tmp_path):
+def test_summarize_records_cookie_notice_without_storing_cookie_file_name(
+    tmp_path, monkeypatch
+):
     config_home = tmp_path / "config-home"
     outputs = tmp_path / "outputs"
+    calls = _install_fake_metadata_fetch(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -139,6 +196,9 @@ def test_summarize_records_cookie_notice_without_storing_cookie_file_name(tmp_pa
     assert "cookies_notice_accepted_at" in config_text
     assert "bili-cookies.txt" not in config_text
     assert "/Users/jack" not in config_text
+    assert calls[0]["cookies_file"].as_posix() == "/Users/jack/Downloads/bili-cookies.txt"
+    assert "bili-cookies.txt" not in result.output
+    assert "/Users/jack" not in result.output
 
 
 def test_summarize_invalid_url_writes_sanitized_error_run(tmp_path):
@@ -226,6 +286,71 @@ def test_summarize_invalid_url_retries_error_run_collision_without_leaking_path(
     assert "/Users/jack" not in result.output
     assert "collision" not in result.output
     assert len(list((outputs / "_errors" / "runs").glob("*/diagnostics.json"))) == 1
+
+
+def test_summarize_metadata_failure_writes_sanitized_diagnostics_without_leaks(
+    tmp_path, monkeypatch
+):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+    url = (
+        "https://www.bilibili.com/video/BV1abcDEF12G"
+        "?p=2&vd_source=tracking-secret&token=secret-token"
+    )
+
+    def fake_fetch_current_part_metadata(
+        ref,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        raise MetadataIngestError(
+            "yt-dlp failed for "
+            f"{url} with --cookies-file /Users/jack/Downloads/bili-cookies.txt "
+            "Cookie: SESSDATA=secret"
+        )
+
+    monkeypatch.setattr(cli, "fetch_current_part_metadata", fake_fetch_current_part_metadata)
+
+    result = runner.invoke(
+        app,
+        [
+            "summarize",
+            url,
+            "--cookies-file",
+            "/Users/jack/Downloads/bili-cookies.txt",
+            "--yes-i-understand",
+            "--out",
+            str(outputs),
+        ],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 1
+    assert "yt-dlp failed" in result.output
+    assert "vd_source" not in result.output
+    assert "secret-token" not in result.output
+    assert "bili-cookies.txt" not in result.output
+    assert "/Users/jack" not in result.output
+    assert "SESSDATA=secret" not in result.output
+
+    video_dir = outputs / "BV1abcDEF12G_p2"
+    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
+    run_dir = video_dir / latest["run_dir"]
+    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+
+    assert not (run_dir / "metadata.json").exists()
+    assert diagnostics["error_type"] == "MetadataIngestError"
+    assert diagnostics["exit_code"] == 1
+    assert diagnostics["stage"] == "metadata"
+    assert diagnostics["video_id"] == "BV1abcDEF12G"
+    assert diagnostics["part_index"] == 2
+    assert diagnostics["artifact_paths"] == ["diagnostics.json"]
+    assert "vd_source" not in diagnostics["sanitized_message"]
+    assert "secret-token" not in diagnostics["sanitized_message"]
+    assert "bili-cookies.txt" not in diagnostics["sanitized_message"]
+    assert "/Users/jack" not in diagnostics["sanitized_message"]
 
 
 def test_summarize_debug_log_is_reserved_for_later_slice(tmp_path):

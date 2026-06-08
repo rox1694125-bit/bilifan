@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from .config import (
     write_consent,
 )
 from .diagnostics import Diagnostics, redact_text, write_diagnostics
+from .metadata import MetadataIngestError, fetch_current_part_metadata
 from .runs import RunPaths, create_error_run, create_run
 
 app = typer.Typer(no_args_is_help=True)
@@ -79,19 +81,47 @@ def summarize(
             "Run directory already exists; use --overwrite or retry later."
         ) from exc
 
+    try:
+        metadata = fetch_current_part_metadata(
+            ref,
+            run.run_dir,
+            cookies_from_browser=cookies_from_browser,
+            cookies_file=cookies_file,
+        )
+    except MetadataIngestError as exc:
+        sanitized_message = redact_text(str(exc))
+        write_diagnostics(
+            run.run_dir / "diagnostics.json",
+            Diagnostics(
+                error_type="MetadataIngestError",
+                exit_code=1,
+                stage="metadata",
+                video_id=ref.bvid,
+                part_index=ref.part_index,
+                duration_check=None,
+                transcript_check=None,
+                artifact_paths=["diagnostics.json"],
+                sanitized_message=sanitized_message,
+                warnings=["metadata_failed"],
+            ),
+        )
+        typer.echo(sanitized_message, err=True)
+        raise typer.Exit(1) from exc
+
+    _write_metadata(run.run_dir / "metadata.json", metadata)
     write_diagnostics(
         run.run_dir / "diagnostics.json",
         Diagnostics(
             error_type=None,
             exit_code=0,
-            stage="preflight",
+            stage="metadata",
             video_id=ref.bvid,
             part_index=ref.part_index,
             duration_check=None,
             transcript_check=None,
-            artifact_paths=["diagnostics.json"],
-            sanitized_message="Prepared offline preflight run.",
-            warnings=["foundation_slice_only"],
+            artifact_paths=["diagnostics.json", "metadata.json"],
+            sanitized_message="Metadata ingest completed.",
+            warnings=["metadata_only"],
         ),
     )
     typer.echo(f"Prepared Bilifan run: {_display_run_path(run)}")
@@ -111,6 +141,13 @@ def _create_error_run_with_retry(out: Path) -> RunPaths:
 
 def _display_run_path(run: RunPaths) -> str:
     return f"{run.video_dir.name}/runs/{run.run_id}"
+
+
+def _write_metadata(path: Path, metadata: dict) -> None:
+    path.write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _ensure_consent(*, uses_cookies: bool, yes_i_understand: bool) -> None:
