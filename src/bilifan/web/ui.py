@@ -405,6 +405,7 @@ def render_app_html() -> str:
             const token = new URLSearchParams(location.search).get("token") || "";
 
             const state = {
+              authExpired: false,
               consentAccepted: false,
               currentStatus: "idle",
               pollingTimer: null,
@@ -448,6 +449,9 @@ def render_app_html() -> str:
               }
               const response = await fetch(path, { ...options, headers });
               if (!response.ok) {
+                if (response.status === 403) {
+                  throw new Error(markAuthExpired());
+                }
                 let detail = response.statusText || "Request failed.";
                 try {
                   const payload = await response.json();
@@ -462,13 +466,30 @@ def render_app_html() -> str:
               return response.json();
             }
 
+            function stopPolling() {
+              if (state.pollingTimer) {
+                clearInterval(state.pollingTimer);
+                state.pollingTimer = null;
+              }
+            }
+
+            function markAuthExpired() {
+              const message = "当前 Web UI token 已失效，请使用 Terminal 最新打印的地址重新打开页面。";
+              state.authExpired = true;
+              state.currentStatus = "idle";
+              stopPolling();
+              updateStartButton();
+              setJobMessage(message, true);
+              return message;
+            }
+
             function setJobMessage(message, isError = false) {
               elements.jobMessage.textContent = message;
               elements.jobMessage.className = isError ? "status-line error" : "status-line";
             }
 
             function updateStartButton() {
-              elements.startButton.disabled = !state.consentAccepted || state.currentStatus === "running";
+              elements.startButton.disabled = state.authExpired || !state.consentAccepted || state.currentStatus === "running";
             }
 
             function renderStageList(progress, activeStage, jobStatus) {
@@ -602,15 +623,18 @@ def render_app_html() -> str:
             }
 
             async function loadHistory() {
+              if (state.authExpired) return;
               try {
                 const data = await apiFetch("/api/history");
                 renderHistory(data.items || []);
               } catch (error) {
+                if (state.authExpired) return;
                 elements.historyList.innerHTML = `<li class="muted-panel">${escapeHtml(error.message || "History load failed.")}</li>`;
               }
             }
 
             async function loadCurrentJob() {
+              if (state.authExpired) return;
               try {
                 const data = await apiFetch("/api/jobs/current");
                 state.currentStatus = typeof data.status === "string" ? data.status : "idle";
@@ -632,11 +656,13 @@ def render_app_html() -> str:
                   }
                 }
               } catch (error) {
+                if (state.authExpired) return;
                 setJobMessage(error.message || "状态读取失败。", true);
               }
             }
 
             async function acceptConsent() {
+              if (state.authExpired) return;
               try {
                 await apiFetch("/api/consent", { method: "POST" });
                 await loadConfig();
@@ -648,6 +674,10 @@ def render_app_html() -> str:
 
             async function startJob(event) {
               event.preventDefault();
+              if (state.authExpired) {
+                markAuthExpired();
+                return;
+              }
               if (!state.consentAccepted) {
                 setJobMessage("请先接受本地处理告知。", true);
                 return;
@@ -716,6 +746,10 @@ def render_app_html() -> str:
             }
 
             async function openFolder(url) {
+              if (state.authExpired) {
+                markAuthExpired();
+                return;
+              }
               await apiFetch(url, { method: "POST" });
               setJobMessage("已请求打开本地文件夹。");
             }

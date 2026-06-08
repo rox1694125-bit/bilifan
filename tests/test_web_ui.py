@@ -97,9 +97,11 @@ def test_render_app_html_contains_frontend_state_guards():
     assert "required" in html
     assert "state.currentStatus" in html
     assert (
-        'elements.startButton.disabled = !state.consentAccepted || state.currentStatus === "running"'
+        'elements.startButton.disabled = state.authExpired || !state.consentAccepted || state.currentStatus === "running"'
         in html
     )
+    assert "markAuthExpired" in html
+    assert "token 已失效" in html
     assert "请输入 B 站 URL。" in html
     assert "if (!payload.url)" in html
     assert "await loadConfig();" in html
@@ -339,6 +341,37 @@ def test_render_app_script_reloads_config_after_consent_conflict():
     )
 
 
+def test_render_app_script_stops_polling_when_token_is_invalid():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({ detail: "Invalid Bilifan Web UI token." }, false, "Forbidden", 403);
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert.equal(global.__clearedInterval, 1);
+        assert.equal(elements["start-button"].disabled, true);
+        assert(elements["job-message"].className.includes("error"));
+        assert(elements["job-message"].textContent.includes("token 已失效"));
+
+        await global.__poll.callback();
+        await flush();
+        assert.equal(fetchCalls.filter((call) => call.path === "/api/jobs/current").length, 1);
+        """,
+    )
+
+
 def test_render_app_html_has_no_external_http_resources():
     html = render_app_html()
 
@@ -427,10 +460,14 @@ def _run_node_ui_harness(script, *, fetch_logic, assertions):
       global.__poll = {{ callback, interval }};
       return 1;
     }};
+    global.clearInterval = (timer) => {{
+      global.__clearedInterval = timer;
+    }};
 
-    function jsonResponse(payload, ok = true, statusText = "OK") {{
+    function jsonResponse(payload, ok = true, statusText = "OK", status = ok ? 200 : 500) {{
       return {{
         ok,
+        status,
         statusText,
         async json() {{
           return payload;
