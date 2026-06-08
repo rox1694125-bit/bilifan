@@ -83,6 +83,9 @@ def test_render_app_html_contains_workbench_contract():
 def test_render_app_html_contains_frontend_state_guards():
     html = render_app_html()
 
+    assert "downloads current-P audio for local processing" in html
+    assert "Codex CLI to summarize transcript chunks" in html
+    assert "send transcript text to the model service" in html
     assert 'type="url"' in html
     assert "required" in html
     assert "state.currentStatus" in html

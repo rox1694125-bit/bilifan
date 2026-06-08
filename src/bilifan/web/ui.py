@@ -305,6 +305,7 @@ def render_app_html() -> str:
                       <div class="banner-row">
                         <div class="stack" style="gap:4px;">
                           <h2>需要先确认本地处理告知</h2>
+                          <p class="subtle">Bilifan prepares runs locally on this machine, downloads current-P audio for local processing, and writes output files under ./outputs. By default it calls your configured Codex CLI to summarize transcript chunks, which may send transcript text to the model service behind that Codex account.</p>
                           <p class="subtle">未接受前不会启动新任务。</p>
                         </div>
                         <button id="consent-button" type="button">接受并继续</button>

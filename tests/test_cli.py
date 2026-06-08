@@ -1299,5 +1299,45 @@ def test_serve_schedules_browser_open_without_calling_it_before_uvicorn(monkeypa
     assert len(scheduled) == 1
     delay, callback, args = scheduled[0]
     assert delay > 0
-    assert callback is fake_open_browser
+    assert callback is cli._open_browser_when_ready
     assert args == ("http://127.0.0.1:8765/?token=fixed-token",)
+
+
+def test_schedule_browser_open_waits_for_local_url_before_opening(monkeypatch):
+    calls: list[tuple[str, str]] = []
+    checks = iter([False, False, True])
+
+    class ImmediateTimer:
+        daemon = False
+
+        def __init__(self, delay, callback, args=()):
+            calls.append(("timer", str(delay)))
+            self.callback = callback
+            self.args = args
+
+        def start(self):
+            self.callback(*self.args)
+
+    def fake_url_ready(url):
+        calls.append(("ready", url))
+        return next(checks)
+
+    def fake_open_browser(url):
+        calls.append(("open", url))
+
+    monkeypatch.setattr(cli.threading, "Timer", ImmediateTimer)
+    monkeypatch.setattr(cli.time, "sleep", lambda delay: calls.append(("sleep", str(delay))))
+    monkeypatch.setattr(cli, "_local_url_ready", fake_url_ready)
+    monkeypatch.setattr(cli, "_open_browser", fake_open_browser)
+
+    cli._schedule_browser_open("http://127.0.0.1:8765/?token=fixed-token")
+
+    assert calls == [
+        ("timer", str(cli.OPEN_BROWSER_DELAY_SECONDS)),
+        ("ready", "http://127.0.0.1:8765/?token=fixed-token"),
+        ("sleep", str(cli.OPEN_BROWSER_RETRY_SECONDS)),
+        ("ready", "http://127.0.0.1:8765/?token=fixed-token"),
+        ("sleep", str(cli.OPEN_BROWSER_RETRY_SECONDS)),
+        ("ready", "http://127.0.0.1:8765/?token=fixed-token"),
+        ("open", "http://127.0.0.1:8765/?token=fixed-token"),
+    ]

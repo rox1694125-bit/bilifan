@@ -1,5 +1,7 @@
 import socket
 import threading
+import time
+import urllib.request
 import webbrowser
 from pathlib import Path
 
@@ -43,6 +45,8 @@ COOKIES_NOTICE = (
     "or cookie file names in reports or config."
 )
 OPEN_BROWSER_DELAY_SECONDS = 0.5
+OPEN_BROWSER_READY_TIMEOUT_SECONDS = 10.0
+OPEN_BROWSER_RETRY_SECONDS = 0.1
 
 
 @app.callback()
@@ -202,9 +206,26 @@ def _validate_port(port: int) -> int:
 
 
 def _schedule_browser_open(url: str) -> None:
-    timer = threading.Timer(OPEN_BROWSER_DELAY_SECONDS, _open_browser, args=(url,))
+    timer = threading.Timer(OPEN_BROWSER_DELAY_SECONDS, _open_browser_when_ready, args=(url,))
     timer.daemon = True
     timer.start()
+
+
+def _open_browser_when_ready(url: str) -> None:
+    deadline = time.monotonic() + OPEN_BROWSER_READY_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if _local_url_ready(url):
+            _open_browser(url)
+            return
+        time.sleep(OPEN_BROWSER_RETRY_SECONDS)
+
+
+def _local_url_ready(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=0.2) as response:
+            return 200 <= response.status < 500
+    except OSError:
+        return False
 
 
 def _open_browser(url: str) -> None:

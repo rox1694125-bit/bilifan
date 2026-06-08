@@ -42,6 +42,13 @@ def create_app(
     jobs = JobManager(runner=pipeline_runner, run_jobs_inline=run_jobs_inline)
     app = FastAPI()
 
+    @app.middleware("http")
+    async def add_security_headers(request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        return response
+
     def require_token(
         header_token: str | None = Header(default=None, alias="X-Bilifan-Token"),
         query_token: str | None = Query(default=None, alias="token"),

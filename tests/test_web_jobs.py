@@ -102,6 +102,25 @@ def test_query_token_works_for_config_and_file_route(tmp_path):
     assert file_response.text == "<html></html>"
 
 
+def test_document_responses_send_no_referrer_policy(tmp_path):
+    outputs = tmp_path / "outputs"
+    _make_run(outputs)
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    index_response = client.get("/")
+    file_response = client.get(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html?token=test-token"
+    )
+
+    assert index_response.status_code == 200
+    assert index_response.headers["referrer-policy"] == "no-referrer"
+    assert index_response.headers["x-content-type-options"] == "nosniff"
+    assert file_response.status_code == 200
+    assert file_response.headers["referrer-policy"] == "no-referrer"
+    assert file_response.headers["x-content-type-options"] == "nosniff"
+
+
 def test_history_endpoint_returns_direct_artifact_links_with_query_token(tmp_path):
     outputs = tmp_path / "outputs"
     _make_run(outputs)
