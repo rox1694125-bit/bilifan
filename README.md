@@ -3,7 +3,7 @@
 Bilifan is a local Bilibili video learning-note generator.
 
 The current implementation is a first-stage local MVP. It accepts one Bilibili
-video URL, processes only the current P, downloads audio, builds a transcript,
+or YouTube public video URL, processes only the current P/video, downloads audio, builds a transcript,
 chunks the transcript, asks `codex exec` for structured learning-note chapters,
 and renders an offline `report.html`. If Chrome is available it also tries to
 export `report.pdf`.
@@ -79,6 +79,7 @@ outputs/
         notes.md
         report.html
         report.pdf
+        content_bundle.json
 ```
 
 The command prints a relative run path such as:
@@ -91,6 +92,43 @@ Prepared Bilifan run: BV..._p2/runs/<timestamp>
 `--require-pdf` is passed. Successful transcript and summarization stages may
 also write `transcript.txt`, `transcript.srt`, and `notes.md` for easier reading
 or reuse outside Bilifan.
+
+## Content Bundle
+
+Successful runs write `content_bundle.json`. This is the stable integration
+artifact for downstream tools such as Nabaichuan. It contains source metadata,
+chapter summaries, transcript segments, artifact links, and provenance without
+local absolute paths.
+
+## Retry
+
+Use retry to regenerate downstream artifacts without downloading audio or
+rerunning Whisper:
+
+```bash
+python -m bilifan retry outputs/BV1abcDEF12G_p1/runs/2026-06-09_120000 --from bundle
+python -m bilifan retry outputs/BV1abcDEF12G_p1/runs/2026-06-09_120000 --from render
+python -m bilifan retry outputs/BV1abcDEF12G_p1/runs/2026-06-09_120000 --from summarization
+```
+
+Supported retry stages are `bundle`, `render`, and `summarization`.
+
+## YouTube Scope
+
+YouTube support is limited to public ordinary videos with `youtube.com/watch`
+or `youtu.be` URLs. Bilifan prefers subtitles and falls back to Whisper when
+needed. Playlists, private videos, members-only videos, age-restricted videos,
+cookies, live streams, and Shorts-specific behavior are outside this phase.
+
+## Nabaichuan
+
+See `docs/nabaichuan-integration.md` for the bundle mapping and JSONL converter:
+
+```bash
+python examples/content_bundle_to_nabaichuan.py \
+  outputs/BV1abcDEF12G_p1/runs/2026-06-09_120000/content_bundle.json \
+  --out /tmp/nabaichuan.jsonl
+```
 
 ## Local Web UI
 
