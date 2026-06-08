@@ -35,12 +35,15 @@ def build_transcript(
     run_dir: Path,
     *,
     force_whisper: bool = False,
+    language: str = "auto",
     transcriber: str = "auto",
     subtitle_fetcher=None,
     whisper_transcriber=None,
 ) -> dict[str, Any]:
     if transcriber not in {"auto", "whisper", "subtitles"}:
         raise TranscriptError(f"Unsupported transcriber: {transcriber}")
+    if language not in {"auto", "zh", "en"}:
+        raise TranscriptError(f"Unsupported language: {language}")
 
     if not force_whisper and transcriber in {"auto", "subtitles"}:
         subtitle = _first_subtitle(metadata)
@@ -65,7 +68,7 @@ def build_transcript(
         if transcriber == "subtitles":
             raise TranscriptError("No usable Bilibili subtitle was found.")
 
-    model_name, language = choose_whisper_model(metadata)
+    model_name, whisper_language = choose_whisper_model(metadata, language=language)
     audio_path = run_dir / _first_text(media.get("audio_path"))
     if not audio_path.is_file():
         raise TranscriptError(
@@ -74,10 +77,10 @@ def build_transcript(
         )
 
     transcribe = whisper_transcriber or transcribe_with_whisper
-    segments = transcribe(audio_path, model_name=model_name, language=language)
+    segments = transcribe(audio_path, model_name=model_name, language=whisper_language)
     transcript = _transcript_payload(
         source="whisper",
-        language=language,
+        language=whisper_language,
         model=model_name,
         segments=segments,
         media=media,
@@ -86,11 +89,45 @@ def build_transcript(
     return transcript
 
 
-def choose_whisper_model(metadata: dict[str, Any]) -> tuple[str, str]:
-    text = " ".join(
-        _first_text(metadata.get(key)) for key in ("title", "part_title", "description")
+def choose_whisper_model(
+    metadata: dict[str, Any],
+    *,
+    language: str = "auto",
+) -> tuple[str, str]:
+    if language == "zh":
+        return "turbo", "zh"
+    if language == "en":
+        return "small.en", "en"
+    if language != "auto":
+        raise ValueError(f"Unsupported Whisper language: {language}")
+
+    title_text = _metadata_text(metadata, ("title",))
+    descriptive_text = _metadata_text(metadata, ("part_title", "description"))
+    tags_text = _metadata_text(metadata, ("tags",))
+    subtitle_text = _subtitle_metadata_text(metadata.get("subtitles"))
+    support_text = " ".join(
+        text
+        for text in (
+            descriptive_text,
+            tags_text,
+            subtitle_text,
+        )
+        if text
     )
-    if text and not _contains_cjk(text) and _ascii_letter_ratio(text) >= 0.8:
+    combined_text = " ".join(text for text in (title_text, support_text) if text)
+    if _explicit_english_audio_signal(combined_text):
+        return "small.en", "en"
+    if _contains_cjk(title_text):
+        if descriptive_text and _english_signal(descriptive_text):
+            return "small.en", "en"
+        return "turbo", "zh"
+    if support_text and _english_signal(support_text):
+        return "small.en", "en"
+    if (
+        combined_text
+        and not _contains_cjk(combined_text)
+        and _ascii_letter_ratio(combined_text) >= 0.8
+    ):
         return "small.en", "en"
     return "turbo", "zh"
 
@@ -289,12 +326,76 @@ def _contains_cjk(text: str) -> bool:
     return any("\u4e00" <= char <= "\u9fff" for char in text)
 
 
+def _english_signal(text: str) -> bool:
+    return _ascii_letter_count(text) >= 20 and _ascii_letter_ratio(text) >= 0.75
+
+
+def _explicit_english_audio_signal(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        signal in lowered
+        for signal in (
+            "英语原声",
+            "英文原声",
+            "英文演讲",
+            "英文访谈",
+            "english audio",
+            "spoken in english",
+            "andrew ng",
+            "吴恩达",
+        )
+    )
+
+
 def _ascii_letter_ratio(text: str) -> float:
     letters = [char for char in text if char.isalpha()]
     if not letters:
         return 0
     ascii_letters = [char for char in letters if char.isascii()]
     return len(ascii_letters) / len(letters)
+
+
+def _ascii_letter_count(text: str) -> int:
+    return sum(1 for char in text if char.isascii() and char.isalpha())
+
+
+def _metadata_text(metadata: dict[str, Any], keys: tuple[str, ...]) -> str:
+    parts: list[str] = []
+    for key in keys:
+        parts.extend(_text_values(metadata.get(key)))
+    return " ".join(parts)
+
+
+def _subtitle_metadata_text(value: Any) -> str:
+    if not isinstance(value, list):
+        return ""
+    parts: list[str] = []
+    for subtitle in value:
+        if not isinstance(subtitle, dict):
+            continue
+        for key in ("language", "name", "lan", "lan_doc", "ext"):
+            parts.extend(_text_values(subtitle.get(key)))
+    return " ".join(parts)
+
+
+def _text_values(value: Any) -> list[str]:
+    if value is None or isinstance(value, bool):
+        return []
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, int | float):
+        return [str(value)]
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            parts.extend(_text_values(item))
+        return parts
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for item in value.values():
+            parts.extend(_text_values(item))
+        return parts
+    return []
 
 
 def _float_value(value: Any) -> float | None:

@@ -62,6 +62,53 @@ def test_choose_whisper_model_defaults_chinese_and_english_small_en():
     ) == ("small.en", "en")
 
 
+def test_choose_whisper_model_respects_explicit_language():
+    metadata = {"title": "How to build a small app", "description": "A short tutorial"}
+
+    assert choose_whisper_model(metadata, language="zh") == ("turbo", "zh")
+    assert choose_whisper_model(metadata, language="en") == ("small.en", "en")
+
+
+def test_choose_whisper_model_rejects_unsupported_language():
+    with pytest.raises(ValueError, match="Unsupported Whisper language"):
+        choose_whisper_model({"title": "中文标题"}, language="ja")
+
+
+def test_choose_whisper_model_auto_detects_mixed_english_metadata():
+    metadata = {
+        "title": "中文标题：AI Agent 工作流",
+        "description": (
+            "A practical walkthrough of building reliable evaluation pipelines "
+            "for autonomous coding agents with regression tests and review gates."
+        ),
+        "part_title": "Benchmark setup and prompt routing",
+        "tags": ["agent workflow", "python testing", "developer tools"],
+        "subtitles": [{"language": "en-US", "url": "https://example.test/en.json"}],
+    }
+
+    assert choose_whisper_model(metadata) == ("small.en", "en")
+
+
+def test_choose_whisper_model_auto_keeps_chinese_when_only_tags_are_english():
+    metadata = {
+        "title": "大模型中转站怎么选，便宜这么多可靠吗？",
+        "description": "这期主要聊国内用户怎么判断模型服务商的稳定性和风险。",
+        "tags": ["OpenAI", "Claude", "API", "Python", "Docker", "pytest"],
+    }
+
+    assert choose_whisper_model(metadata) == ("turbo", "zh")
+
+
+def test_choose_whisper_model_auto_uses_explicit_english_audio_signal():
+    metadata = {
+        "title": "Andrew Ng 访谈精华",
+        "part_title": "英语原声完整版",
+        "description": "课程讨论和创业建议。",
+    }
+
+    assert choose_whisper_model(metadata) == ("small.en", "en")
+
+
 def test_build_transcript_prefers_bilibili_subtitle(tmp_path):
     metadata = {
         "subtitles": [
@@ -101,6 +148,67 @@ def test_build_transcript_prefers_bilibili_subtitle(tmp_path):
         }
     ]
     assert transcript["transcript_check"]["status"] == "ok"
+
+
+def test_build_transcript_rejects_invalid_language_before_subtitle_fetch(tmp_path):
+    metadata = {
+        "subtitles": [
+            {
+                "language": "zh-Hans",
+                "name": "中文",
+                "url": "https://example.test/subtitle.json",
+                "ext": "json",
+            }
+        ]
+    }
+    media = {"duration_seconds": 3, "audio_path": ".bilifan/cache/audio.mp3"}
+
+    def forbidden_fetcher(url):
+        raise AssertionError("subtitle fetcher should not run for invalid language")
+
+    with pytest.raises(TranscriptError, match="Unsupported language"):
+        build_transcript(
+            metadata,
+            media,
+            tmp_path,
+            language="ja",
+            subtitle_fetcher=forbidden_fetcher,
+        )
+
+
+def test_build_transcript_subtitle_first_ignores_whisper_language_override(tmp_path):
+    metadata = {
+        "subtitles": [
+            {
+                "language": "zh-Hans",
+                "name": "中文",
+                "url": "https://example.test/subtitle.json",
+                "ext": "json",
+            }
+        ]
+    }
+    media = {"duration_seconds": 3, "audio_path": ".bilifan/cache/audio.mp3"}
+
+    def fake_fetcher(url):
+        return json.dumps(
+            {"body": [{"from": 0, "to": 3, "content": "字幕内容"}]}
+        ).encode("utf-8")
+
+    def forbidden_whisper(audio_file, *, model_name, language):
+        raise AssertionError("whisper should not be called when subtitles are usable")
+
+    transcript = build_transcript(
+        metadata,
+        media,
+        tmp_path,
+        language="en",
+        subtitle_fetcher=fake_fetcher,
+        whisper_transcriber=forbidden_whisper,
+    )
+
+    assert transcript["source"] == "bilibili-subtitle"
+    assert transcript["language"] == "zh-Hans"
+    assert transcript["model"] is None
 
 
 def test_build_transcript_redacts_sensitive_segment_text(tmp_path):
@@ -178,6 +286,32 @@ def test_build_transcript_uses_whisper_when_no_subtitles(tmp_path):
             "source": "whisper",
         }
     ]
+
+
+def test_build_transcript_passes_explicit_language_to_whisper_transcriber(tmp_path):
+    audio_path = tmp_path / ".bilifan" / "cache" / "audio.mp3"
+    audio_path.parent.mkdir(parents=True)
+    audio_path.write_bytes(b"audio")
+    metadata = {"title": "中文标题", "description": "这里是简介", "subtitles": []}
+    media = {"duration_seconds": 2, "audio_path": ".bilifan/cache/audio.mp3"}
+    calls = []
+
+    def fake_whisper(audio_file, *, model_name, language):
+        calls.append((audio_file, model_name, language))
+        return [{"start": 0, "end": 2, "text": "English transcript"}]
+
+    transcript = build_transcript(
+        metadata,
+        media,
+        tmp_path,
+        language="en",
+        whisper_transcriber=fake_whisper,
+    )
+
+    assert calls == [(audio_path, "small.en", "en")]
+    assert transcript["source"] == "whisper"
+    assert transcript["language"] == "en"
+    assert transcript["model"] == "small.en"
 
 
 def test_build_transcript_auto_falls_back_to_whisper_when_subtitle_fails(tmp_path):
