@@ -17,7 +17,7 @@ export `report.pdf`.
 - You are responsible for having permission to access and summarize the content.
 - If you provide cookies, they must only be used locally for content your account can already view.
 - Codex-backed summarization sends transcript chunks to the model service configured in your local Codex environment.
-- First-stage MVP does not generate SVG diagrams, extract video screenshots, run a batch queue, or provide a Web UI.
+- First-stage MVP does not generate SVG diagrams, extract video screenshots, or run a batch queue.
 
 ## Usage
 

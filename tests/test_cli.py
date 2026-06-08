@@ -1108,8 +1108,8 @@ def test_serve_prints_url_and_starts_uvicorn(monkeypatch):
         }
         return 8765
 
-    def fake_open_browser(url):
-        calls["open_browser"] = url
+    def fake_schedule_browser_open(url):
+        calls["schedule_browser_open"] = url
 
     def fake_uvicorn_run(app_instance, *, host, port, log_level):
         calls["uvicorn_run"] = {
@@ -1122,7 +1122,7 @@ def test_serve_prints_url_and_starts_uvicorn(monkeypatch):
     monkeypatch.setattr(cli, "generate_token", fake_generate_token)
     monkeypatch.setattr(cli, "create_app", fake_create_app)
     monkeypatch.setattr(cli, "_find_available_port", fake_find_available_port)
-    monkeypatch.setattr(cli, "_open_browser", fake_open_browser)
+    monkeypatch.setattr(cli, "_schedule_browser_open", fake_schedule_browser_open)
     monkeypatch.setattr(cli.uvicorn, "run", fake_uvicorn_run)
 
     result = runner.invoke(app, ["serve"])
@@ -1138,7 +1138,7 @@ def test_serve_prints_url_and_starts_uvicorn(monkeypatch):
         "host": "127.0.0.1",
         "preferred_port": 8765,
     }
-    assert calls["open_browser"] == "http://127.0.0.1:8765/?token=fixed-token"
+    assert calls["schedule_browser_open"] == "http://127.0.0.1:8765/?token=fixed-token"
     assert calls["uvicorn_run"] == {
         "app_instance": "app-instance",
         "host": "127.0.0.1",
@@ -1160,8 +1160,8 @@ def test_serve_no_open_does_not_open_browser(monkeypatch):
         }
         return "app-instance"
 
-    def fake_open_browser(url):
-        calls["open_browser"] = url
+    def fake_schedule_browser_open(url):
+        calls["schedule_browser_open"] = url
 
     def fake_uvicorn_run(app_instance, *, host, port, log_level):
         calls["uvicorn_run"] = {
@@ -1173,7 +1173,7 @@ def test_serve_no_open_does_not_open_browser(monkeypatch):
 
     monkeypatch.setattr(cli, "create_app", fake_create_app)
     monkeypatch.setattr(cli, "_find_available_port", lambda host, preferred_port: 8765)
-    monkeypatch.setattr(cli, "_open_browser", fake_open_browser)
+    monkeypatch.setattr(cli, "_schedule_browser_open", fake_schedule_browser_open)
     monkeypatch.setattr(cli.uvicorn, "run", fake_uvicorn_run)
 
     result = runner.invoke(app, ["serve", "--no-open"])
@@ -1185,7 +1185,7 @@ def test_serve_no_open_does_not_open_browser(monkeypatch):
         "token": "fixed-token",
         "open_browser": False,
     }
-    assert "open_browser" not in calls
+    assert "schedule_browser_open" not in calls
     assert calls["uvicorn_run"] == {
         "app_instance": "app-instance",
         "host": "127.0.0.1",
@@ -1207,7 +1207,7 @@ def test_serve_uses_next_available_port(monkeypatch):
     monkeypatch.setattr(cli, "generate_token", lambda: "fixed-token")
     monkeypatch.setattr(cli, "create_app", lambda **kwargs: "app-instance")
     monkeypatch.setattr(cli, "_find_available_port", lambda host, preferred_port: 8766)
-    monkeypatch.setattr(cli, "_open_browser", lambda url: calls.setdefault("url", url))
+    monkeypatch.setattr(cli, "_schedule_browser_open", lambda url: calls.setdefault("url", url))
 
     def fake_uvicorn_run(app_instance, *, host, port, log_level):
         calls["uvicorn_run"] = {
@@ -1230,3 +1230,74 @@ def test_serve_uses_next_available_port(monkeypatch):
         "port": 8766,
         "log_level": "info",
     }
+
+
+def test_serve_rejects_invalid_port_bounds():
+    low = runner.invoke(app, ["serve", "--port", "0"])
+    high = runner.invoke(app, ["serve", "--port", "65536"])
+
+    assert low.exit_code == 2
+    assert "--port must be between 1 and 65535" in low.output
+    assert high.exit_code == 2
+    assert "--port must be between 1 and 65535" in high.output
+
+
+def test_find_available_port_has_upper_bound(monkeypatch):
+    class BusySocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def setsockopt(self, level, option, value):
+            return None
+
+        def bind(self, address):
+            raise OSError("busy")
+
+    monkeypatch.setattr(cli.socket, "socket", lambda *args, **kwargs: BusySocket())
+
+    try:
+        cli._find_available_port("127.0.0.1", 65535)
+    except cli.typer.BadParameter as exc:
+        assert "Could not find an available local port" in str(exc)
+    else:
+        raise AssertionError("expected BadParameter")
+
+
+def test_serve_schedules_browser_open_without_calling_it_before_uvicorn(monkeypatch):
+    calls: list[tuple[str, str]] = []
+    scheduled: list[object] = []
+
+    class FakeTimer:
+        daemon = False
+
+        def __init__(self, delay, callback, args=()):
+            scheduled.append((delay, callback, args))
+
+        def start(self):
+            calls.append(("timer", "start"))
+
+    def fake_open_browser(url):
+        calls.append(("browser", url))
+
+    def fake_uvicorn_run(app_instance, *, host, port, log_level):
+        calls.append(("uvicorn", f"{host}:{port}"))
+
+    monkeypatch.setattr(cli, "generate_token", lambda: "fixed-token")
+    monkeypatch.setattr(cli, "create_app", lambda **kwargs: "app-instance")
+    monkeypatch.setattr(cli, "_find_available_port", lambda host, preferred_port: 8765)
+    monkeypatch.setattr(cli.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(cli, "_open_browser", fake_open_browser)
+    monkeypatch.setattr(cli.uvicorn, "run", fake_uvicorn_run)
+
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 0
+    assert calls == [("timer", "start"), ("uvicorn", "127.0.0.1:8765")]
+    assert len(scheduled) == 1
+    delay, callback, args = scheduled[0]
+    assert delay > 0
+    assert callback is fake_open_browser
+    assert args == ("http://127.0.0.1:8765/?token=fixed-token",)

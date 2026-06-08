@@ -1,4 +1,5 @@
 import socket
+import threading
 import webbrowser
 from pathlib import Path
 
@@ -41,6 +42,7 @@ COOKIES_NOTICE = (
     "Cookie options are reserved for local use only. Bilifan does not store cookies "
     "or cookie file names in reports or config."
 )
+OPEN_BROWSER_DELAY_SECONDS = 0.5
 
 
 @app.callback()
@@ -127,17 +129,17 @@ def serve(
 ) -> None:
     """Serve the local Bilifan Web UI."""
     host = _ensure_localhost_host(host)
+    selected_port = _find_available_port(host, port)
     token = generate_token()
     app_instance = create_app(
         outputs=Path("./outputs"),
         token=token,
         open_browser=not no_open,
     )
-    selected_port = _find_available_port(host, port)
     url = f"http://127.0.0.1:{selected_port}/?token={token}"
     typer.echo(url)
     if not no_open:
-        _open_browser(url)
+        _schedule_browser_open(url)
     uvicorn.run(app_instance, host=host, port=selected_port, log_level="info")
 
 
@@ -180,16 +182,29 @@ def _ensure_localhost_host(host: str) -> str:
 
 
 def _find_available_port(host: str, preferred_port: int) -> int:
-    port = preferred_port
-    while True:
+    first_port = _validate_port(preferred_port)
+    last_port = min(65535, first_port + 99)
+    for port in range(first_port, last_port + 1):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind((host, port))
             except OSError:
-                port += 1
                 continue
-        return port
+            return port
+    raise typer.BadParameter("Could not find an available local port.")
+
+
+def _validate_port(port: int) -> int:
+    if port < 1 or port > 65535:
+        raise typer.BadParameter("--port must be between 1 and 65535.")
+    return port
+
+
+def _schedule_browser_open(url: str) -> None:
+    timer = threading.Timer(OPEN_BROWSER_DELAY_SECONDS, _open_browser, args=(url,))
+    timer.daemon = True
+    timer.start()
 
 
 def _open_browser(url: str) -> None:
