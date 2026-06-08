@@ -42,6 +42,12 @@ def _make_run(
     )
     (run_dir / "report.html").write_text("<html></html>", encoding="utf-8")
     (run_dir / "report.pdf").write_bytes(b"%PDF")
+    (run_dir / "transcript.txt").write_text("plain transcript", encoding="utf-8")
+    (run_dir / "transcript.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\ncaption",
+        encoding="utf-8",
+    )
+    (run_dir / "notes.md").write_text("# Notes", encoding="utf-8")
     partial_dir = run_dir / "partial_summaries"
     partial_dir.mkdir()
     (partial_dir / "chunk_001.json").write_text("{}", encoding="utf-8")
@@ -75,6 +81,10 @@ def test_list_latest_runs_reads_outputs_latest_json(tmp_path):
         "html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
         "pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf",
         "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
+        "txt": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
+        "srt": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
+        "md": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
+        "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
 
 
@@ -206,6 +216,9 @@ def test_list_run_files_only_includes_whitelisted_files(tmp_path):
 
     assert "metadata.json" in files
     assert "report.html" in files
+    assert "transcript.txt" in files
+    assert "transcript.srt" in files
+    assert "notes.md" in files
     assert "partial_summaries/chunk_001.json" in files
     assert "secret.txt" not in files
 
@@ -290,6 +303,28 @@ def test_resolve_run_file_accepts_numeric_partial_summary_chunk(tmp_path):
     )
 
     assert path.name == "chunk_001.json"
+
+
+@pytest.mark.parametrize(
+    ("file_path", "content"),
+    [
+        ("transcript.txt", "plain transcript"),
+        ("transcript.srt", "caption"),
+        ("notes.md", "# Notes"),
+    ],
+)
+def test_resolve_run_file_accepts_export_artifacts(tmp_path, file_path, content):
+    outputs = tmp_path / "outputs"
+    _make_run(outputs)
+
+    path = resolve_run_file(
+        outputs,
+        "BV1abcDEF12G_p1",
+        "2026-06-08_120000",
+        file_path,
+    )
+
+    assert content in path.read_text(encoding="utf-8")
 
 
 def test_resolve_run_file_allows_error_run_diagnostics(tmp_path):

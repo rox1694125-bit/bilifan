@@ -152,4 +152,12 @@ def _artifact_links(run_key: str, artifact_paths: list[str]) -> dict[str, str]:
         artifacts["pdf"] = f"{prefix}/report.pdf"
     if "diagnostics.json" in artifact_paths:
         artifacts["diagnostics"] = f"{prefix}/diagnostics.json"
+    if "transcript.txt" in artifact_paths:
+        artifacts["txt"] = f"{prefix}/transcript.txt"
+    if "transcript.srt" in artifact_paths:
+        artifacts["srt"] = f"{prefix}/transcript.srt"
+    if "notes.md" in artifact_paths:
+        artifacts["md"] = f"{prefix}/notes.md"
+    if artifact_paths:
+        artifacts["folder"] = f"/api/runs/{run_key}/open-folder"
     return artifacts

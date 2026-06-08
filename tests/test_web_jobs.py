@@ -2,9 +2,11 @@ import json
 import threading
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
 from bilifan.pipeline import PipelineResult, PipelineRunError
+from bilifan.web import files as web_files
 from bilifan.web.app import create_app
 from bilifan.web.jobs import JobManager
 
@@ -43,6 +45,12 @@ def _make_run(outputs, output_id="BV1abcDEF12G_p1", run_id="2026-06-08_120000"):
         encoding="utf-8",
     )
     (run_dir / "report.html").write_text("<html></html>", encoding="utf-8")
+    (run_dir / "transcript.txt").write_text("plain transcript", encoding="utf-8")
+    (run_dir / "transcript.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\ncaption",
+        encoding="utf-8",
+    )
+    (run_dir / "notes.md").write_text("# Notes", encoding="utf-8")
     (run_dir / "diagnostics.json").write_text(
         json.dumps({"error_type": None, "stage": "render"}),
         encoding="utf-8",
@@ -133,6 +141,10 @@ def test_history_endpoint_returns_direct_artifact_links_with_query_token(tmp_pat
     artifacts = response.json()["items"][0]["artifacts"]
     assert artifacts["html"].endswith("/report.html?token=test-token")
     assert artifacts["diagnostics"].endswith("/diagnostics.json?token=test-token")
+    assert artifacts["txt"].endswith("/transcript.txt?token=test-token")
+    assert artifacts["srt"].endswith("/transcript.srt?token=test-token")
+    assert artifacts["md"].endswith("/notes.md?token=test-token")
+    assert artifacts["folder"].endswith("/open-folder?token=test-token")
     direct_response = client.get(artifacts["html"])
     assert direct_response.status_code == 200
     assert direct_response.text == "<html></html>"
@@ -157,7 +169,13 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
             run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
             run_dir=run_dir,
             diagnostics_path=run_dir / "diagnostics.json",
-            artifact_paths=["report.html", "diagnostics.json"],
+            artifact_paths=[
+                "report.html",
+                "diagnostics.json",
+                "transcript.txt",
+                "transcript.srt",
+                "notes.md",
+            ],
             warnings=[],
         )
 
@@ -193,6 +211,10 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
     assert state["artifacts"] == {
         "html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
         "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
+        "txt": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
+        "srt": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
+        "md": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
+        "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
     assert all(item["status"] == "done" for item in state["progress"])
     assert calls[0].output_format == "html"
@@ -318,25 +340,54 @@ def test_run_files_endpoint_returns_safe_file_list(tmp_path):
         "files": [
             "diagnostics.json",
             "metadata.json",
+            "notes.md",
             "report.html",
+            "transcript.srt",
+            "transcript.txt",
             "partial_summaries/chunk_001.json",
         ]
     }
 
 
-def test_run_file_endpoint_serves_artifact_with_token(tmp_path):
+def test_run_files_endpoint_missing_run_returns_404(tmp_path):
+    app = create_app(outputs=tmp_path / "outputs", token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 404
+
+
+def test_run_file_endpoint_serves_artifacts_with_token(tmp_path):
     outputs = tmp_path / "outputs"
     _make_run(outputs)
     app = create_app(outputs=outputs, token="test-token", open_browser=False)
     client = TestClient(app)
 
-    response = client.get(
-        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
-        headers=_headers(),
-    )
+    responses = {
+        file_path: client.get(
+            f"/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/{file_path}",
+            headers=_headers(),
+        )
+        for file_path in [
+            "report.html",
+            "transcript.txt",
+            "transcript.srt",
+            "notes.md",
+        ]
+    }
 
-    assert response.status_code == 200
-    assert response.text == "<html></html>"
+    assert responses["report.html"].status_code == 200
+    assert responses["report.html"].text == "<html></html>"
+    assert responses["transcript.txt"].status_code == 200
+    assert responses["transcript.txt"].text == "plain transcript"
+    assert responses["transcript.srt"].status_code == 200
+    assert "caption" in responses["transcript.srt"].text
+    assert responses["notes.md"].status_code == 200
+    assert responses["notes.md"].text == "# Notes"
 
 
 def test_run_file_endpoint_maps_not_found_and_invalid_paths(tmp_path):
@@ -361,6 +412,195 @@ def test_run_file_endpoint_maps_not_found_and_invalid_paths(tmp_path):
     assert missing.status_code == 404
     assert traversal.status_code == 400
     assert non_whitelisted.status_code == 400
+
+
+def test_run_file_endpoint_rejects_symlink_escape(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "transcript.txt"
+    outside_file.write_text("outside", encoding="utf-8")
+    (run_dir / "transcript.txt").unlink()
+    try:
+        (run_dir / "transcript.txt").symlink_to(outside_file)
+    except (NotImplementedError, OSError):
+        pytest.skip("Symlink creation is unsupported on this platform.")
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 400
+
+
+def test_open_folder_requires_token(tmp_path):
+    outputs = tmp_path / "outputs"
+    _make_run(outputs)
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder"
+    )
+
+    assert response.status_code == 403
+
+
+def test_open_folder_on_darwin_calls_open_with_resolved_run_dir(tmp_path, monkeypatch):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    calls = []
+
+    monkeypatch.setattr(web_files.platform, "system", lambda: "Darwin")
+
+    class Result:
+        returncode = 0
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return Result()
+
+    monkeypatch.setattr(web_files.subprocess, "run", fake_run)
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert calls == [
+        (
+            ["open", str(run_dir.resolve())],
+            {
+                "check": False,
+                "capture_output": True,
+                "text": True,
+                "timeout": 10,
+            },
+        )
+    ]
+
+
+def test_open_folder_non_darwin_returns_500(tmp_path, monkeypatch):
+    outputs = tmp_path / "outputs"
+    _make_run(outputs)
+    monkeypatch.setattr(web_files.platform, "system", lambda: "Linux")
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 500
+
+
+def test_open_folder_open_command_failure_returns_500(tmp_path, monkeypatch):
+    outputs = tmp_path / "outputs"
+    _make_run(outputs)
+
+    class Result:
+        returncode = 1
+
+    monkeypatch.setattr(web_files.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(web_files.subprocess, "run", lambda *args, **kwargs: Result())
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 500
+
+
+def test_open_folder_open_command_timeout_returns_500(tmp_path, monkeypatch):
+    outputs = tmp_path / "outputs"
+    _make_run(outputs)
+
+    monkeypatch.setattr(web_files.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        web_files.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            web_files.subprocess.TimeoutExpired("open", timeout=10)
+        ),
+    )
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 500
+
+
+def test_open_folder_missing_run_returns_404(tmp_path, monkeypatch):
+    outputs = tmp_path / "outputs"
+    monkeypatch.setattr(web_files.platform, "system", lambda: "Darwin")
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("output_id", "run_id"),
+    [
+        ("not-a-bv", "2026-06-08_120000"),
+        ("BV1abcDEF12G_p1", "2026-06-08-120000"),
+    ],
+)
+def test_open_folder_invalid_key_returns_400(tmp_path, monkeypatch, output_id, run_id):
+    outputs = tmp_path / "outputs"
+    monkeypatch.setattr(web_files.platform, "system", lambda: "Darwin")
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/runs/{output_id}/runs/{run_id}/open-folder",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 400
+
+
+def test_open_folder_rejects_run_dir_symlink_escape(tmp_path, monkeypatch):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    run_dir.rename(tmp_path / "original-run")
+    try:
+        run_dir.symlink_to(outside_dir, target_is_directory=True)
+    except (NotImplementedError, OSError):
+        pytest.skip("Symlink creation is unsupported on this platform.")
+    monkeypatch.setattr(web_files.platform, "system", lambda: "Darwin")
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 400
 
 
 def test_job_failure_lifecycle_sanitizes_error_message_and_marks_stage_failed(
@@ -442,7 +682,8 @@ def test_job_pipeline_run_error_exposes_diagnostics_link(tmp_path, monkeypatch):
     state = client.get("/api/jobs/current", headers=_headers()).json()
     assert state["status"] == "failed"
     assert state["artifacts"] == {
-        "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json"
+        "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
+        "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
     assert state["warnings"] == ["metadata_failed"]
 

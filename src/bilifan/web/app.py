@@ -10,7 +10,12 @@ from pydantic import BaseModel
 from bilifan.config import default_config_path, read_config, write_consent
 from bilifan.pipeline import PipelineRequest, run_summarize_pipeline
 
-from .files import list_latest_runs, list_run_files, resolve_run_file
+from .files import (
+    list_latest_runs,
+    list_run_files,
+    open_run_folder,
+    resolve_run_file,
+)
 from .jobs import JobManager
 from .security import TokenAuth
 from .ui import render_app_html
@@ -128,6 +133,8 @@ def create_app(
             files = list_run_files(outputs, output_id, run_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"files": files}
 
     @app.get("/api/runs/{output_id}/runs/{run_id}/files/{file_path:path}")
@@ -144,6 +151,22 @@ def create_app(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return FileResponse(path)
+
+    @app.post("/api/runs/{output_id}/runs/{run_id}/open-folder")
+    def run_open_folder(
+        output_id: str,
+        run_id: str,
+        _: None = Depends(require_token),
+    ) -> dict[str, bool]:
+        try:
+            open_run_folder(outputs, output_id, run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"ok": True}
 
     return app
 

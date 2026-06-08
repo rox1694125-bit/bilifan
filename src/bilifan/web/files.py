@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import platform
 import re
+import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -16,6 +18,9 @@ ROOT_FILES = {
     "diagnostics.json",
     "report.html",
     "report.pdf",
+    "transcript.txt",
+    "transcript.srt",
+    "notes.md",
 }
 
 
@@ -70,6 +75,8 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
 
 def list_run_files(outputs: Path, output_id: str, run_id: str) -> list[str]:
     run_dir = _run_dir(outputs, output_id, run_id)
+    if not run_dir.is_dir():
+        raise FileNotFoundError(f"{output_id}/runs/{run_id}")
     files = [
         name
         for name in sorted(ROOT_FILES)
@@ -105,6 +112,26 @@ def resolve_run_file(outputs: Path, output_id: str, run_id: str, file_path: str)
     if not fallback.is_relative_to(run_dir.resolve(strict=False)):
         raise ValueError("File resolves outside run directory.")
     raise FileNotFoundError(file_path)
+
+
+def open_run_folder(outputs: Path, output_id: str, run_id: str) -> None:
+    run_dir = _run_dir(outputs, output_id, run_id)
+    if not run_dir.is_dir():
+        raise FileNotFoundError(f"{output_id}/runs/{run_id}")
+    if platform.system() != "Darwin":
+        raise RuntimeError("Opening run folders is only supported on macOS.")
+    try:
+        result = subprocess.run(
+            ["open", str(run_dir)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("macOS open command failed.") from exc
+    if result.returncode != 0:
+        raise RuntimeError("macOS open command failed.")
 
 
 def _run_dir(outputs: Path, output_id: str, run_id: str) -> Path:
@@ -147,6 +174,13 @@ def _artifact_links(run_key: str, run_dir: Path) -> dict[str, str]:
         artifacts["pdf"] = f"{prefix}/report.pdf"
     if _safe_existing_file(run_dir, "diagnostics.json") is not None:
         artifacts["diagnostics"] = f"{prefix}/diagnostics.json"
+    if _safe_existing_file(run_dir, "transcript.txt") is not None:
+        artifacts["txt"] = f"{prefix}/transcript.txt"
+    if _safe_existing_file(run_dir, "transcript.srt") is not None:
+        artifacts["srt"] = f"{prefix}/transcript.srt"
+    if _safe_existing_file(run_dir, "notes.md") is not None:
+        artifacts["md"] = f"{prefix}/notes.md"
+    artifacts["folder"] = f"/api/runs/{run_key}/open-folder"
     return artifacts
 
 
