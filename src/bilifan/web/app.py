@@ -23,6 +23,7 @@ from .ui import render_app_html
 WEB_DEFAULTS = {
     "format": "html,pdf",
     "force_whisper": False,
+    "language": "auto",
     "require_pdf": False,
     "allow_long_video": False,
 }
@@ -32,6 +33,7 @@ class JobCreatePayload(BaseModel):
     url: str
     format: str = WEB_DEFAULTS["format"]
     force_whisper: bool = WEB_DEFAULTS["force_whisper"]
+    language: str = WEB_DEFAULTS["language"]
     require_pdf: bool = WEB_DEFAULTS["require_pdf"]
     allow_long_video: bool = WEB_DEFAULTS["allow_long_video"]
 
@@ -109,6 +111,7 @@ def create_app(
             out=outputs,
             output_format=payload.format,
             force_whisper=payload.force_whisper,
+            language=payload.language,
             require_pdf=payload.require_pdf,
             allow_long_video=payload.allow_long_video,
             yes_i_understand=True,

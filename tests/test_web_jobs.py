@@ -82,6 +82,7 @@ def test_config_and_consent_endpoints(tmp_path, monkeypatch):
     assert before["defaults"] == {
         "format": "html,pdf",
         "force_whisper": False,
+        "language": "auto",
         "require_pdf": False,
         "allow_long_video": False,
     }
@@ -196,6 +197,7 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
             "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
             "format": "html",
             "force_whisper": False,
+            "language": "en",
             "require_pdf": False,
             "allow_long_video": False,
         },
@@ -218,6 +220,7 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
     }
     assert all(item["status"] == "done" for item in state["progress"])
     assert calls[0].output_format == "html"
+    assert calls[0].language == "en"
 
 
 def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
@@ -254,6 +257,7 @@ def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "running"
     assert calls[0].output_format == "html,pdf"
+    assert calls[0].language == "auto"
     assert calls[0].force_whisper is False
     assert calls[0].require_pdf is False
     assert calls[0].allow_long_video is False

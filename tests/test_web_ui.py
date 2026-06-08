@@ -53,6 +53,7 @@ def test_render_app_html_contains_workbench_contract():
         "history-list",
         "url-input",
         "format-select",
+        "language-select",
         "force-whisper",
         "require-pdf",
         "allow-long-video",
@@ -69,11 +70,17 @@ def test_render_app_html_contains_workbench_contract():
         "render",
         "URLSearchParams",
         "X-Bilifan-Token",
+        "只影响 Whisper；已有字幕默认优先使用。",
         "/api/config",
         "/api/history",
         "/api/jobs",
         "/api/jobs/current",
         "setInterval",
+        "TXT",
+        "SRT",
+        "MD",
+        "data-folder-url",
+        "openFolder",
     ]
 
     for marker in required_strings:
@@ -96,6 +103,7 @@ def test_render_app_html_contains_frontend_state_guards():
     assert "请输入 B 站 URL。" in html
     assert "if (!payload.url)" in html
     assert "await loadConfig();" in html
+    assert 'input[type="url"]' in html
 
 
 def test_render_app_script_disables_start_without_consent_or_while_running():
@@ -107,7 +115,7 @@ def test_render_app_script_disables_start_without_consent_or_while_running():
         async function fetchMock(path, options = {}) {
           fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
           if (path === "/api/config") {
-            return jsonResponse({ consent: { local_processing: false }, defaults: { format: "html,pdf" } });
+            return jsonResponse({ consent: { local_processing: false }, defaults: { format: "html,pdf", language: "auto" } });
           }
           if (path === "/api/history") return jsonResponse({ items: [] });
           if (path === "/api/jobs/current") {
@@ -135,7 +143,7 @@ def test_render_app_script_disables_start_without_consent_or_while_running():
         async function fetchMock(path, options = {}) {
           fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
           if (path === "/api/config") {
-            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf" } });
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
           }
           if (path === "/api/history") return jsonResponse({ items: [] });
           if (path === "/api/jobs/current") {
@@ -167,7 +175,7 @@ def test_render_app_script_blocks_empty_url_before_posting_job():
         async function fetchMock(path, options = {}) {
           fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
           if (path === "/api/config") {
-            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf" } });
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
           }
           if (path === "/api/history") return jsonResponse({ items: [] });
           if (path === "/api/jobs/current") {
@@ -196,6 +204,91 @@ def test_render_app_script_blocks_empty_url_before_posting_job():
     )
 
 
+def test_render_app_script_submits_language_and_renders_export_actions():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "en" } });
+          }
+          if (path === "/api/history") {
+            return jsonResponse({
+              items: [{
+                title: "历史",
+                output_id: "BV1abcDEF12G_p1",
+                run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
+                status: "succeeded",
+                stage: "render",
+                artifacts: {
+                  txt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt?token=test-token",
+                  srt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt?token=test-token",
+                  md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md?token=test-token",
+                  folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder?token=test-token"
+                }
+              }]
+            });
+          }
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {
+                txt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
+                srt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
+                md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
+                folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder"
+              },
+              run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000"
+            });
+          }
+          if (path === "/api/jobs") {
+            return jsonResponse({ job_id: "job-1", status: "running" });
+          }
+          if (path.includes("/open-folder")) return jsonResponse({ ok: true });
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert.equal(elements["language-select"].value, "en");
+        assert(elements["history-list"].innerHTML.includes("TXT"));
+        assert(elements["history-list"].innerHTML.includes("SRT"));
+        assert(elements["history-list"].innerHTML.includes("MD"));
+        assert(elements["history-list"].innerHTML.includes("打开本地文件夹"));
+        assert(elements["result-links"].innerHTML.includes("TXT"));
+        assert(elements["result-links"].innerHTML.includes("SRT"));
+        assert(elements["result-links"].innerHTML.includes("MD"));
+
+        elements["url-input"].value = "https://www.bilibili.com/video/BV1abcDEF12G";
+        elements["language-select"].value = "en";
+        await elements["job-form"].listeners.submit({ preventDefault() {} });
+        await flush();
+        const jobCall = fetchCalls.find((call) => call.path === "/api/jobs");
+        assert.equal(JSON.parse(jobCall.body).language, "en");
+
+        const clickTarget = {
+          closest(selector) {
+            if (selector !== "[data-folder-url]") return null;
+            return {
+              getAttribute(name) {
+                assert.equal(name, "data-folder-url");
+                return "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder?token=test-token";
+              }
+            };
+          }
+        };
+        await document.listeners.click({ target: clickTarget });
+        await flush();
+        assert(fetchCalls.some((call) => call.method === "POST" && call.path.includes("/open-folder")));
+        """,
+    )
+
+
 def test_render_app_script_reloads_config_after_consent_conflict():
     script = _extract_inline_script(render_app_html())
 
@@ -209,7 +302,7 @@ def test_render_app_script_reloads_config_after_consent_conflict():
             configCalls += 1;
             return jsonResponse({
               consent: { local_processing: configCalls === 1 },
-              defaults: { format: "html,pdf" }
+              defaults: { format: "html,pdf", language: "auto" }
             });
           }
           if (path === "/api/history") return jsonResponse({ items: [] });
@@ -319,6 +412,10 @@ def _run_node_ui_harness(script, *, fetch_logic, assertions):
     }}
 
     global.document = {{
+      listeners: {{}},
+      addEventListener(eventName, callback) {{
+        this.listeners[eventName] = callback;
+      }},
       getElementById(id) {{
         if (!elements[id]) elements[id] = new Element(id);
         return elements[id];

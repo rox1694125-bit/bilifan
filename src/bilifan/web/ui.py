@@ -97,11 +97,13 @@ def render_app_html() -> str:
               color: var(--muted);
             }
             input[type="text"],
+            input[type="url"],
             select,
             button {
               font: inherit;
             }
             input[type="text"],
+            input[type="url"],
             select {
               width: 100%;
               border: 1px solid var(--border);
@@ -111,6 +113,7 @@ def render_app_html() -> str:
               padding: 10px 12px;
             }
             input[type="text"]:focus,
+            input[type="url"]:focus,
             select:focus,
             button:focus {
               outline: 2px solid rgba(35, 94, 167, 0.18);
@@ -137,6 +140,20 @@ def render_app_html() -> str:
               margin: 0;
               inline-size: 15px;
               block-size: 15px;
+            }
+            .field {
+              min-height: 42px;
+              padding: 10px 12px;
+              border: 1px solid var(--border);
+              border-radius: 6px;
+              background: var(--panel-muted);
+            }
+            .field select {
+              padding: 7px 10px;
+            }
+            .hint {
+              color: var(--muted);
+              font-size: 11px;
             }
             .actions {
               display: flex;
@@ -223,13 +240,22 @@ def render_app_html() -> str:
               color: var(--muted);
             }
             .history-links a,
-            .link-list a {
+            .link-list a,
+            .link-button {
               color: var(--accent);
               text-decoration: none;
             }
             .history-links a:hover,
-            .link-list a:hover {
+            .link-list a:hover,
+            .link-button:hover {
               text-decoration: underline;
+            }
+            .link-button {
+              border: 0;
+              background: transparent;
+              padding: 0;
+              font-size: 12px;
+              cursor: pointer;
             }
             .pill {
               display: inline-flex;
@@ -328,6 +354,15 @@ def render_app_html() -> str:
                       </div>
 
                       <div class="checks">
+                        <label class="field" for="language-select">
+                          <span>语言</span>
+                          <select id="language-select" name="language">
+                            <option value="auto">auto</option>
+                            <option value="zh">中文</option>
+                            <option value="en">英文</option>
+                          </select>
+                          <span class="hint">只影响 Whisper；已有字幕默认优先使用。</span>
+                        </label>
                         <label class="check" for="force-whisper">
                           <input id="force-whisper" name="force_whisper" type="checkbox">
                           <span>Force Whisper</span>
@@ -380,6 +415,7 @@ def render_app_html() -> str:
               jobForm: document.getElementById("job-form"),
               urlInput: document.getElementById("url-input"),
               formatSelect: document.getElementById("format-select"),
+              languageSelect: document.getElementById("language-select"),
               forceWhisper: document.getElementById("force-whisper"),
               requirePdf: document.getElementById("require-pdf"),
               allowLongVideo: document.getElementById("allow-long-video"),
@@ -459,7 +495,11 @@ def render_app_html() -> str:
               if (artifacts && typeof artifacts === "object") {
                 if (artifacts.html) links.push(linkItem("report.html", artifacts.html));
                 if (artifacts.pdf) links.push(linkItem("report.pdf", artifacts.pdf));
+                if (artifacts.txt) links.push(linkItem("TXT", artifacts.txt));
+                if (artifacts.srt) links.push(linkItem("SRT", artifacts.srt));
+                if (artifacts.md) links.push(linkItem("MD", artifacts.md));
                 if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
+                if (artifacts.folder) links.push(folderButton("打开本地文件夹", artifacts.folder));
               }
               if (runKey) {
                 links.push(linkItem("file list", runFilesUrl(runKey)));
@@ -472,6 +512,11 @@ def render_app_html() -> str:
             function linkItem(label, href) {
               const url = withToken(href);
               return `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+            }
+
+            function folderButton(label, href) {
+              const url = withToken(href);
+              return `<button class="link-button" type="button" data-folder-url="${escapeAttr(url)}">${escapeHtml(label)}</button>`;
             }
 
             function renderFailure(stage, message, diagnostics, runKey) {
@@ -509,7 +554,11 @@ def render_app_html() -> str:
                 const links = [];
                 if (artifacts.html) links.push(linkItem("HTML", artifacts.html));
                 if (artifacts.pdf) links.push(linkItem("PDF", artifacts.pdf));
+                if (artifacts.txt) links.push(linkItem("TXT", artifacts.txt));
+                if (artifacts.srt) links.push(linkItem("SRT", artifacts.srt));
+                if (artifacts.md) links.push(linkItem("MD", artifacts.md));
                 if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
+                if (artifacts.folder) links.push(folderButton("打开本地文件夹", artifacts.folder));
                 if (item.run_key) links.push(linkItem("file list", `/api/runs/${item.run_key}/files`));
                 return `
                   <li class="history-item">
@@ -544,6 +593,7 @@ def render_app_html() -> str:
               const consent = data.consent || {};
               state.consentAccepted = Boolean(consent.local_processing);
               elements.formatSelect.value = defaults.format || "html,pdf";
+              elements.languageSelect.value = defaults.language || "auto";
               elements.forceWhisper.checked = Boolean(defaults.force_whisper);
               elements.requirePdf.checked = Boolean(defaults.require_pdf);
               elements.allowLongVideo.checked = Boolean(defaults.allow_long_video);
@@ -606,6 +656,7 @@ def render_app_html() -> str:
               const payload = {
                 url: elements.urlInput.value.trim(),
                 format: elements.formatSelect.value,
+                language: elements.languageSelect.value,
                 force_whisper: elements.forceWhisper.checked,
                 require_pdf: elements.requirePdf.checked,
                 allow_long_video: elements.allowLongVideo.checked,
@@ -652,7 +703,21 @@ def render_app_html() -> str:
               loadCurrentJob();
               elements.consentButton.addEventListener("click", acceptConsent);
               elements.jobForm.addEventListener("submit", startJob);
+              document.addEventListener("click", (event) => {
+                const target = event.target && event.target.closest
+                  ? event.target.closest("[data-folder-url]")
+                  : null;
+                if (!target) return;
+                openFolder(target.getAttribute("data-folder-url")).catch((error) => {
+                  setJobMessage(error.message || "打开文件夹失败。", true);
+                });
+              });
               state.pollingTimer = setInterval(loadCurrentJob, 1000);
+            }
+
+            async function openFolder(url) {
+              await apiFetch(url, { method: "POST" });
+              setJobMessage("已请求打开本地文件夹。");
             }
 
             init();
