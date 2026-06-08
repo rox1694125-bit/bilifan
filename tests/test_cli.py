@@ -3,6 +3,7 @@ import json
 from typer.testing import CliRunner
 
 import bilifan.cli as cli
+import bilifan.pipeline as pipeline
 from bilifan.cli import app
 from bilifan.media import MediaDownloadError
 from bilifan.metadata import MetadataIngestError
@@ -70,7 +71,9 @@ def _install_fake_metadata_fetch(monkeypatch, *, title="Mock metadata title"):
             "ffmpeg_version": "",
         }
 
-    monkeypatch.setattr(cli, "fetch_current_part_metadata", fake_fetch_current_part_metadata)
+    monkeypatch.setattr(
+        pipeline, "fetch_current_part_metadata", fake_fetch_current_part_metadata
+    )
     return calls
 
 
@@ -110,7 +113,9 @@ def _install_fake_audio_download(monkeypatch, *, duration_seconds=120):
             },
         }
 
-    monkeypatch.setattr(cli, "download_current_part_audio", fake_download_current_part_audio)
+    monkeypatch.setattr(
+        pipeline, "download_current_part_audio", fake_download_current_part_audio
+    )
     return calls
 
 
@@ -157,7 +162,7 @@ def _install_fake_transcript_build(monkeypatch):
             },
         }
 
-    monkeypatch.setattr(cli, "build_transcript", fake_build_transcript)
+    monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
     return calls
 
 
@@ -224,7 +229,7 @@ def _install_fake_summarize_chunks(monkeypatch):
             ],
         }
 
-    monkeypatch.setattr(cli, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(pipeline, "summarize_chunks", fake_summarize_chunks)
     return calls
 
 
@@ -253,8 +258,8 @@ def _install_fake_report_render(monkeypatch, *, pdf_success=True):
         pdf_path.write_bytes(b"%PDF")
         return pdf_path
 
-    monkeypatch.setattr(cli, "render_report_html", fake_render_report_html)
-    monkeypatch.setattr(cli, "export_report_pdf", fake_export_report_pdf)
+    monkeypatch.setattr(pipeline, "render_report_html", fake_render_report_html)
+    monkeypatch.setattr(pipeline, "export_report_pdf", fake_export_report_pdf)
     return calls
 
 
@@ -518,7 +523,7 @@ def test_summarize_invalid_url_retries_error_run_collision_without_leaking_path(
 ):
     config_home = tmp_path / "config-home"
     outputs = tmp_path / "outputs"
-    original_create_error_run = cli.create_error_run
+    original_create_error_run = pipeline.create_error_run
     calls = 0
 
     def fake_create_error_run(out_dir, *, now=None):
@@ -528,7 +533,7 @@ def test_summarize_invalid_url_retries_error_run_collision_without_leaking_path(
             raise FileExistsError("/Users/jack/outputs/_errors/runs/collision")
         return original_create_error_run(out_dir, now=now)
 
-    monkeypatch.setattr(cli, "create_error_run", fake_create_error_run)
+    monkeypatch.setattr(pipeline, "create_error_run", fake_create_error_run)
 
     result = runner.invoke(
         app,
@@ -572,7 +577,9 @@ def test_summarize_metadata_failure_writes_sanitized_diagnostics_without_leaks(
             "Cookie: SESSDATA=secret"
         )
 
-    monkeypatch.setattr(cli, "fetch_current_part_metadata", fake_fetch_current_part_metadata)
+    monkeypatch.setattr(
+        pipeline, "fetch_current_part_metadata", fake_fetch_current_part_metadata
+    )
 
     result = runner.invoke(
         app,
@@ -641,7 +648,9 @@ def test_summarize_audio_failure_writes_diagnostics_after_metadata(tmp_path, mon
             },
         )
 
-    monkeypatch.setattr(cli, "download_current_part_audio", fake_download_current_part_audio)
+    monkeypatch.setattr(
+        pipeline, "download_current_part_audio", fake_download_current_part_audio
+    )
 
     result = runner.invoke(
         app,
@@ -710,7 +719,7 @@ def test_summarize_transcript_failure_writes_diagnostics_after_media(
             },
         )
 
-    monkeypatch.setattr(cli, "build_transcript", fake_build_transcript)
+    monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
 
     result = runner.invoke(
         app,
@@ -784,7 +793,7 @@ def test_summarize_incomplete_transcript_writes_file_with_warning(
             },
         }
 
-    monkeypatch.setattr(cli, "build_transcript", fake_build_transcript)
+    monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
 
     result = runner.invoke(
         app,
@@ -999,7 +1008,7 @@ def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
             "codex exec failed with OPENAI_API_KEY=secret /Users/jack/raw"
         )
 
-    monkeypatch.setattr(cli, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(pipeline, "summarize_chunks", fake_summarize_chunks)
 
     result = runner.invoke(
         app,
