@@ -9,10 +9,12 @@ description = "Local Bilibili video learning-note generator"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "fastapi>=0.136.3",
   "jinja2>=3.1.6",
   "jsonschema>=4.26.0",
   "openai-whisper>=20250625",
   "typer>=0.12,<1.0",
+  "uvicorn>=0.49.0",
   "yt-dlp>=2026.3.17",
 ]
 
@@ -20,6 +22,10 @@ dependencies = [
 dev = [
   "pytest>=8,<9",
 ]
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true
 
 [project.scripts]
 bilifan = "bilifan.cli:main"
@@ -32,4 +38,9 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
   "metadata_smoke: hits live Bilibili URLs through yt-dlp; set BILIFAN_METADATA_SMOKE=1 to run",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
 ]
