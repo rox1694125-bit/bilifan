@@ -26,6 +26,7 @@ from .pipeline import (
     validate_output_format,
 )
 from .renderer import PdfExportError
+from .retry import RetryError, retry_run
 from .summarizer import SummarizationError
 from .transcript import TranscriptError
 from .web.app import create_app
@@ -127,6 +128,34 @@ def summarize(
         raise typer.Exit(1) from exc
 
     typer.echo(f"Prepared Bilifan run: {result.run_key}")
+
+
+@app.command()
+def retry(
+    run_dir: Path,
+    from_stage: str = typer.Option("", "--from"),
+    output_format: str = typer.Option("html,pdf", "--format"),
+    llm_provider: str = typer.Option("codex-exec", "--llm-provider"),
+    llm_model: str = typer.Option("gpt-5.5", "--llm-model"),
+    require_pdf: bool = typer.Option(False, "--require-pdf"),
+) -> None:
+    """Retry summarization, render, or bundle stages for an existing run directory."""
+    if not from_stage:
+        raise typer.BadParameter("--from must be summarization, render, or bundle.")
+    try:
+        result = retry_run(
+            run_dir,
+            from_stage=from_stage,
+            output_format=output_format,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            require_pdf=require_pdf,
+        )
+    except RetryError as exc:
+        typer.echo(redact_text(str(exc)), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Retried Bilifan run: {result.run_key}")
 
 
 @app.command()
