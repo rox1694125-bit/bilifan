@@ -219,6 +219,76 @@ def test_summarize_chunks_writes_partial_and_merges_chapters(tmp_path):
     assert chapters["chapters"][0]["timestamp_url"].endswith("&t=0")
 
 
+def test_summarize_chunks_normalizes_small_chunk_boundary_drift(tmp_path):
+    chunks = _chunks()
+    chunks["chunks"][0]["start"] = 0.82
+    chunks["chunks"][0]["end"] = 119.42
+    chunks["chunks"][0]["segments"] = [
+        {"source_index": 0, "start": 0.82, "end": 60, "text": "这是转写内容"},
+        {"source_index": 1, "start": 60, "end": 119.42, "text": "第二段"},
+    ]
+    partial = _valid_partial()
+    partial["chapters"][0]["start"] = 0
+    partial["chapters"][0]["end"] = 120
+
+    def fake_runner(cmd, **kwargs):
+        output_path = tmp_path / cmd[cmd.index("--output-last-message") + 1]
+        if not output_path.is_absolute():
+            output_path = tmp_path / output_path
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(partial, ensure_ascii=False), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    chapters = summarize_chunks(
+        ref=REF,
+        metadata=_metadata(),
+        chunks=chunks,
+        run_dir=tmp_path,
+        runner=fake_runner,
+    )
+
+    saved_partial = json.loads(
+        (tmp_path / "partial_summaries" / "chunk_001.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    chapter = chapters["chapters"][0]
+    assert chapter["start"] == 0.82
+    assert chapter["end"] == 119.42
+    assert saved_partial["chapters"][0]["start"] == 0.82
+    assert saved_partial["chapters"][0]["end"] == 119.42
+
+
+def test_summarize_chunks_writes_raw_partial_before_rejecting_invalid_summary(tmp_path):
+    invalid_partial = _valid_partial()
+    invalid_partial["chapters"][0]["start"] = 180
+    invalid_partial["chapters"][0]["end"] = 200
+
+    def fake_runner(cmd, **kwargs):
+        output_path = tmp_path / cmd[cmd.index("--output-last-message") + 1]
+        if not output_path.is_absolute():
+            output_path = tmp_path / output_path
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(invalid_partial, ensure_ascii=False), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    with pytest.raises(SummarizationError, match="outside the input chunk"):
+        summarize_chunks(
+            ref=REF,
+            metadata=_metadata(),
+            chunks=_chunks(),
+            run_dir=tmp_path,
+            runner=fake_runner,
+        )
+
+    saved_partial = json.loads(
+        (tmp_path / "partial_summaries" / "chunk_001.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert saved_partial["chapters"][0]["start"] == 180
+
+
 def test_summarize_chunks_rejects_invalid_provider(tmp_path):
     with pytest.raises(SummarizationError, match="Unsupported LLM provider"):
         summarize_chunks(

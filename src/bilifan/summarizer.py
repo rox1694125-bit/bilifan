@@ -24,6 +24,7 @@ CODEX_EXEC_CANDIDATES = (
     Path("/opt/homebrew/bin/codex"),
     Path("/usr/local/bin/codex"),
 )
+CHAPTER_BOUNDARY_TOLERANCE_SECONDS = 2.0
 
 
 CHUNK_SUMMARY_SCHEMA: dict[str, Any] = {
@@ -145,6 +146,7 @@ def summarize_chunks(
     partial_dir.mkdir(parents=True, exist_ok=True)
     partials: list[dict[str, Any]] = []
     for chunk in _chunk_items(chunks):
+        chunk_index = _chunk_index(chunk)
         partial = run_codex_chunk_summary(
             metadata=metadata,
             chunk=chunk,
@@ -153,11 +155,13 @@ def summarize_chunks(
             style=style,
             runner=runner,
         )
+        partial_path = partial_dir / f"chunk_{chunk_index:03d}.json"
+        _write_json(partial_path, partial)
         _validate_json(partial, CHUNK_SUMMARY_SCHEMA, "chunk summary")
+        _normalize_partial_chunk_boundaries(partial, chunk)
         _validate_partial_matches_chunk(partial, chunk)
-        chunk_index = int(chunk["chunk_index"])
         partial["chunk_index"] = chunk_index
-        _write_json(partial_dir / f"chunk_{chunk_index:03d}.json", partial)
+        _write_json(partial_path, partial)
         partials.append(partial)
 
     chapters = merge_partial_summaries(
@@ -335,6 +339,36 @@ def _chunk_items(chunks: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(raw_chunks, list) or not raw_chunks:
         raise SummarizationError("chunks.json contains no chunks.")
     return [chunk for chunk in raw_chunks if isinstance(chunk, dict)]
+
+
+def _chunk_index(chunk: dict[str, Any]) -> int:
+    chunk_index = _int_value(chunk.get("chunk_index"))
+    if chunk_index is None or chunk_index < 1:
+        raise SummarizationError("chunks.json contained invalid chunk_index.")
+    return chunk_index
+
+
+def _normalize_partial_chunk_boundaries(
+    partial: dict[str, Any],
+    chunk: dict[str, Any],
+) -> None:
+    chunk_start = _float_value(chunk.get("start"))
+    chunk_end = _float_value(chunk.get("end"))
+    if chunk_start is None or chunk_end is None or chunk_end < chunk_start:
+        return
+
+    for chapter in partial.get("chapters", []):
+        if not isinstance(chapter, dict):
+            continue
+        start = _float_value(chapter.get("start"))
+        end = _float_value(chapter.get("end"))
+        if start is None or end is None:
+            continue
+        if start < chunk_start and chunk_start - start <= CHAPTER_BOUNDARY_TOLERANCE_SECONDS:
+            chapter["start"] = chunk_start
+            start = chunk_start
+        if end > chunk_end and end - chunk_end <= CHAPTER_BOUNDARY_TOLERANCE_SECONDS:
+            chapter["end"] = chunk_end
 
 
 def _validate_partial_matches_chunk(
