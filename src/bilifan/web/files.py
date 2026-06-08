@@ -7,7 +7,9 @@ import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-OUTPUT_ID_PATTERN = re.compile(r"(?:BV[0-9A-Za-z]{10}_p[1-9][0-9]*|_errors)")
+OUTPUT_ID_PATTERN = re.compile(
+    r"(?:(?:BV[0-9A-Za-z]{10}|YT[0-9A-Za-z_-]{6,128})_p[1-9][0-9]*|_errors)"
+)
 RUN_ID_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}")
 CHUNK_FILE_PATTERN = re.compile(r"chunk_[0-9]+\.json")
 ROOT_FILES = {

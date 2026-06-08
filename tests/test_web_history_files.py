@@ -90,6 +90,17 @@ def test_list_latest_runs_reads_outputs_latest_json(tmp_path):
     }
 
 
+def test_list_latest_runs_accepts_youtube_output_id(tmp_path):
+    outputs = tmp_path / "outputs"
+    _make_run(outputs, output_id="YTdQw4w9WgXcQ_p1")
+
+    items = list_latest_runs(outputs)
+
+    assert len(items) == 1
+    assert items[0]["output_id"] == "YTdQw4w9WgXcQ_p1"
+    assert items[0]["run_key"] == "YTdQw4w9WgXcQ_p1/runs/2026-06-08_120000"
+
+
 @pytest.mark.parametrize("metadata", [{}, {"title": 123}, {"title": ""}])
 def test_list_latest_runs_falls_back_to_output_id_for_missing_or_invalid_title(
     tmp_path, metadata

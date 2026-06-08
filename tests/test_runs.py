@@ -7,6 +7,11 @@ from bilifan.bilibili import BilibiliPartRef
 from bilifan.runs import create_error_run, create_run
 
 
+class _GenericRef:
+    output_id = "YTdQw4w9WgXcQ_p1"
+    sanitized_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+
 def test_create_run_uses_stable_output_id_and_updates_latest(tmp_path):
     ref = BilibiliPartRef(
         bvid="BV1abcDEF12G",
@@ -26,6 +31,18 @@ def test_create_run_uses_stable_output_id_and_updates_latest(tmp_path):
     assert latest["run_dir"] == "runs/2026-06-08_011530"
     assert latest["generated_at"] == "2026-06-08T01:15:30+00:00"
     assert latest["input_url_sanitized"] == "https://www.bilibili.com/video/BV1abcDEF12G?p=2"
+
+
+def test_create_run_accepts_youtube_output_id(tmp_path):
+    now = datetime(2026, 6, 8, 1, 15, 30, tzinfo=timezone.utc)
+
+    run = create_run(tmp_path / "outputs", _GenericRef(), now=now)
+
+    assert run.video_dir == tmp_path / "outputs" / "YTdQw4w9WgXcQ_p1"
+    latest = json.loads((run.video_dir / "latest.json").read_text(encoding="utf-8"))
+    assert latest["input_url_sanitized"] == (
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    )
 
 
 def test_create_run_refuses_existing_run_without_overwrite(tmp_path):

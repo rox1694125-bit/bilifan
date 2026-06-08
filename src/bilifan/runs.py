@@ -10,7 +10,9 @@ from pathlib import Path
 from .bilibili import BilibiliPartRef
 
 
-RUN_OUTPUT_ID_PATTERN = re.compile(r"BV[0-9A-Za-z]{10}_p[1-9][0-9]*")
+RUN_OUTPUT_ID_PATTERN = re.compile(
+    r"(?:BV[0-9A-Za-z]{10}|YT[0-9A-Za-z_-]{6,128})_p[1-9][0-9]*"
+)
 
 
 @dataclass(frozen=True)

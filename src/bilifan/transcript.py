@@ -7,6 +7,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from .diagnostics import redact_text
+from .sources.youtube import parse_youtube_vtt
 
 
 SUBTITLE_TIMEOUT_SECONDS = 60
@@ -53,8 +54,9 @@ def build_transcript(
                     subtitle,
                     subtitle_fetcher=subtitle_fetcher,
                 )
+                subtitle_source = _subtitle_source(metadata, subtitle)
                 transcript = _transcript_payload(
-                    source="bilibili-subtitle",
+                    source=subtitle_source,
                     language=_first_text(subtitle.get("language"), "unknown"),
                     model=None,
                     segments=segments,
@@ -248,7 +250,21 @@ def _segments_from_subtitle(
         raise TranscriptError("Bilibili subtitle did not include a URL.")
     fetcher = subtitle_fetcher or fetch_subtitle_bytes
     raw = fetcher(url)
+    if _first_text(subtitle.get("ext")).lower() == "vtt":
+        try:
+            return parse_youtube_vtt(raw.decode("utf-8-sig"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise TranscriptError("YouTube subtitle returned invalid VTT.") from exc
     return parse_bilibili_subtitle_json(raw)
+
+
+def _subtitle_source(metadata: dict[str, Any], subtitle: dict[str, Any]) -> str:
+    if (
+        _first_text(metadata.get("platform")) == "youtube"
+        or _first_text(subtitle.get("ext")).lower() == "vtt"
+    ):
+        return "youtube-subtitle"
+    return "bilibili-subtitle"
 
 
 def _transcript_payload(
