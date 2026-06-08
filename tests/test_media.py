@@ -202,6 +202,72 @@ def test_download_current_part_audio_falls_back_to_playurl_api_on_bilibili_412(
     assert not (tmp_path / ".bilifan" / "cache" / f"{ref.output_id}.source.m4s").exists()
 
 
+def test_download_current_part_audio_falls_back_to_playurl_after_duration_mismatch(
+    tmp_path,
+):
+    ref = parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=1")
+    metadata = {"duration": 1558, "cid": "38864161273"}
+    download_attempts = []
+    stream_calls = []
+    ffmpeg_calls = []
+    probe_durations = iter(["179.392", "179.392", "1558"])
+
+    def fake_download(cmd, **kwargs):
+        download_attempts.append(cmd)
+        (tmp_path / ".bilifan" / "cache").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".bilifan" / "cache" / f"{ref.output_id}.mp3").write_bytes(
+            b"wrong-audio"
+        )
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    def fake_playurl_fetcher(received_ref, received_metadata):
+        assert received_ref == ref
+        assert received_metadata == metadata
+        return "https://upos.example.test/current-p-audio.m4s"
+
+    def fake_stream_downloader(url, received_ref, raw_path):
+        stream_calls.append((url, received_ref, raw_path.name))
+        raw_path.write_bytes(b"raw-current-p-audio")
+
+    def fake_ffmpeg(cmd, **kwargs):
+        ffmpeg_calls.append((cmd, kwargs))
+        Path(cmd[-1]).write_bytes(b"current-p-mp3")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    def fake_ffprobe(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            json.dumps({"format": {"duration": next(probe_durations)}}),
+            "",
+        )
+
+    result = download_current_part_audio(
+        ref,
+        metadata,
+        tmp_path,
+        downloader=fake_download,
+        probe_runner=fake_ffprobe,
+        playurl_fetcher=fake_playurl_fetcher,
+        stream_downloader=fake_stream_downloader,
+        ffmpeg_runner=fake_ffmpeg,
+    )
+
+    assert len(download_attempts) == 2
+    assert result["audio_source"] == "bilibili-playurl-api"
+    assert result["duration_seconds"] == 1558
+    assert result["duration_check"]["status"] == "ok"
+    assert result["duration_check"]["attempts"] == 3
+    assert stream_calls == [
+        (
+            "https://upos.example.test/current-p-audio.m4s",
+            ref,
+            f"{ref.output_id}.source.m4s",
+        )
+    ]
+    assert ffmpeg_calls
+
+
 def test_download_current_part_audio_raises_after_retry_mismatch(tmp_path):
     ref = parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=1")
     metadata = {"duration": 100}
