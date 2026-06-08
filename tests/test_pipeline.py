@@ -18,6 +18,7 @@ def test_pipeline_request_defaults_for_web_and_cli(tmp_path):
 
     assert request.output_format == "html,pdf"
     assert request.transcriber == "auto"
+    assert request.language == "auto"
     assert request.force_whisper is False
     assert request.llm_provider == "codex-exec"
     assert request.llm_model == "gpt-5.5"
@@ -113,6 +114,7 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
         run_dir,
         *,
         force_whisper=False,
+        language="auto",
         transcriber="auto",
     ):
         return {
@@ -238,12 +240,18 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
     assert result.run_key.startswith("BV1abcDEF12G_p1/runs/")
     assert "report.html" in result.artifact_paths
     assert "report.pdf" in result.artifact_paths
+    assert "transcript.txt" in result.artifact_paths
+    assert "transcript.srt" in result.artifact_paths
+    assert "notes.md" in result.artifact_paths
 
     for artifact_name in (
         "metadata.json",
         "transcript.json",
+        "transcript.txt",
+        "transcript.srt",
         "chunks.json",
         "chapters.json",
+        "notes.md",
         "diagnostics.json",
     ):
         assert (result.run_dir / artifact_name).is_file()
@@ -261,6 +269,232 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
         ("summarization", "running"),
         ("render", "running"),
     ]
+
+
+def test_summarization_failure_keeps_transcript_exports_in_artifacts(
+    tmp_path, monkeypatch
+):
+    def fake_fetch_current_part_metadata(
+        ref,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        return {
+            "input_url_sanitized": ref.sanitized_url,
+            "video_id": ref.bvid,
+            "part_index": ref.part_index,
+            "title": "Mock metadata title",
+            "part_title": "Mock metadata title",
+            "owner_name": "Mock Owner",
+            "duration": 120,
+            "subtitles": [],
+        }
+
+    def fake_download_current_part_audio(
+        ref,
+        metadata,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        audio_path = f".bilifan/cache/{ref.output_id}.mp3"
+        (run_dir / audio_path).parent.mkdir(parents=True, exist_ok=True)
+        (run_dir / audio_path).write_bytes(b"audio")
+        return {
+            "audio_path": audio_path,
+            "duration_seconds": 120,
+            "duration_check": {"status": "ok"},
+        }
+
+    def fake_build_transcript(
+        metadata,
+        media,
+        run_dir,
+        *,
+        force_whisper=False,
+        language="auto",
+        transcriber="auto",
+    ):
+        return {
+            "source": "whisper",
+            "language": "zh",
+            "model": "turbo",
+            "segments": [{"start": 0.0, "end": 120.0, "text": "转写"}],
+            "transcript_check": {"status": "ok"},
+        }
+
+    def fake_build_chunks(
+        transcript,
+        media,
+        *,
+        allow_long_video=False,
+        long_video_confirmed=False,
+    ):
+        return {
+            "chunks": [
+                {
+                    "chunk_index": 1,
+                    "start": 0,
+                    "end": 120,
+                    "text": "转写",
+                    "segments": [],
+                }
+            ]
+        }
+
+    def fake_summarize_chunks(**kwargs):
+        raise pipeline.SummarizationError("codex exec failed")
+
+    monkeypatch.setattr(pipeline, "fetch_current_part_metadata", fake_fetch_current_part_metadata)
+    monkeypatch.setattr(pipeline, "download_current_part_audio", fake_download_current_part_audio)
+    monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
+    monkeypatch.setattr(pipeline, "build_chunks", fake_build_chunks)
+    monkeypatch.setattr(pipeline, "summarize_chunks", fake_summarize_chunks)
+
+    with pytest.raises(pipeline.PipelineRunError) as exc_info:
+        pipeline.run_summarize_pipeline(
+            PipelineRequest(
+                url="https://www.bilibili.com/video/BV1abcDEF12G",
+                out=tmp_path,
+                yes_i_understand=True,
+            )
+        )
+
+    assert "transcript.json" in exc_info.value.artifact_paths
+    assert "transcript.txt" in exc_info.value.artifact_paths
+    assert "transcript.srt" in exc_info.value.artifact_paths
+    run_dir = exc_info.value.diagnostics_path.parent
+    assert (run_dir / "transcript.txt").is_file()
+    assert (run_dir / "transcript.srt").is_file()
+
+
+def test_render_failure_keeps_completed_exports_in_artifacts(tmp_path, monkeypatch):
+    def fake_fetch_current_part_metadata(
+        ref,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        return {
+            "input_url_sanitized": ref.sanitized_url,
+            "video_id": ref.bvid,
+            "part_index": ref.part_index,
+            "title": "Mock metadata title",
+            "part_title": "Mock metadata title",
+            "owner_name": "Mock Owner",
+            "duration": 120,
+            "subtitles": [],
+        }
+
+    def fake_download_current_part_audio(
+        ref,
+        metadata,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        audio_path = f".bilifan/cache/{ref.output_id}.mp3"
+        (run_dir / audio_path).parent.mkdir(parents=True, exist_ok=True)
+        (run_dir / audio_path).write_bytes(b"audio")
+        return {
+            "audio_path": audio_path,
+            "duration_seconds": 120,
+            "duration_check": {"status": "ok"},
+        }
+
+    def fake_build_transcript(
+        metadata,
+        media,
+        run_dir,
+        *,
+        force_whisper=False,
+        language="auto",
+        transcriber="auto",
+    ):
+        return {
+            "source": "whisper",
+            "language": "zh",
+            "model": "turbo",
+            "segments": [{"start": 0.0, "end": 120.0, "text": "转写"}],
+            "transcript_check": {"status": "ok"},
+        }
+
+    def fake_build_chunks(
+        transcript,
+        media,
+        *,
+        allow_long_video=False,
+        long_video_confirmed=False,
+    ):
+        return {
+            "chunks": [
+                {
+                    "chunk_index": 1,
+                    "start": 0,
+                    "end": 120,
+                    "text": "转写",
+                    "segments": [],
+                }
+            ]
+        }
+
+    def fake_summarize_chunks(**kwargs):
+        return {
+            "style": "学习笔记",
+            "chapters": [
+                {
+                    "chapter_index": 1,
+                    "title": "开场",
+                    "start": 0,
+                    "end": 120,
+                    "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?t=0",
+                    "summary": "摘要",
+                    "key_points": ["要点"],
+                    "quotes": [],
+                    "visual_anchors": [],
+                }
+            ],
+        }
+
+    def fake_render_report_html(**kwargs):
+        raise RuntimeError("template failed for /private/tmp/report.html")
+
+    monkeypatch.setattr(pipeline, "fetch_current_part_metadata", fake_fetch_current_part_metadata)
+    monkeypatch.setattr(pipeline, "download_current_part_audio", fake_download_current_part_audio)
+    monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
+    monkeypatch.setattr(pipeline, "build_chunks", fake_build_chunks)
+    monkeypatch.setattr(pipeline, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(pipeline, "render_report_html", fake_render_report_html)
+
+    with pytest.raises(pipeline.PipelineRunError) as exc_info:
+        pipeline.run_summarize_pipeline(
+            PipelineRequest(
+                url="https://www.bilibili.com/video/BV1abcDEF12G",
+                out=tmp_path,
+                yes_i_understand=True,
+            )
+        )
+
+    assert exc_info.value.artifact_paths == [
+        "diagnostics.json",
+        "metadata.json",
+        ".bilifan/cache/BV1abcDEF12G_p1.mp3",
+        "transcript.json",
+        "transcript.txt",
+        "transcript.srt",
+        "chunks.json",
+        "chapters.json",
+        "notes.md",
+    ]
+    diagnostics = json.loads(exc_info.value.diagnostics_path.read_text(encoding="utf-8"))
+    assert diagnostics["error_type"] == "RenderError"
+    assert diagnostics["stage"] == "render"
+    assert "/private/tmp" not in diagnostics["sanitized_message"]
 
 
 def test_run_summarize_pipeline_without_long_video_callback_does_not_write_failure_diagnostics(
@@ -329,6 +563,7 @@ def test_run_summarize_pipeline_without_long_video_callback_does_not_write_failu
         run_dir,
         *,
         force_whisper=False,
+        language="auto",
         transcriber="auto",
     ):
         return {

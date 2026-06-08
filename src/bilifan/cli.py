@@ -22,6 +22,7 @@ from .pipeline import (
     PipelineRequest,
     PipelineRunError,
     run_summarize_pipeline,
+    validate_language,
     validate_output_format,
 )
 from .renderer import PdfExportError
@@ -62,6 +63,7 @@ def summarize(
     cookies_file: Path | None = typer.Option(None, "--cookies-file"),
     output_format: str = typer.Option("html,pdf", "--format"),
     transcriber: str = typer.Option("auto", "--transcriber"),
+    language: str = typer.Option("auto", "--language"),
     force_whisper: bool = typer.Option(False, "--force-whisper"),
     llm_provider: str = typer.Option("codex-exec", "--llm-provider"),
     llm_model: str = typer.Option("gpt-5.5", "--llm-model"),
@@ -76,6 +78,7 @@ def summarize(
         raise typer.BadParameter("--debug-log is reserved for a later slice.")
     try:
         validate_output_format(output_format)
+        validate_language(language)
     except ValueError as exc:
         raise typer.BadParameter(redact_text(str(exc))) from exc
 
@@ -91,6 +94,7 @@ def summarize(
                 cookies_file=cookies_file,
                 output_format=output_format,
                 transcriber=transcriber,
+                language=language,
                 force_whisper=force_whisper,
                 llm_provider=llm_provider,
                 llm_model=llm_model,

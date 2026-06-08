@@ -128,6 +128,7 @@ def _install_fake_transcript_build(monkeypatch):
         run_dir,
         *,
         force_whisper=False,
+        language="auto",
         transcriber="auto",
     ):
         calls.append(
@@ -136,6 +137,7 @@ def _install_fake_transcript_build(monkeypatch):
                 "media": media,
                 "run_dir": run_dir,
                 "force_whisper": force_whisper,
+                "language": language,
                 "transcriber": transcriber,
             }
         )
@@ -328,8 +330,11 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
         "metadata.json",
         ".bilifan/cache/BV1abcDEF12G_p2.mp3",
         "transcript.json",
+        "transcript.txt",
+        "transcript.srt",
         "chunks.json",
         "chapters.json",
+        "notes.md",
         "report.html",
         "report.pdf",
     ]
@@ -343,12 +348,15 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     transcript = json.loads((run_dir / "transcript.json").read_text(encoding="utf-8"))
     assert transcript["source"] == "whisper"
     assert transcript["segments"][0]["text"] == "转写"
+    assert (run_dir / "transcript.txt").is_file()
+    assert (run_dir / "transcript.srt").is_file()
     chunks = json.loads((run_dir / "chunks.json").read_text(encoding="utf-8"))
     assert chunks["strategy"]["mode"] == "single_pass"
     assert chunks["chunk_count"] == 1
     chapters = json.loads((run_dir / "chapters.json").read_text(encoding="utf-8"))
     assert chapters["style"] == "学习笔记"
     assert chapters["chapters"][0]["title"] == "开场"
+    assert (run_dir / "notes.md").is_file()
     assert (run_dir / "report.html").is_file()
     assert (run_dir / "report.pdf").is_file()
     assert (config_home / "config.json").exists()
@@ -372,6 +380,8 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
             "html,pdf",
             "--transcriber",
             "auto",
+            "--language",
+            "en",
             "--force-whisper",
             "--llm-provider",
             "codex-exec",
@@ -391,6 +401,7 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
     assert "Prepared Bilifan run:" in result.output
     assert transcript_calls[0]["force_whisper"] is True
     assert transcript_calls[0]["transcriber"] == "auto"
+    assert transcript_calls[0]["language"] == "en"
     assert summary_calls[0]["provider"] == "codex-exec"
     assert summary_calls[0]["model"] == "gpt-5.5"
 
@@ -705,6 +716,7 @@ def test_summarize_transcript_failure_writes_diagnostics_after_media(
         run_dir,
         *,
         force_whisper=False,
+        language="auto",
         transcriber="auto",
     ):
         raise TranscriptError(
@@ -768,6 +780,7 @@ def test_summarize_incomplete_transcript_writes_file_with_warning(
         run_dir,
         *,
         force_whisper=False,
+        language="auto",
         transcriber="auto",
     ):
         return {
@@ -1003,6 +1016,30 @@ def test_summarize_invalid_format_fails_before_consent(tmp_path):
     assert not outputs.exists()
 
 
+def test_summarize_invalid_language_fails_before_consent(tmp_path):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+
+    result = runner.invoke(
+        app,
+        [
+            "summarize",
+            URL,
+            "--language",
+            "ja",
+            "--out",
+            str(outputs),
+        ],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 2
+    assert "--language must be auto, zh, or en." in result.output
+    assert "Continue?" not in result.output
+    assert not (config_home / "config.json").exists()
+    assert not outputs.exists()
+
+
 def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
     tmp_path, monkeypatch
 ):
@@ -1059,6 +1096,8 @@ def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
         "metadata.json",
         ".bilifan/cache/BV1abcDEF12G_p2.mp3",
         "transcript.json",
+        "transcript.txt",
+        "transcript.srt",
         "chunks.json",
         "partial_summaries/chunk_001.json",
     ]
