@@ -4,6 +4,7 @@ from typer.testing import CliRunner
 
 import bilifan.cli as cli
 from bilifan.cli import app
+from bilifan.media import MediaDownloadError
 from bilifan.metadata import MetadataIngestError
 
 
@@ -71,6 +72,46 @@ def _install_fake_metadata_fetch(monkeypatch, *, title="Mock metadata title"):
     return calls
 
 
+def _install_fake_audio_download(monkeypatch, *, duration_seconds=0):
+    calls = []
+
+    def fake_download_current_part_audio(
+        ref,
+        metadata,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        calls.append(
+            {
+                "ref": ref,
+                "metadata": metadata,
+                "run_dir": run_dir,
+                "cookies_from_browser": cookies_from_browser,
+                "cookies_file": cookies_file,
+            }
+        )
+        audio_path = f".bilifan/cache/{ref.output_id}.mp3"
+        (run_dir / audio_path).parent.mkdir(parents=True, exist_ok=True)
+        (run_dir / audio_path).write_bytes(b"audio")
+        return {
+            "audio_path": audio_path,
+            "duration_seconds": duration_seconds,
+            "duration_check": {
+                "status": "ok",
+                "metadata_seconds": metadata.get("duration"),
+                "audio_seconds": duration_seconds,
+                "difference_ratio": 0,
+                "tolerance_ratio": 0.05,
+                "attempts": 1,
+            },
+        }
+
+    monkeypatch.setattr(cli, "download_current_part_audio", fake_download_current_part_audio)
+    return calls
+
+
 def test_cli_help_lists_summarize_command():
     result = runner.invoke(app, ["--help"])
 
@@ -100,6 +141,7 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     config_home = tmp_path / "config-home"
     outputs = tmp_path / "outputs"
     _install_fake_metadata_fetch(monkeypatch, title="CLI metadata title")
+    _install_fake_audio_download(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -121,13 +163,17 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     assert run_dir.is_dir()
     assert diagnostics["error_type"] is None
     assert diagnostics["exit_code"] == 0
-    assert diagnostics["stage"] == "metadata"
+    assert diagnostics["stage"] == "media"
     assert diagnostics["video_id"] == "BV1abcDEF12G"
     assert diagnostics["part_index"] == 2
-    assert diagnostics["duration_check"] is None
+    assert diagnostics["duration_check"]["status"] == "ok"
     assert diagnostics["transcript_check"] is None
-    assert diagnostics["artifact_paths"] == ["diagnostics.json", "metadata.json"]
-    assert diagnostics["warnings"] == ["metadata_only"]
+    assert diagnostics["artifact_paths"] == [
+        "diagnostics.json",
+        "metadata.json",
+        ".bilifan/cache/BV1abcDEF12G_p2.mp3",
+    ]
+    assert diagnostics["warnings"] == ["media_only"]
     assert metadata["input_url_sanitized"] == (
         "https://www.bilibili.com/video/BV1abcDEF12G?p=2"
     )
@@ -141,6 +187,7 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
     config_home = tmp_path / "config-home"
     outputs = tmp_path / "outputs"
     _install_fake_metadata_fetch(monkeypatch)
+    _install_fake_audio_download(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -174,6 +221,7 @@ def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
     config_home = tmp_path / "config-home"
     outputs = tmp_path / "outputs"
     _install_fake_metadata_fetch(monkeypatch)
+    _install_fake_audio_download(monkeypatch)
 
     for url, output_id in REAL_BILIBILI_URLS:
         result = runner.invoke(
@@ -199,7 +247,7 @@ def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
         )
         assert diagnostics["video_id"] == bvid
         assert diagnostics["part_index"] == int(part)
-        assert diagnostics["stage"] == "metadata"
+        assert diagnostics["stage"] == "media"
 
 
 def test_summarize_records_cookie_notice_without_storing_cookie_file_name(
@@ -208,6 +256,7 @@ def test_summarize_records_cookie_notice_without_storing_cookie_file_name(
     config_home = tmp_path / "config-home"
     outputs = tmp_path / "outputs"
     calls = _install_fake_metadata_fetch(monkeypatch)
+    _install_fake_audio_download(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -384,6 +433,73 @@ def test_summarize_metadata_failure_writes_sanitized_diagnostics_without_leaks(
     assert "secret-token" not in diagnostics["sanitized_message"]
     assert "bili-cookies.txt" not in diagnostics["sanitized_message"]
     assert "/Users/jack" not in diagnostics["sanitized_message"]
+
+
+def test_summarize_audio_failure_writes_diagnostics_after_metadata(tmp_path, monkeypatch):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+    _install_fake_metadata_fetch(monkeypatch)
+
+    def fake_download_current_part_audio(
+        ref,
+        metadata,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        raise MediaDownloadError(
+            "audio duration differs from metadata for "
+            "https://www.bilibili.com/video/BV1abcDEF12G?p=2&vd_source=secret "
+            "--cookies-file /Users/jack/Downloads/bili-cookies.txt",
+            duration_check={
+                "status": "duration_mismatch",
+                "metadata_seconds": 100,
+                "audio_seconds": 106,
+                "difference_ratio": 0.06,
+                "tolerance_ratio": 0.05,
+                "attempts": 2,
+            },
+        )
+
+    monkeypatch.setattr(cli, "download_current_part_audio", fake_download_current_part_audio)
+
+    result = runner.invoke(
+        app,
+        [
+            "summarize",
+            URL,
+            "--cookies-file",
+            "/Users/jack/Downloads/bili-cookies.txt",
+            "--yes-i-understand",
+            "--out",
+            str(outputs),
+        ],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 1
+    assert "duration differs" in result.output
+    assert "vd_source" not in result.output
+    assert "/Users/jack" not in result.output
+    assert "bili-cookies.txt" not in result.output
+
+    video_dir = outputs / "BV1abcDEF12G_p2"
+    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
+    run_dir = video_dir / latest["run_dir"]
+    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+
+    assert (run_dir / "metadata.json").is_file()
+    assert diagnostics["error_type"] == "MediaDownloadError"
+    assert diagnostics["exit_code"] == 1
+    assert diagnostics["stage"] == "media"
+    assert diagnostics["video_id"] == "BV1abcDEF12G"
+    assert diagnostics["part_index"] == 2
+    assert diagnostics["duration_check"]["status"] == "duration_mismatch"
+    assert diagnostics["artifact_paths"] == ["diagnostics.json", "metadata.json"]
+    assert "vd_source" not in diagnostics["sanitized_message"]
+    assert "/Users/jack" not in diagnostics["sanitized_message"]
+    assert "bili-cookies.txt" not in diagnostics["sanitized_message"]
 
 
 def test_summarize_debug_log_is_reserved_for_later_slice(tmp_path):

@@ -12,6 +12,7 @@ from .config import (
     write_consent,
 )
 from .diagnostics import Diagnostics, redact_text, write_diagnostics
+from .media import MediaDownloadError, download_current_part_audio
 from .metadata import MetadataIngestError, fetch_current_part_metadata
 from .runs import RunPaths, create_error_run, create_run
 
@@ -19,9 +20,9 @@ app = typer.Typer(no_args_is_help=True)
 
 LOCAL_PROCESSING_NOTICE = (
     "Bilifan local processing consent:\n"
-    "Bilifan prepares runs locally on this machine and writes output files under "
-    "the selected --out directory. This foundation slice does not download media, "
-    "call external AI tools, or generate a report."
+    "Bilifan prepares runs locally on this machine, downloads current-P audio for "
+    "local processing, and writes output files under the selected --out directory. "
+    "This slice does not call external AI tools or generate a report."
 )
 COOKIES_NOTICE = (
     "Bilifan cookies notice:\n"
@@ -125,19 +126,51 @@ def summarize(
         raise typer.Exit(1) from exc
 
     _write_metadata(run.run_dir / "metadata.json", metadata)
+    try:
+        media = download_current_part_audio(
+            ref,
+            metadata,
+            run.run_dir,
+            cookies_from_browser=cookies_from_browser,
+            cookies_file=cookies_file,
+        )
+    except MediaDownloadError as exc:
+        sanitized_message = redact_text(str(exc))
+        write_diagnostics(
+            run.run_dir / "diagnostics.json",
+            Diagnostics(
+                error_type="MediaDownloadError",
+                exit_code=1,
+                stage="media",
+                video_id=ref.bvid,
+                part_index=ref.part_index,
+                duration_check=exc.duration_check,
+                transcript_check=None,
+                artifact_paths=["diagnostics.json", "metadata.json"],
+                sanitized_message=sanitized_message,
+                warnings=["media_failed"],
+            ),
+        )
+        typer.echo(sanitized_message, err=True)
+        raise typer.Exit(1) from exc
+
     write_diagnostics(
         run.run_dir / "diagnostics.json",
         Diagnostics(
             error_type=None,
             exit_code=0,
-            stage="metadata",
+            stage="media",
             video_id=ref.bvid,
             part_index=ref.part_index,
-            duration_check=None,
+            duration_check=media["duration_check"],
             transcript_check=None,
-            artifact_paths=["diagnostics.json", "metadata.json"],
-            sanitized_message="Metadata ingest completed.",
-            warnings=["metadata_only"],
+            artifact_paths=[
+                "diagnostics.json",
+                "metadata.json",
+                media["audio_path"],
+            ],
+            sanitized_message="Media audio download completed.",
+            warnings=["media_only"],
         ),
     )
     typer.echo(f"Prepared Bilifan run: {_display_run_path(run)}")
