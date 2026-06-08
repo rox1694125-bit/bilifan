@@ -391,7 +391,7 @@ def _subtitles(payload: dict[str, Any]) -> list[dict[str, str]]:
                 {
                     "language": _first_text(language),
                     "name": _first_text(entry.get("name")),
-                    "url": _sanitize_public_url(_first_text(entry.get("url"))),
+                    "url": _sanitize_subtitle_url(_first_text(entry.get("url"))),
                     "ext": _first_text(entry.get("ext")),
                 }
             )
@@ -527,6 +527,14 @@ def _sanitize_public_url(raw_url: str) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return ""
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+
+
+def _sanitize_subtitle_url(raw_url: str) -> str:
+    raw_url = _normalize_url_scheme(raw_url)
+    parsed = urlparse(raw_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", parsed.query, ""))
 
 
 def _normalize_url_scheme(raw_url: str) -> str:

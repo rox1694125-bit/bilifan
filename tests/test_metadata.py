@@ -142,7 +142,7 @@ def test_metadata_from_yt_dlp_json_maps_current_part_fields():
         {
             "language": "zh-Hans",
             "name": "Chinese",
-            "url": "https://example.com/subtitle.srt",
+            "url": "https://example.com/subtitle.srt?token=secret",
             "ext": "srt",
         }
     ]
@@ -292,7 +292,7 @@ def test_fetch_current_part_metadata_falls_back_to_public_api_on_bilibili_412(
         {
             "language": "zh-Hans",
             "name": "中文",
-            "url": "https://aisubtitle.hdslb.com/subtitle.json",
+            "url": "https://aisubtitle.hdslb.com/subtitle.json?token=secret",
             "ext": "json",
         }
     ]

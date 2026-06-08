@@ -6,6 +6,7 @@ import bilifan.cli as cli
 from bilifan.cli import app
 from bilifan.media import MediaDownloadError
 from bilifan.metadata import MetadataIngestError
+from bilifan.transcript import TranscriptError
 
 
 runner = CliRunner()
@@ -112,6 +113,53 @@ def _install_fake_audio_download(monkeypatch, *, duration_seconds=0):
     return calls
 
 
+def _install_fake_transcript_build(monkeypatch):
+    calls = []
+
+    def fake_build_transcript(
+        metadata,
+        media,
+        run_dir,
+        *,
+        force_whisper=False,
+        transcriber="auto",
+    ):
+        calls.append(
+            {
+                "metadata": metadata,
+                "media": media,
+                "run_dir": run_dir,
+                "force_whisper": force_whisper,
+                "transcriber": transcriber,
+            }
+        )
+        return {
+            "source": "whisper",
+            "language": "zh",
+            "model": "turbo",
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": media["duration_seconds"],
+                    "text": "转写",
+                    "language": "zh",
+                    "source": "whisper",
+                }
+            ],
+            "transcript_check": {
+                "status": "ok",
+                "audio_seconds": media["duration_seconds"],
+                "last_segment_end": media["duration_seconds"],
+                "difference_seconds": 0,
+                "tolerance_seconds": 10,
+                "segment_count": 1,
+            },
+        }
+
+    monkeypatch.setattr(cli, "build_transcript", fake_build_transcript)
+    return calls
+
+
 def test_cli_help_lists_summarize_command():
     result = runner.invoke(app, ["--help"])
 
@@ -142,6 +190,7 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     outputs = tmp_path / "outputs"
     _install_fake_metadata_fetch(monkeypatch, title="CLI metadata title")
     _install_fake_audio_download(monkeypatch)
+    _install_fake_transcript_build(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -163,23 +212,27 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     assert run_dir.is_dir()
     assert diagnostics["error_type"] is None
     assert diagnostics["exit_code"] == 0
-    assert diagnostics["stage"] == "media"
+    assert diagnostics["stage"] == "transcript"
     assert diagnostics["video_id"] == "BV1abcDEF12G"
     assert diagnostics["part_index"] == 2
     assert diagnostics["duration_check"]["status"] == "ok"
-    assert diagnostics["transcript_check"] is None
+    assert diagnostics["transcript_check"]["status"] == "ok"
     assert diagnostics["artifact_paths"] == [
         "diagnostics.json",
         "metadata.json",
         ".bilifan/cache/BV1abcDEF12G_p2.mp3",
+        "transcript.json",
     ]
-    assert diagnostics["warnings"] == ["media_only"]
+    assert diagnostics["warnings"] == ["transcript_only"]
     assert metadata["input_url_sanitized"] == (
         "https://www.bilibili.com/video/BV1abcDEF12G?p=2"
     )
     assert metadata["video_id"] == "BV1abcDEF12G"
     assert metadata["part_index"] == 2
     assert metadata["title"] == "CLI metadata title"
+    transcript = json.loads((run_dir / "transcript.json").read_text(encoding="utf-8"))
+    assert transcript["source"] == "whisper"
+    assert transcript["segments"][0]["text"] == "转写"
     assert (config_home / "config.json").exists()
 
 
@@ -188,6 +241,7 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
     outputs = tmp_path / "outputs"
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch)
+    transcript_calls = _install_fake_transcript_build(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -215,6 +269,8 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
     assert result.exit_code == 0
     assert "No such option" not in result.output
     assert "Prepared Bilifan run:" in result.output
+    assert transcript_calls[0]["force_whisper"] is True
+    assert transcript_calls[0]["transcriber"] == "auto"
 
 
 def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
@@ -222,6 +278,7 @@ def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
     outputs = tmp_path / "outputs"
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch)
+    _install_fake_transcript_build(monkeypatch)
 
     for url, output_id in REAL_BILIBILI_URLS:
         result = runner.invoke(
@@ -247,7 +304,7 @@ def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
         )
         assert diagnostics["video_id"] == bvid
         assert diagnostics["part_index"] == int(part)
-        assert diagnostics["stage"] == "media"
+        assert diagnostics["stage"] == "transcript"
 
 
 def test_summarize_records_cookie_notice_without_storing_cookie_file_name(
@@ -257,6 +314,7 @@ def test_summarize_records_cookie_notice_without_storing_cookie_file_name(
     outputs = tmp_path / "outputs"
     calls = _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch)
+    _install_fake_transcript_build(monkeypatch)
 
     result = runner.invoke(
         app,
@@ -500,6 +558,127 @@ def test_summarize_audio_failure_writes_diagnostics_after_metadata(tmp_path, mon
     assert "vd_source" not in diagnostics["sanitized_message"]
     assert "/Users/jack" not in diagnostics["sanitized_message"]
     assert "bili-cookies.txt" not in diagnostics["sanitized_message"]
+
+
+def test_summarize_transcript_failure_writes_diagnostics_after_media(
+    tmp_path, monkeypatch
+):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+    _install_fake_metadata_fetch(monkeypatch)
+    _install_fake_audio_download(monkeypatch, duration_seconds=120)
+
+    def fake_build_transcript(
+        metadata,
+        media,
+        run_dir,
+        *,
+        force_whisper=False,
+        transcriber="auto",
+    ):
+        raise TranscriptError(
+            "transcript appears incomplete for /private/tmp/audio.mp3",
+            transcript_check={
+                "status": "transcript_incomplete",
+                "audio_seconds": 120,
+                "last_segment_end": 60,
+                "difference_seconds": 60,
+                "tolerance_seconds": 10,
+                "segment_count": 1,
+            },
+        )
+
+    monkeypatch.setattr(cli, "build_transcript", fake_build_transcript)
+
+    result = runner.invoke(
+        app,
+        ["summarize", URL, "--yes-i-understand", "--out", str(outputs)],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 1
+    assert "transcript appears incomplete" in result.output
+    assert "/private/tmp" not in result.output
+
+    video_dir = outputs / "BV1abcDEF12G_p2"
+    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
+    run_dir = video_dir / latest["run_dir"]
+    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+
+    assert (run_dir / "metadata.json").is_file()
+    assert (run_dir / ".bilifan" / "cache" / "BV1abcDEF12G_p2.mp3").is_file()
+    assert not (run_dir / "transcript.json").exists()
+    assert diagnostics["error_type"] == "TranscriptError"
+    assert diagnostics["exit_code"] == 1
+    assert diagnostics["stage"] == "transcript"
+    assert diagnostics["duration_check"]["status"] == "ok"
+    assert diagnostics["transcript_check"]["status"] == "transcript_incomplete"
+    assert diagnostics["artifact_paths"] == [
+        "diagnostics.json",
+        "metadata.json",
+        ".bilifan/cache/BV1abcDEF12G_p2.mp3",
+    ]
+    assert "/private/tmp" not in diagnostics["sanitized_message"]
+
+
+def test_summarize_incomplete_transcript_writes_file_with_warning(
+    tmp_path, monkeypatch
+):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+    _install_fake_metadata_fetch(monkeypatch)
+    _install_fake_audio_download(monkeypatch, duration_seconds=120)
+
+    def fake_build_transcript(
+        metadata,
+        media,
+        run_dir,
+        *,
+        force_whisper=False,
+        transcriber="auto",
+    ):
+        return {
+            "source": "whisper",
+            "language": "zh",
+            "model": "turbo",
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 60.0,
+                    "text": "partial",
+                    "language": "zh",
+                    "source": "whisper",
+                }
+            ],
+            "transcript_check": {
+                "status": "transcript_incomplete",
+                "audio_seconds": 120,
+                "last_segment_end": 60,
+                "difference_seconds": 60,
+                "tolerance_seconds": 10,
+                "segment_count": 1,
+            },
+        }
+
+    monkeypatch.setattr(cli, "build_transcript", fake_build_transcript)
+
+    result = runner.invoke(
+        app,
+        ["summarize", URL, "--yes-i-understand", "--out", str(outputs)],
+        env={"BILIFAN_CONFIG_HOME": str(config_home)},
+    )
+
+    assert result.exit_code == 0
+    video_dir = outputs / "BV1abcDEF12G_p2"
+    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
+    run_dir = video_dir / latest["run_dir"]
+    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+    transcript = json.loads((run_dir / "transcript.json").read_text(encoding="utf-8"))
+
+    assert transcript["transcript_check"]["status"] == "transcript_incomplete"
+    assert diagnostics["exit_code"] == 0
+    assert diagnostics["transcript_check"]["status"] == "transcript_incomplete"
+    assert diagnostics["warnings"] == ["transcript_only", "transcript_incomplete"]
 
 
 def test_summarize_debug_log_is_reserved_for_later_slice(tmp_path):

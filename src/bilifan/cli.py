@@ -15,6 +15,7 @@ from .diagnostics import Diagnostics, redact_text, write_diagnostics
 from .media import MediaDownloadError, download_current_part_audio
 from .metadata import MetadataIngestError, fetch_current_part_metadata
 from .runs import RunPaths, create_error_run, create_run
+from .transcript import TranscriptError, build_transcript
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -154,23 +155,61 @@ def summarize(
         typer.echo(sanitized_message, err=True)
         raise typer.Exit(1) from exc
 
+    try:
+        transcript = build_transcript(
+            metadata,
+            media,
+            run.run_dir,
+            force_whisper=force_whisper,
+            transcriber=transcriber,
+        )
+    except TranscriptError as exc:
+        sanitized_message = redact_text(str(exc))
+        write_diagnostics(
+            run.run_dir / "diagnostics.json",
+            Diagnostics(
+                error_type="TranscriptError",
+                exit_code=1,
+                stage="transcript",
+                video_id=ref.bvid,
+                part_index=ref.part_index,
+                duration_check=media["duration_check"],
+                transcript_check=exc.transcript_check,
+                artifact_paths=[
+                    "diagnostics.json",
+                    "metadata.json",
+                    media["audio_path"],
+                ],
+                sanitized_message=sanitized_message,
+                warnings=["transcript_failed"],
+            ),
+        )
+        typer.echo(sanitized_message, err=True)
+        raise typer.Exit(1) from exc
+
+    _write_json(run.run_dir / "transcript.json", transcript)
+    transcript_warnings = ["transcript_only"]
+    if transcript["transcript_check"]["status"] == "transcript_incomplete":
+        transcript_warnings.append("transcript_incomplete")
+
     write_diagnostics(
         run.run_dir / "diagnostics.json",
         Diagnostics(
             error_type=None,
             exit_code=0,
-            stage="media",
+            stage="transcript",
             video_id=ref.bvid,
             part_index=ref.part_index,
             duration_check=media["duration_check"],
-            transcript_check=None,
+            transcript_check=transcript["transcript_check"],
             artifact_paths=[
                 "diagnostics.json",
                 "metadata.json",
                 media["audio_path"],
+                "transcript.json",
             ],
-            sanitized_message="Media audio download completed.",
-            warnings=["media_only"],
+            sanitized_message="Transcript generation completed.",
+            warnings=transcript_warnings,
         ),
     )
     typer.echo(f"Prepared Bilifan run: {_display_run_path(run)}")
@@ -193,8 +232,12 @@ def _display_run_path(run: RunPaths) -> str:
 
 
 def _write_metadata(path: Path, metadata: dict) -> None:
+    _write_json(path, metadata)
+
+
+def _write_json(path: Path, data: dict) -> None:
     path.write_text(
-        json.dumps(metadata, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
+        json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
         encoding="utf-8",
     )
 

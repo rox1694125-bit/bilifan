@@ -31,6 +31,8 @@ def test_redact_text_removes_sensitive_values_and_canonicalizes_bilibili_urls():
             "output=/Volumes/mySSD/projects/bilifan/out",
             "cache=/Volumes/external/cache/file.txt",
             "shell=~/Downloads/raw.txt",
+            "tmp=/tmp/bilifan/raw.txt",
+            "private_tmp=/private/tmp/bilifan/raw.txt",
             "extra=/private/workspace/secret.txt",
             (
                 "url=https://www.bilibili.com/video/BV1abcDEF12G/"
@@ -49,6 +51,8 @@ def test_redact_text_removes_sensitive_values_and_canonicalizes_bilibili_urls():
     assert "/Volumes/mySSD" not in redacted
     assert "/Volumes/external" not in redacted
     assert "~/Downloads" not in redacted
+    assert "/tmp/bilifan" not in redacted
+    assert "/private/tmp" not in redacted
     assert "/private/workspace" not in redacted
     assert "cookies.txt" not in redacted
     assert "bili-cookies.txt" not in redacted

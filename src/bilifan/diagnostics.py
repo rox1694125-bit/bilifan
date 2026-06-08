@@ -112,7 +112,7 @@ _PATH_TAIL_PATTERN = (
     r"(?:(?![;\r\n\"'<>)]|\s+https?://|\s+[A-Za-z_][A-Za-z0-9_.-]*=).)*"
 )
 _DEFAULT_PATH_PATTERN = re.compile(
-    rf"(?<![\w:/])(?:/Users|/Volumes)/{_PATH_TAIL_PATTERN}"
+    rf"(?<![\w:/])(?:/Users|/Volumes|/private/tmp|/tmp)/{_PATH_TAIL_PATTERN}"
 )
 _TILDE_PATH_PATTERN = re.compile(rf"(?<![\w])~/{_PATH_TAIL_PATTERN}")
 
