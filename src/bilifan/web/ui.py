@@ -519,6 +519,7 @@ def render_app_html() -> str:
                 if (artifacts.txt) links.push(linkItem("TXT", artifacts.txt));
                 if (artifacts.srt) links.push(linkItem("SRT", artifacts.srt));
                 if (artifacts.md) links.push(linkItem("MD", artifacts.md));
+                if (artifacts.bundle) links.push(linkItem("Bundle", artifacts.bundle));
                 if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
                 if (artifacts.folder) links.push(folderButton("打开本地文件夹", artifacts.folder));
               }
@@ -578,6 +579,7 @@ def render_app_html() -> str:
                 if (artifacts.txt) links.push(linkItem("TXT", artifacts.txt));
                 if (artifacts.srt) links.push(linkItem("SRT", artifacts.srt));
                 if (artifacts.md) links.push(linkItem("MD", artifacts.md));
+                if (artifacts.bundle) links.push(linkItem("Bundle", artifacts.bundle));
                 if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
                 if (artifacts.folder) links.push(folderButton("打开本地文件夹", artifacts.folder));
                 if (item.run_key) links.push(linkItem("file list", `/api/runs/${item.run_key}/files`));

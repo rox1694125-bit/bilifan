@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .bilibili import parse_bilibili_url
+from .bundle import write_content_bundle
 from .chunking import ChunkingError, LongVideoConfirmationRequired, build_chunks
 from .diagnostics import Diagnostics, redact_text, write_diagnostics
 from .exports import ExportError, write_notes_markdown, write_transcript_exports
@@ -527,6 +528,20 @@ def run_summarize_pipeline(
 
     if transcript["transcript_check"]["status"] == "transcript_incomplete":
         render_warnings.append("transcript_incomplete")
+
+    bundle_path = write_content_bundle(
+        run_dir=run.run_dir,
+        metadata=metadata,
+        transcript=transcript,
+        chapters=chapters,
+        artifact_paths=render_artifacts,
+        platform="bilibili",
+        source_id=ref.bvid,
+        part_id=f"p{ref.part_index}",
+        llm_provider=request.llm_provider,
+        llm_model=request.llm_model,
+    )
+    render_artifacts.append(bundle_path.name)
 
     write_diagnostics(
         run.run_dir / "diagnostics.json",

@@ -79,6 +79,7 @@ def test_render_app_html_contains_workbench_contract():
         "TXT",
         "SRT",
         "MD",
+        "Bundle",
         "data-folder-url",
         "openFolder",
     ]
@@ -229,6 +230,7 @@ def test_render_app_script_submits_language_and_renders_export_actions():
                   txt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt?token=test-token",
                   srt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt?token=test-token",
                   md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md?token=test-token",
+                  bundle: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json?token=test-token",
                   folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder?token=test-token"
                 }
               }]
@@ -244,6 +246,7 @@ def test_render_app_script_submits_language_and_renders_export_actions():
                 txt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
                 srt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
                 md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
+                bundle: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json",
                 folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder"
               },
               run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000"
@@ -261,10 +264,12 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         assert(elements["history-list"].innerHTML.includes("TXT"));
         assert(elements["history-list"].innerHTML.includes("SRT"));
         assert(elements["history-list"].innerHTML.includes("MD"));
+        assert(elements["history-list"].innerHTML.includes("Bundle"));
         assert(elements["history-list"].innerHTML.includes("打开本地文件夹"));
         assert(elements["result-links"].innerHTML.includes("TXT"));
         assert(elements["result-links"].innerHTML.includes("SRT"));
         assert(elements["result-links"].innerHTML.includes("MD"));
+        assert(elements["result-links"].innerHTML.includes("Bundle"));
 
         elements["url-input"].value = "https://www.bilibili.com/video/BV1abcDEF12G";
         elements["language-select"].value = "en";

@@ -337,6 +337,7 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
         "notes.md",
         "report.html",
         "report.pdf",
+        "content_bundle.json",
     ]
     assert diagnostics["warnings"] == []
     assert metadata["input_url_sanitized"] == (
@@ -359,6 +360,10 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     assert (run_dir / "notes.md").is_file()
     assert (run_dir / "report.html").is_file()
     assert (run_dir / "report.pdf").is_file()
+    bundle = json.loads((run_dir / "content_bundle.json").read_text(encoding="utf-8"))
+    assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p2"
+    assert bundle["provenance"]["llm_provider"] == "codex-exec"
+    assert bundle["provenance"]["llm_model"] == "gpt-5.5"
     assert (config_home / "config.json").exists()
 
 
@@ -897,9 +902,11 @@ def test_summarize_pdf_failure_is_warning_when_pdf_is_not_required(
 
     assert (run_dir / "report.html").is_file()
     assert not (run_dir / "report.pdf").exists()
+    assert (run_dir / "content_bundle.json").is_file()
     assert diagnostics["stage"] == "render"
     assert diagnostics["warnings"] == ["pdf_failed"]
-    assert diagnostics["artifact_paths"][-1] == "report.html"
+    assert "report.html" in diagnostics["artifact_paths"]
+    assert diagnostics["artifact_paths"][-1] == "content_bundle.json"
 
 
 def test_summarize_require_pdf_returns_nonzero_when_pdf_fails(

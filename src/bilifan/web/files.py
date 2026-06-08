@@ -16,6 +16,7 @@ ROOT_FILES = {
     "chunks.json",
     "chapters.json",
     "diagnostics.json",
+    "content_bundle.json",
     "report.html",
     "report.pdf",
     "transcript.txt",
@@ -180,6 +181,8 @@ def _artifact_links(run_key: str, run_dir: Path) -> dict[str, str]:
         artifacts["srt"] = f"{prefix}/transcript.srt"
     if _safe_existing_file(run_dir, "notes.md") is not None:
         artifacts["md"] = f"{prefix}/notes.md"
+    if _safe_existing_file(run_dir, "content_bundle.json") is not None:
+        artifacts["bundle"] = f"{prefix}/content_bundle.json"
     artifacts["folder"] = f"/api/runs/{run_key}/open-folder"
     return artifacts
 

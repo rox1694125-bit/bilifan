@@ -51,6 +51,7 @@ def _make_run(outputs, output_id="BV1abcDEF12G_p1", run_id="2026-06-08_120000"):
         encoding="utf-8",
     )
     (run_dir / "notes.md").write_text("# Notes", encoding="utf-8")
+    (run_dir / "content_bundle.json").write_text('{"schema_version":1}', encoding="utf-8")
     (run_dir / "diagnostics.json").write_text(
         json.dumps({"error_type": None, "stage": "render"}),
         encoding="utf-8",
@@ -145,6 +146,7 @@ def test_history_endpoint_returns_direct_artifact_links_with_query_token(tmp_pat
     assert artifacts["txt"].endswith("/transcript.txt?token=test-token")
     assert artifacts["srt"].endswith("/transcript.srt?token=test-token")
     assert artifacts["md"].endswith("/notes.md?token=test-token")
+    assert artifacts["bundle"].endswith("/content_bundle.json?token=test-token")
     assert artifacts["folder"].endswith("/open-folder?token=test-token")
     direct_response = client.get(artifacts["html"])
     assert direct_response.status_code == 200
@@ -176,6 +178,7 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
                 "transcript.txt",
                 "transcript.srt",
                 "notes.md",
+                "content_bundle.json",
             ],
             warnings=[],
         )
@@ -216,6 +219,7 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
         "txt": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
         "srt": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
         "md": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
+        "bundle": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json",
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
     assert all(item["status"] == "done" for item in state["progress"])
@@ -342,6 +346,7 @@ def test_run_files_endpoint_returns_safe_file_list(tmp_path):
     assert response.status_code == 200
     assert response.json() == {
         "files": [
+            "content_bundle.json",
             "diagnostics.json",
             "metadata.json",
             "notes.md",
@@ -381,6 +386,7 @@ def test_run_file_endpoint_serves_artifacts_with_token(tmp_path):
             "transcript.txt",
             "transcript.srt",
             "notes.md",
+            "content_bundle.json",
         ]
     }
 
@@ -392,6 +398,8 @@ def test_run_file_endpoint_serves_artifacts_with_token(tmp_path):
     assert "caption" in responses["transcript.srt"].text
     assert responses["notes.md"].status_code == 200
     assert responses["notes.md"].text == "# Notes"
+    assert responses["content_bundle.json"].status_code == 200
+    assert "schema_version" in responses["content_bundle.json"].text
 
 
 def test_run_file_endpoint_maps_not_found_and_invalid_paths(tmp_path):
