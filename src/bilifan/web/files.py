@@ -38,9 +38,14 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
         if RUN_ID_PATTERN.fullmatch(run_id) is None:
             continue
 
-        run_dir = outputs / output_id / "runs" / run_id
-        diagnostics = _read_json_object(run_dir / "diagnostics.json")
-        metadata = _read_json_object(run_dir / "metadata.json")
+        try:
+            run_dir = _run_dir(outputs, output_id, run_id)
+        except ValueError:
+            continue
+        diagnostics = _read_json_object(
+            _safe_existing_file(run_dir, "diagnostics.json")
+        )
+        metadata = _read_json_object(_safe_existing_file(run_dir, "metadata.json"))
         status = "failed" if diagnostics.get("error_type") else "succeeded"
         items.append(
             {
@@ -59,13 +64,19 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
 
 def list_run_files(outputs: Path, output_id: str, run_id: str) -> list[str]:
     run_dir = _run_dir(outputs, output_id, run_id)
-    files = [name for name in sorted(ROOT_FILES) if (run_dir / name).is_file()]
-    partial_dir = run_dir / "partial_summaries"
-    if partial_dir.is_dir():
+    files = [
+        name
+        for name in sorted(ROOT_FILES)
+        if _safe_existing_file(run_dir, name) is not None
+    ]
+    partial_dir = _safe_existing_dir(run_dir, "partial_summaries")
+    if partial_dir is not None:
         files.extend(
-            f"partial_summaries/{path.name}"
+            relative_path
             for path in sorted(partial_dir.glob("*.json"))
-            if path.is_file() and _is_valid_chunk_file(path.name)
+            for relative_path in [f"partial_summaries/{path.name}"]
+            if _is_valid_chunk_file(path.name)
+            and _safe_existing_file(run_dir, relative_path) is not None
         )
     return files
 
@@ -81,12 +92,13 @@ def resolve_run_file(outputs: Path, output_id: str, run_id: str, file_path: str)
         raise ValueError("File is not a Bilifan artifact.")
 
     run_dir = _run_dir(outputs, output_id, run_id)
-    resolved = (run_dir / file_path).resolve(strict=False)
-    if not resolved.is_relative_to(run_dir.resolve(strict=False)):
+    resolved = _safe_existing_file(run_dir, file_path)
+    if resolved is not None:
+        return resolved
+    fallback = (run_dir / file_path).resolve(strict=False)
+    if not fallback.is_relative_to(run_dir.resolve(strict=False)):
         raise ValueError("File resolves outside run directory.")
-    if not resolved.is_file():
-        raise FileNotFoundError(file_path)
-    return resolved
+    raise FileNotFoundError(file_path)
 
 
 def _run_dir(outputs: Path, output_id: str, run_id: str) -> Path:
@@ -110,7 +122,9 @@ def _run_id_from_latest(latest: dict[str, Any]) -> str:
     return ""
 
 
-def _read_json_object(path: Path) -> dict[str, Any]:
+def _read_json_object(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError):
@@ -120,11 +134,11 @@ def _read_json_object(path: Path) -> dict[str, Any]:
 
 def _artifact_names(run_dir: Path) -> dict[str, str]:
     artifacts: dict[str, str] = {}
-    if (run_dir / "report.html").is_file():
+    if _safe_existing_file(run_dir, "report.html") is not None:
         artifacts["html"] = "report.html"
-    if (run_dir / "report.pdf").is_file():
+    if _safe_existing_file(run_dir, "report.pdf") is not None:
         artifacts["pdf"] = "report.pdf"
-    if (run_dir / "diagnostics.json").is_file():
+    if _safe_existing_file(run_dir, "diagnostics.json") is not None:
         artifacts["diagnostics"] = "diagnostics.json"
     return artifacts
 
@@ -143,3 +157,19 @@ def _is_allowed_run_file(path: PurePosixPath) -> bool:
         and path.parts[0] == "partial_summaries"
         and _is_valid_chunk_file(path.parts[1])
     )
+
+
+def _safe_existing_file(run_dir: Path, relative_path: str) -> Path | None:
+    resolved_run_dir = run_dir.resolve(strict=False)
+    resolved = (run_dir / relative_path).resolve(strict=False)
+    if not resolved.is_relative_to(resolved_run_dir):
+        return None
+    return resolved if resolved.is_file() else None
+
+
+def _safe_existing_dir(run_dir: Path, relative_path: str) -> Path | None:
+    resolved_run_dir = run_dir.resolve(strict=False)
+    resolved = (run_dir / relative_path).resolve(strict=False)
+    if not resolved.is_relative_to(resolved_run_dir):
+        return None
+    return resolved if resolved.is_dir() else None

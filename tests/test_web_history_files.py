@@ -48,6 +48,17 @@ def _make_run(
     return run_dir
 
 
+def _replace_with_symlink_or_skip(link_path, target_path):
+    try:
+        link_path.unlink()
+    except FileNotFoundError:
+        pass
+    try:
+        link_path.symlink_to(target_path, target_is_directory=target_path.is_dir())
+    except (NotImplementedError, OSError):
+        pytest.skip("Symlink creation is unsupported on this platform.")
+
+
 def test_list_latest_runs_reads_outputs_latest_json(tmp_path):
     outputs = tmp_path / "outputs"
     _make_run(outputs)
@@ -106,6 +117,56 @@ def test_list_latest_runs_ignores_invalid_utf8_diagnostics(tmp_path):
     assert items[0]["stage"] == ""
 
 
+def test_list_latest_runs_does_not_read_metadata_symlink_escape(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "metadata.json"
+    outside_file.write_text('{"title":"Outside title"}', encoding="utf-8")
+    _replace_with_symlink_or_skip(run_dir / "metadata.json", outside_file)
+
+    items = list_latest_runs(outputs)
+
+    assert items[0]["title"] == "BV1abcDEF12G_p1"
+
+
+def test_list_latest_runs_does_not_read_diagnostics_symlink_escape(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "diagnostics.json"
+    outside_file.write_text(
+        json.dumps({"error_type": "OutsideError", "stage": "outside"}),
+        encoding="utf-8",
+    )
+    _replace_with_symlink_or_skip(run_dir / "diagnostics.json", outside_file)
+
+    items = list_latest_runs(outputs)
+
+    assert items[0]["status"] == "succeeded"
+    assert items[0]["stage"] == ""
+
+
+def test_list_latest_runs_skips_run_dir_symlink_escape(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    outside_run_dir = tmp_path / "outside_run"
+    outside_run_dir.mkdir()
+    (outside_run_dir / "metadata.json").write_text(
+        '{"title":"Outside title"}',
+        encoding="utf-8",
+    )
+    run_backup = tmp_path / "original_run"
+    run_dir.rename(run_backup)
+    _replace_with_symlink_or_skip(run_dir, outside_run_dir)
+
+    items = list_latest_runs(outputs)
+
+    assert items == []
+
+
 def test_list_run_files_only_includes_whitelisted_files(tmp_path):
     outputs = tmp_path / "outputs"
     _make_run(outputs)
@@ -138,6 +199,37 @@ def test_list_run_files_only_includes_numeric_partial_summary_chunks(tmp_path):
     assert "partial_summaries/chunk_001.json" in files
     assert "partial_summaries/chunk_notes.json" not in files
     assert "partial_summaries/chunk_.json" not in files
+
+
+def test_list_run_files_excludes_root_artifact_symlink_escape(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "report.html"
+    outside_file.write_text("<html>outside</html>", encoding="utf-8")
+    _replace_with_symlink_or_skip(run_dir / "report.html", outside_file)
+
+    files = list_run_files(outputs, "BV1abcDEF12G_p1", "2026-06-08_120000")
+
+    assert "report.html" not in files
+
+
+def test_list_run_files_excludes_partial_summary_symlink_escape(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "chunk_001.json"
+    outside_file.write_text("{}", encoding="utf-8")
+    _replace_with_symlink_or_skip(
+        run_dir / "partial_summaries" / "chunk_001.json",
+        outside_file,
+    )
+
+    files = list_run_files(outputs, "BV1abcDEF12G_p1", "2026-06-08_120000")
+
+    assert "partial_summaries/chunk_001.json" not in files
 
 
 def test_resolve_run_file_rejects_non_numeric_partial_summary_chunk(tmp_path):
@@ -179,11 +271,7 @@ def test_resolve_run_file_rejects_symlink_escape(tmp_path):
     outside_file = outside_dir / "metadata.json"
     outside_file.write_text('{"title":"Outside"}', encoding="utf-8")
     metadata_path = run_dir / "metadata.json"
-    metadata_path.unlink()
-    try:
-        metadata_path.symlink_to(outside_file)
-    except (NotImplementedError, OSError):
-        pytest.skip("Symlink creation is unsupported on this platform.")
+    _replace_with_symlink_or_skip(metadata_path, outside_file)
 
     with pytest.raises(ValueError):
         resolve_run_file(
