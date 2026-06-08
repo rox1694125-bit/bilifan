@@ -12,6 +12,7 @@ from bilifan.media import (
     build_ffprobe_duration_command,
     build_yt_dlp_audio_command,
     check_duration_match,
+    download_bilibili_audio_stream,
     download_current_part_audio,
     ffprobe_duration_seconds,
 )
@@ -200,6 +201,27 @@ def test_download_current_part_audio_falls_back_to_playurl_api_on_bilibili_412(
         tmp_path / ".bilifan" / "cache" / f"{ref.output_id}.mp3"
     )
     assert not (tmp_path / ".bilifan" / "cache" / f"{ref.output_id}.source.m4s").exists()
+
+
+def test_download_bilibili_audio_stream_uses_short_read_timeout(monkeypatch, tmp_path):
+    ref = parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=1")
+    timeouts = []
+
+    def fake_urlopen(request, *, timeout):
+        timeouts.append(timeout)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(media_module, "urlopen", fake_urlopen)
+
+    with pytest.raises(MediaDownloadError, match="Bilibili audio stream download failed"):
+        download_bilibili_audio_stream(
+            "https://upos.example.test/audio.m4s",
+            ref,
+            tmp_path / "audio.source.m4s",
+        )
+
+    assert timeouts == [media_module.STREAM_READ_TIMEOUT_SECONDS]
+    assert media_module.STREAM_READ_TIMEOUT_SECONDS < media_module.DOWNLOAD_TIMEOUT_SECONDS
 
 
 def test_download_current_part_audio_falls_back_to_playurl_after_duration_mismatch(

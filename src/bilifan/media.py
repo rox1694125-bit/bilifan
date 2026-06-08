@@ -19,6 +19,7 @@ PlayurlFetcher = Callable[[BilibiliPartRef, dict[str, Any]], str]
 StreamDownloader = Callable[[str, BilibiliPartRef, Path], None]
 DOWNLOAD_TIMEOUT_SECONDS = 60 * 60
 FFPROBE_TIMEOUT_SECONDS = 60
+STREAM_READ_TIMEOUT_SECONDS = 30
 DURATION_TOLERANCE_RATIO = 0.05
 MAX_BILIBILI_API_BYTES = 10 * 1024 * 1024
 MAX_AUDIO_BYTES = 512 * 1024 * 1024
@@ -364,7 +365,7 @@ def download_bilibili_audio_stream(
     raw_audio_path.parent.mkdir(parents=True, exist_ok=True)
     total = 0
     try:
-        with urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+        with urlopen(request, timeout=STREAM_READ_TIMEOUT_SECONDS) as response:
             with raw_audio_path.open("wb") as output:
                 while True:
                     chunk = response.read(STREAM_CHUNK_SIZE)
