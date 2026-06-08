@@ -43,6 +43,7 @@ Common options:
 python -m bilifan summarize "https://www.bilibili.com/video/BV...?p=1" \
   --format html,pdf \
   --transcriber auto \
+  --language auto \
   --llm-provider codex-exec \
   --llm-model gpt-5.5 \
   --yes-i-understand \
@@ -52,6 +53,7 @@ python -m bilifan summarize "https://www.bilibili.com/video/BV...?p=1" \
 Useful flags:
 
 - `--force-whisper`: skip Bilibili subtitles and force local Whisper.
+- `--language auto|zh|en`: control Whisper fallback language/model selection. Bilibili subtitles are still preferred unless `--force-whisper` is used.
 - `--require-pdf`: return non-zero if Chrome cannot export PDF.
 - `--allow-long-video`: allow videos longer than 180 minutes.
 - `--cookies-file` / `--cookies-from-browser`: pass cookies to `yt-dlp`; Bilifan does not store the cookie file name in reports or config.
@@ -68,10 +70,13 @@ outputs/
         diagnostics.json
         metadata.json
         transcript.json
+        transcript.txt
+        transcript.srt
         chunks.json
         partial_summaries/
           chunk_001.json
         chapters.json
+        notes.md
         report.html
         report.pdf
 ```
@@ -83,7 +88,9 @@ Prepared Bilifan run: BV..._p2/runs/<timestamp>
 ```
 
 `report.html` is the success artifact. `report.pdf` is best effort unless
-`--require-pdf` is passed.
+`--require-pdf` is passed. Successful transcript and summarization stages may
+also write `transcript.txt`, `transcript.srt`, and `notes.md` for easier reading
+or reuse outside Bilifan.
 
 ## Local Web UI
 
@@ -109,6 +116,8 @@ Current MVP boundaries:
 - Web UI access is protected by the printed token in the URL.
 - The server only supports local `127.0.0.1` binding in this MVP.
 - Web UI job outputs are always read from and written to `./outputs`.
+- The Web UI can show TXT/SRT/MD export links and can ask macOS to open a run's
+  local folder.
 - The Web UI does not support entering cookies.
 - The CLI still supports `--cookies-file` and `--cookies-from-browser` for
   local runs.
