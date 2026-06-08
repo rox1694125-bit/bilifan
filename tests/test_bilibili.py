@@ -28,6 +28,35 @@ def test_parse_bilibili_url_defaults_to_part_one():
 
 
 @pytest.mark.parametrize(
+    ("url", "bvid"),
+    [
+        (
+            "https://www.bilibili.com/video/BV14kVE6eEtC"
+            "?spm_id_from=333.788.player.player_end_recommend"
+            "&vd_source=39fc5b438dea96faea88e7841fb3d0ca"
+            "&trackid=web_related_0.router-related-2589621-kz84p.1780846547972.446",
+            "BV14kVE6eEtC",
+        ),
+        (
+            "https://www.bilibili.com/video/BV1xuVC6AEbg/?spm_id_from=333.1391.0.0",
+            "BV1xuVC6AEbg",
+        ),
+        (
+            "https://www.bilibili.com/video/BV1ETEF6VEHu/?spm_id_from=333.1391.0.0",
+            "BV1ETEF6VEHu",
+        ),
+    ],
+)
+def test_parse_real_bilibili_urls_defaults_to_current_part_one(url, bvid):
+    ref = parse_bilibili_url(url)
+
+    assert ref.bvid == bvid
+    assert ref.part_index == 1
+    assert ref.sanitized_url == f"https://www.bilibili.com/video/{bvid}?p=1"
+    assert ref.output_id == f"{bvid}_p1"
+
+
+@pytest.mark.parametrize(
     "url",
     [
         "https://example.com/video/BV1abcDEF12G",

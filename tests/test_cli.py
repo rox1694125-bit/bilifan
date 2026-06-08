@@ -8,6 +8,23 @@ from bilifan.cli import app
 
 runner = CliRunner()
 URL = "https://www.bilibili.com/video/BV1abcDEF12G?p=2&spm_id_from=333.999"
+REAL_BILIBILI_URLS = [
+    (
+        "https://www.bilibili.com/video/BV14kVE6eEtC"
+        "?spm_id_from=333.788.player.player_end_recommend"
+        "&vd_source=39fc5b438dea96faea88e7841fb3d0ca"
+        "&trackid=web_related_0.router-related-2589621-kz84p.1780846547972.446",
+        "BV14kVE6eEtC_p1",
+    ),
+    (
+        "https://www.bilibili.com/video/BV1xuVC6AEbg/?spm_id_from=333.1391.0.0",
+        "BV1xuVC6AEbg_p1",
+    ),
+    (
+        "https://www.bilibili.com/video/BV1ETEF6VEHu/?spm_id_from=333.1391.0.0",
+        "BV1ETEF6VEHu_p1",
+    ),
+]
 
 
 def test_cli_help_lists_summarize_command():
@@ -65,6 +82,37 @@ def test_summarize_prepares_offline_preflight_run_with_yes_flag(tmp_path):
     assert diagnostics["transcript_check"] is None
     assert diagnostics["warnings"] == ["foundation_slice_only"]
     assert (config_home / "config.json").exists()
+
+
+def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path):
+    config_home = tmp_path / "config-home"
+    outputs = tmp_path / "outputs"
+
+    for url, output_id in REAL_BILIBILI_URLS:
+        result = runner.invoke(
+            app,
+            ["summarize", url, "--yes-i-understand", "--out", str(outputs)],
+            env={"BILIFAN_CONFIG_HOME": str(config_home)},
+        )
+
+        assert result.exit_code == 0
+        assert f"{output_id}/runs/" in result.output
+        assert "spm_id_from" not in result.output
+        assert "vd_source" not in result.output
+        assert "trackid" not in result.output
+
+        video_dir = outputs / output_id
+        latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
+        diagnostics_path = video_dir / latest["run_dir"] / "diagnostics.json"
+        diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+        bvid, part = output_id.rsplit("_p", 1)
+
+        assert latest["input_url_sanitized"] == (
+            f"https://www.bilibili.com/video/{bvid}?p={part}"
+        )
+        assert diagnostics["video_id"] == bvid
+        assert diagnostics["part_index"] == int(part)
+        assert diagnostics["stage"] == "preflight"
 
 
 def test_summarize_records_cookie_notice_without_storing_cookie_file_name(tmp_path):
