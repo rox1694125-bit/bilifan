@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
@@ -78,7 +79,7 @@ def create_app(
 
     @app.get("/api/history")
     def history(_: None = Depends(require_token)) -> dict[str, object]:
-        return {"items": list_latest_runs(outputs)}
+        return {"items": _add_token_to_artifact_links(list_latest_runs(outputs), token)}
 
     @app.post("/api/jobs")
     def create_job(
@@ -138,3 +139,22 @@ def create_app(
         return FileResponse(path)
 
     return app
+
+
+def _add_token_to_artifact_links(
+    items: list[dict[str, object]],
+    token: str,
+) -> list[dict[str, object]]:
+    query = urlencode({"token": token})
+    linked_items: list[dict[str, object]] = []
+    for item in items:
+        artifacts = item.get("artifacts")
+        linked_item = dict(item)
+        if isinstance(artifacts, dict):
+            linked_item["artifacts"] = {
+                str(name): f"{url}?{query}"
+                for name, url in artifacts.items()
+                if isinstance(url, str)
+            }
+        linked_items.append(linked_item)
+    return linked_items

@@ -29,8 +29,19 @@ def _wait_for_status(client, status: str, *, timeout: float = 2.0):
 
 
 def _make_run(outputs, output_id="BV1abcDEF12G_p1", run_id="2026-06-08_120000"):
-    run_dir = outputs / output_id / "runs" / run_id
+    video_dir = outputs / output_id
+    run_dir = video_dir / "runs" / run_id
     run_dir.mkdir(parents=True)
+    (video_dir / "latest.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "run_dir": f"runs/{run_id}",
+                "generated_at": "2026-06-08T12:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
     (run_dir / "report.html").write_text("<html></html>", encoding="utf-8")
     (run_dir / "diagnostics.json").write_text(
         json.dumps({"error_type": None, "stage": "render"}),
@@ -89,6 +100,23 @@ def test_query_token_works_for_config_and_file_route(tmp_path):
     assert config_response.status_code == 200
     assert file_response.status_code == 200
     assert file_response.text == "<html></html>"
+
+
+def test_history_endpoint_returns_direct_artifact_links_with_query_token(tmp_path):
+    outputs = tmp_path / "outputs"
+    _make_run(outputs)
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.get("/api/history", headers=_headers())
+
+    assert response.status_code == 200
+    artifacts = response.json()["items"][0]["artifacts"]
+    assert artifacts["html"].endswith("/report.html?token=test-token")
+    assert artifacts["diagnostics"].endswith("/diagnostics.json?token=test-token")
+    direct_response = client.get(artifacts["html"])
+    assert direct_response.status_code == 200
+    assert direct_response.text == "<html></html>"
 
 
 def test_job_success_lifecycle(tmp_path, monkeypatch):
