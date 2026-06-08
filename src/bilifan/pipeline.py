@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from .bilibili import parse_bilibili_url
+from .bilibili import BilibiliPartRef
 from .bundle import write_content_bundle
 from .chunking import ChunkingError, LongVideoConfirmationRequired, build_chunks
 from .diagnostics import Diagnostics, redact_text, write_diagnostics
@@ -17,6 +17,8 @@ from .media import MediaDownloadError, download_current_part_audio
 from .metadata import MetadataIngestError, fetch_current_part_metadata
 from .renderer import PdfExportError, export_report_pdf, render_report_html
 from .runs import RunPaths, create_error_run, create_run
+from .sources import SourceAdapterError, SourceOptions, resolve_source_adapter
+from .sources.bilibili import BilibiliAdapter
 from .summarizer import SummarizationError, summarize_chunks
 from .transcript import TranscriptError, build_transcript
 
@@ -106,8 +108,10 @@ def run_summarize_pipeline(
 
     _progress(progress_callback, PipelineStage.PREFLIGHT, "running", "Validating input.")
     try:
-        ref = parse_bilibili_url(request.url)
-    except ValueError as exc:
+        adapter = resolve_source_adapter(request.url)
+        source_ref = adapter.parse_url(request.url)
+        ref = _legacy_run_ref(adapter, source_ref)
+    except (SourceAdapterError, ValueError) as exc:
         run = _create_error_run_with_retry(request.out)
         sanitized_message = redact_text(str(exc))
         artifact_paths = ["diagnostics.json"]
@@ -150,12 +154,20 @@ def run_summarize_pipeline(
 
     _progress(progress_callback, PipelineStage.METADATA, "running", "Fetching metadata.")
     try:
-        metadata = fetch_current_part_metadata(
-            ref,
-            run.run_dir,
+        source_options = SourceOptions(
             cookies_from_browser=request.cookies_from_browser,
             cookies_file=request.cookies_file,
+            language=request.language,
+            force_whisper=request.force_whisper,
         )
+        metadata = _fetch_source_metadata(
+            adapter,
+            source_ref,
+            ref,
+            run.run_dir,
+            source_options,
+        )
+        metadata["platform"] = adapter.platform
     except MetadataIngestError as exc:
         sanitized_message = redact_text(str(exc))
         artifact_paths = ["diagnostics.json"]
@@ -187,12 +199,13 @@ def run_summarize_pipeline(
 
     _progress(progress_callback, PipelineStage.AUDIO, "running", "Downloading audio.")
     try:
-        media = download_current_part_audio(
+        media = _download_source_audio(
+            adapter,
+            source_ref,
             ref,
             metadata,
             run.run_dir,
-            cookies_from_browser=request.cookies_from_browser,
-            cookies_file=request.cookies_file,
+            source_options,
         )
     except MediaDownloadError as exc:
         sanitized_message = redact_text(str(exc))
@@ -535,9 +548,9 @@ def run_summarize_pipeline(
         transcript=transcript,
         chapters=chapters,
         artifact_paths=render_artifacts,
-        platform="bilibili",
-        source_id=ref.bvid,
-        part_id=f"p{ref.part_index}",
+        platform=adapter.platform,
+        source_id=source_ref.source_id,
+        part_id=source_ref.part_id,
         llm_provider=request.llm_provider,
         llm_model=request.llm_model,
     )
@@ -566,6 +579,64 @@ def run_summarize_pipeline(
         artifact_paths=render_artifacts,
         warnings=render_warnings,
     )
+
+
+class _GenericRunRef:
+    def __init__(self, source_ref: Any, adapter: Any) -> None:
+        self._source_ref = source_ref
+        self._adapter = adapter
+        self.bvid = source_ref.source_id
+        self.part_index = 1
+        self.sanitized_url = source_ref.canonical_url
+
+    @property
+    def output_id(self) -> str:
+        return self._adapter.output_id(self._source_ref)
+
+    def timestamp_url(self, seconds: float) -> str:
+        return self._adapter.timestamp_url(self._source_ref, seconds)
+
+
+def _legacy_run_ref(adapter: Any, source_ref: Any) -> BilibiliPartRef | _GenericRunRef:
+    if isinstance(adapter, BilibiliAdapter):
+        return adapter.legacy_ref(source_ref)
+    return _GenericRunRef(source_ref, adapter)
+
+
+def _fetch_source_metadata(
+    adapter: Any,
+    source_ref: Any,
+    ref: Any,
+    run_dir: Path,
+    source_options: SourceOptions,
+) -> dict[str, Any]:
+    if isinstance(adapter, BilibiliAdapter):
+        return fetch_current_part_metadata(
+            ref,
+            run_dir,
+            cookies_from_browser=source_options.cookies_from_browser,
+            cookies_file=source_options.cookies_file,
+        )
+    return adapter.fetch_metadata(source_ref, run_dir, source_options)
+
+
+def _download_source_audio(
+    adapter: Any,
+    source_ref: Any,
+    ref: Any,
+    metadata: dict[str, Any],
+    run_dir: Path,
+    source_options: SourceOptions,
+) -> dict[str, Any]:
+    if isinstance(adapter, BilibiliAdapter):
+        return download_current_part_audio(
+            ref,
+            metadata,
+            run_dir,
+            cookies_from_browser=source_options.cookies_from_browser,
+            cookies_file=source_options.cookies_file,
+        )
+    return adapter.download_audio(source_ref, metadata, run_dir, source_options)
 
 
 def _progress(

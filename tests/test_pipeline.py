@@ -48,6 +48,48 @@ def test_default_progress_accepts_all_known_stages():
         default_progress(stage.value, "running", f"{stage.value} running")
 
 
+def test_pipeline_resolves_adapter_before_creating_run(tmp_path, monkeypatch):
+    calls = {"parse": 0}
+
+    class FakeAdapter:
+        platform = "bilibili"
+
+        def parse_url(self, url):
+            calls["parse"] += 1
+            from bilifan.sources.base import VideoRef
+
+            return VideoRef(
+                "bilibili",
+                "BV1abcDEF12G",
+                "p1",
+                "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+                url,
+            )
+
+        def output_id(self, ref):
+            return "BV1abcDEF12G_p1"
+
+        def timestamp_url(self, ref, seconds):
+            return f"{ref.canonical_url}&t={int(seconds)}"
+
+    def fake_create_run(out, ref, *, overwrite=False):
+        assert ref.output_id == "BV1abcDEF12G_p1"
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(pipeline, "resolve_source_adapter", lambda url: FakeAdapter())
+    monkeypatch.setattr(pipeline, "create_run", fake_create_run)
+
+    with pytest.raises(RuntimeError, match="stop"):
+        pipeline.run_summarize_pipeline(
+            PipelineRequest(
+                url="https://www.bilibili.com/video/BV1abcDEF12G",
+                out=tmp_path,
+            )
+        )
+
+    assert calls["parse"] == 1
+
+
 def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
     tmp_path, monkeypatch
 ):
