@@ -338,6 +338,7 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
         "report.html",
         "report.pdf",
         "content_bundle.json",
+        "nabaichuan.jsonl",
     ]
     assert diagnostics["warnings"] == []
     assert metadata["input_url_sanitized"] == (
@@ -361,6 +362,7 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     assert (run_dir / "report.html").is_file()
     assert (run_dir / "report.pdf").is_file()
     assert (run_dir / "media" / "audio.mp3").is_file()
+    assert (run_dir / "nabaichuan.jsonl").is_file()
     bundle = json.loads((run_dir / "content_bundle.json").read_text(encoding="utf-8"))
     assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p2"
     assert bundle["artifacts"]["audio_mp3"] == "media/audio.mp3"
@@ -908,7 +910,8 @@ def test_summarize_pdf_failure_is_warning_when_pdf_is_not_required(
     assert diagnostics["stage"] == "render"
     assert diagnostics["warnings"] == ["pdf_failed"]
     assert "report.html" in diagnostics["artifact_paths"]
-    assert diagnostics["artifact_paths"][-1] == "content_bundle.json"
+    assert "content_bundle.json" in diagnostics["artifact_paths"]
+    assert "nabaichuan.jsonl" in diagnostics["artifact_paths"]
 
 
 def test_summarize_require_pdf_returns_nonzero_when_pdf_fails(

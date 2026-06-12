@@ -12,7 +12,13 @@ from .bilibili import BilibiliPartRef
 from .bundle import write_content_bundle
 from .chunking import ChunkingError, LongVideoConfirmationRequired, build_chunks
 from .diagnostics import Diagnostics, redact_text, write_diagnostics
-from .exports import ExportError, write_notes_markdown, write_transcript_exports
+from .exports import (
+    ExportError,
+    NABAICHUAN_JSONL,
+    write_nabaichuan_jsonl,
+    write_notes_markdown,
+    write_transcript_exports,
+)
 from .media import MediaDownloadError, download_current_part_audio, publish_audio_artifact
 from .metadata import MetadataIngestError, fetch_current_part_metadata
 from .renderer import PdfExportError, export_report_pdf, render_report_html
@@ -556,7 +562,7 @@ def run_summarize_pipeline(
         metadata=metadata,
         transcript=transcript,
         chapters=chapters,
-        artifact_paths=render_artifacts,
+        artifact_paths=[*render_artifacts, NABAICHUAN_JSONL],
         platform=adapter.platform,
         source_id=source_ref.source_id,
         part_id=source_ref.part_id,
@@ -564,6 +570,33 @@ def run_summarize_pipeline(
         llm_model=request.llm_model,
     )
     render_artifacts.append(bundle_path.name)
+    try:
+        nabaichuan_artifact = write_nabaichuan_jsonl(run.run_dir)
+    except ExportError as exc:
+        sanitized_message = redact_text(str(exc))
+        write_diagnostics(
+            run.run_dir / "diagnostics.json",
+            Diagnostics(
+                error_type="ExportError",
+                exit_code=1,
+                stage=PipelineStage.RENDER.value,
+                video_id=ref.bvid,
+                part_index=ref.part_index,
+                duration_check=media["duration_check"],
+                transcript_check=transcript["transcript_check"],
+                artifact_paths=render_artifacts,
+                sanitized_message=sanitized_message,
+                warnings=[*render_warnings, "nabaichuan_export_failed"],
+            ),
+        )
+        _progress(progress_callback, PipelineStage.RENDER, "failed", sanitized_message)
+        raise _pipeline_run_error(
+            run,
+            sanitized_message,
+            artifact_paths=render_artifacts,
+            warnings=[*render_warnings, "nabaichuan_export_failed"],
+        ) from exc
+    render_artifacts.append(nabaichuan_artifact)
 
     write_diagnostics(
         run.run_dir / "diagnostics.json",

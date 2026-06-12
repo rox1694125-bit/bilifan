@@ -129,6 +129,7 @@ def _artifact_map(artifact_paths: list[str]) -> dict[str, Any]:
         "chapters.json": "chapters_json",
         "diagnostics.json": "diagnostics_json",
         "content_bundle.json": "content_bundle_json",
+        "nabaichuan.jsonl": "nabaichuan_jsonl",
     }
     for artifact_path in validated_paths:
         key = known_names.get(artifact_path)

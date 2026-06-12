@@ -70,6 +70,12 @@ def render_app_html(token: str = "") -> str:
             .panel-header {
               border-bottom: 1px solid var(--border);
             }
+            .panel-heading-row {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 10px;
+            }
             h1, h2, h3, p { margin: 0; }
             h1 {
               font-size: 18px;
@@ -175,6 +181,10 @@ def render_app_html(token: str = "") -> str:
               border-color: var(--accent);
               background: var(--accent);
               color: #fff;
+            }
+            button.compact {
+              padding: 6px 9px;
+              font-size: 12px;
             }
             button.primary:hover { background: var(--accent-strong); }
             button.danger {
@@ -319,8 +329,13 @@ def render_app_html(token: str = "") -> str:
             <div class="layout">
               <aside class="panel">
                 <div class="panel-header">
-                  <h1>历史记录</h1>
-                  <p class="subtle">latest run / artifacts</p>
+                  <div class="panel-heading-row">
+                    <div>
+                      <h1>历史记录</h1>
+                      <p class="subtle">latest run / artifacts</p>
+                    </div>
+                    <button id="batch-nabaichuan-button" class="compact" type="button">批量导出 Nabaichuan</button>
+                  </div>
                 </div>
                 <div class="panel-body">
                   <ul id="history-list" class="history-list"></ul>
@@ -434,6 +449,7 @@ def render_app_html(token: str = "") -> str:
               allowLongVideo: document.getElementById("allow-long-video"),
               startButton: document.getElementById("start-button"),
               cancelButton: document.getElementById("cancel-button"),
+              batchNabaichuanButton: document.getElementById("batch-nabaichuan-button"),
               jobMessage: document.getElementById("job-message"),
               consentBanner: document.getElementById("consent-banner"),
               consentButton: document.getElementById("consent-button"),
@@ -504,6 +520,7 @@ def render_app_html(token: str = "") -> str:
             function updateStartButton() {
               elements.startButton.disabled = state.authExpired || !state.consentAccepted || ["running", "canceling"].includes(state.currentStatus);
               elements.cancelButton.disabled = state.authExpired || state.currentStatus !== "running";
+              elements.batchNabaichuanButton.disabled = state.authExpired || !state.consentAccepted;
             }
 
             function renderStageList(progress, activeStage, jobStatus) {
@@ -525,7 +542,7 @@ def render_app_html(token: str = "") -> str:
               }).join("");
             }
 
-            function renderLinks(artifacts, runKey) {
+            function renderLinks(artifacts, runKey, status = "idle") {
               const links = [];
               if (artifacts && typeof artifacts === "object") {
                 if (artifacts.html) links.push(linkItem("report.html", artifacts.html));
@@ -534,6 +551,8 @@ def render_app_html(token: str = "") -> str:
                 if (artifacts.srt) links.push(linkItem("SRT", artifacts.srt));
                 if (artifacts.md) links.push(linkItem("MD", artifacts.md));
                 if (artifacts.bundle) links.push(linkItem("Bundle", artifacts.bundle));
+                if (artifacts.nabaichuan) links.push(linkItem("Nabaichuan", artifacts.nabaichuan));
+                if (!artifacts.nabaichuan && artifacts.bundle && runKey && status === "succeeded") links.push(nabaichuanButton("导出 Nabaichuan", runKey));
                 if (artifacts.audio) links.push(linkItem("audio", artifacts.audio));
                 if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
                 if (artifacts.folder) links.push(folderButton("打开本地文件夹", artifacts.folder));
@@ -554,6 +573,10 @@ def render_app_html(token: str = "") -> str:
             function folderButton(label, href) {
               const url = withToken(href);
               return `<button class="link-button" type="button" data-folder-url="${escapeAttr(url)}">${escapeHtml(label)}</button>`;
+            }
+
+            function nabaichuanButton(label, runKey) {
+              return `<button class="link-button" type="button" data-nabaichuan-run-key="${escapeAttr(runKey)}">${escapeHtml(label)}</button>`;
             }
 
             function renderFailure(stage, message, diagnostics, runKey, friendlyError, retryActions) {
@@ -604,6 +627,8 @@ def render_app_html(token: str = "") -> str:
                 if (artifacts.srt) links.push(linkItem("SRT", artifacts.srt));
                 if (artifacts.md) links.push(linkItem("MD", artifacts.md));
                 if (artifacts.bundle) links.push(linkItem("Bundle", artifacts.bundle));
+                if (artifacts.nabaichuan) links.push(linkItem("Nabaichuan", artifacts.nabaichuan));
+                if (!artifacts.nabaichuan && artifacts.bundle && item.run_key && item.status === "succeeded") links.push(nabaichuanButton("导出 Nabaichuan", item.run_key));
                 if (artifacts.audio) links.push(linkItem("audio", artifacts.audio));
                 if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
                 if (artifacts.folder) links.push(folderButton("打开本地文件夹", artifacts.folder));
@@ -684,7 +709,7 @@ def render_app_html(token: str = "") -> str:
                 state.currentRunKey = typeof data.run_key === "string" ? data.run_key : "";
                 updateStartButton();
                 renderStageList(data.progress, data.stage, data.status);
-                renderLinks(data.artifacts, data.run_key);
+                renderLinks(data.artifacts, data.run_key, data.status);
                 if (data.status === "failed") {
                   renderFailure(data.stage, data.message, data.artifacts && data.artifacts.diagnostics, data.run_key, data.friendly_error, data.retry_actions);
                   setJobMessage(data.message || "任务失败。", true);
@@ -816,6 +841,38 @@ def render_app_html(token: str = "") -> str:
               await loadCurrentJob();
             }
 
+            async function exportNabaichuan(runKey) {
+              if (state.authExpired) {
+                markAuthExpired();
+                return;
+              }
+              if (!runKey) {
+                setJobMessage("没有可导出的 run。", true);
+                return;
+              }
+              const data = await apiFetch(`/api/runs/${runKey}/exports/nabaichuan`, { method: "POST" });
+              await loadHistory();
+              await loadCurrentJob();
+              const artifact = data && typeof data.artifact === "string" ? withToken(data.artifact) : "";
+              setJobMessage(artifact ? `Nabaichuan JSONL 已生成: ${artifact}` : "Nabaichuan JSONL 已生成。");
+            }
+
+            async function exportNabaichuanBatch() {
+              if (state.authExpired) {
+                markAuthExpired();
+                return;
+              }
+              const data = await apiFetch("/api/exports/nabaichuan/batch", { method: "POST" });
+              const count = Number.isFinite(Number(data.exported_runs)) ? Number(data.exported_runs) : 0;
+              const skipped = Number.isFinite(Number(data.skipped_runs)) ? Number(data.skipped_runs) : 0;
+              const artifact = data && typeof data.artifact === "string" ? withToken(data.artifact) : "";
+              setJobMessage(
+                artifact
+                  ? `已批量导出 ${count} 个 run，跳过 ${skipped} 个: ${artifact}`
+                  : `已批量导出 ${count} 个 run，跳过 ${skipped} 个。`
+              );
+            }
+
             function init() {
               renderStageList([], "preflight", "idle");
               renderLinks({}, "");
@@ -825,6 +882,11 @@ def render_app_html(token: str = "") -> str:
               elements.consentButton.addEventListener("click", acceptConsent);
               elements.jobForm.addEventListener("submit", startJob);
               elements.cancelButton.addEventListener("click", cancelJob);
+              elements.batchNabaichuanButton.addEventListener("click", () => {
+                exportNabaichuanBatch().catch((error) => {
+                  setJobMessage(error.message || "批量导出失败。", true);
+                });
+              });
               document.addEventListener("click", (event) => {
                 const retryTarget = event.target && event.target.closest
                   ? event.target.closest("[data-retry-stage]")
@@ -835,6 +897,15 @@ def render_app_html(token: str = "") -> str:
                     retryTarget.getAttribute("data-retry-run-key"),
                   ).catch((error) => {
                     setJobMessage(error.message || "重试失败。", true);
+                  });
+                  return;
+                }
+                const nabaichuanTarget = event.target && event.target.closest
+                  ? event.target.closest("[data-nabaichuan-run-key]")
+                  : null;
+                if (nabaichuanTarget) {
+                  exportNabaichuan(nabaichuanTarget.getAttribute("data-nabaichuan-run-key")).catch((error) => {
+                    setJobMessage(error.message || "Nabaichuan 导出失败。", true);
                   });
                   return;
                 }

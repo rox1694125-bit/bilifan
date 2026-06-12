@@ -26,6 +26,7 @@ ROOT_FILES = {
     "transcript.txt",
     "transcript.srt",
     "notes.md",
+    "nabaichuan.jsonl",
 }
 MEDIA_FILES = {"media/audio.mp3"}
 
@@ -94,6 +95,37 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
             }
         )
     return sorted(items, key=lambda item: item["generated_at"], reverse=True)
+
+
+def list_all_runs(outputs: Path) -> list[dict[str, Any]]:
+    if not outputs.is_dir():
+        return []
+    items: list[dict[str, Any]] = []
+    for video_dir in sorted(outputs.iterdir()):
+        output_id = video_dir.name
+        if OUTPUT_ID_PATTERN.fullmatch(output_id) is None:
+            continue
+        safe_video_dir = _safe_existing_dir(outputs, output_id)
+        if safe_video_dir is None:
+            continue
+        runs_dir = _safe_existing_dir(safe_video_dir, "runs")
+        if runs_dir is None:
+            continue
+        for run_dir in sorted(runs_dir.iterdir()):
+            run_id = run_dir.name
+            if RUN_ID_PATTERN.fullmatch(run_id) is None:
+                continue
+            try:
+                safe_run_dir = _run_dir(outputs, output_id, run_id)
+            except ValueError:
+                continue
+            if (
+                not safe_run_dir.is_dir()
+                or safe_run_dir.resolve(strict=False) != run_dir.resolve(strict=False)
+            ):
+                continue
+            items.append(_run_item(outputs, output_id, run_id, generated_at=""))
+    return sorted(items, key=lambda item: (item["generated_at"], item["run_key"]), reverse=True)
 
 
 def list_run_files(outputs: Path, output_id: str, run_id: str) -> list[str]:
@@ -175,6 +207,44 @@ def _run_dir(outputs: Path, output_id: str, run_id: str) -> Path:
     return run_dir
 
 
+def _run_item(
+    outputs: Path,
+    output_id: str,
+    run_id: str,
+    *,
+    generated_at: str,
+) -> dict[str, Any]:
+    run_dir = _run_dir(outputs, output_id, run_id)
+    diagnostics = _read_json_object(_safe_existing_file(run_dir, "diagnostics.json"))
+    metadata = _read_json_object(_safe_existing_file(run_dir, "metadata.json"))
+    status = "failed" if diagnostics.get("error_type") else "succeeded"
+    stage = _text(diagnostics.get("stage"))
+    artifact_paths = _text_list(diagnostics.get("artifact_paths"))
+    warnings = _text_list(diagnostics.get("warnings"))
+    return {
+        "run_key": f"{output_id}/runs/{run_id}",
+        "output_id": output_id,
+        "run_id": run_id,
+        "title": _text(metadata.get("title")) or output_id,
+        "status": status,
+        "stage": stage,
+        "generated_at": generated_at,
+        "artifacts": _artifact_links(f"{output_id}/runs/{run_id}", run_dir),
+        "friendly_error": (
+            explain_failure(
+                stage=stage,
+                message=_text(diagnostics.get("sanitized_message")),
+                warnings=warnings,
+            )
+            if status == "failed"
+            else None
+        ),
+        "retry_actions": (
+            retry_actions_for(stage, artifact_paths) if status == "failed" else []
+        ),
+    }
+
+
 def _run_id_from_latest(latest: dict[str, Any]) -> str:
     run_id = _text(latest.get("run_id"))
     run_dir = _text(latest.get("run_dir"))
@@ -214,6 +284,8 @@ def _artifact_links(run_key: str, run_dir: Path) -> dict[str, str]:
         artifacts["md"] = f"{prefix}/notes.md"
     if _safe_existing_file(run_dir, "content_bundle.json") is not None:
         artifacts["bundle"] = f"{prefix}/content_bundle.json"
+    if _safe_existing_file(run_dir, "nabaichuan.jsonl") is not None:
+        artifacts["nabaichuan"] = f"{prefix}/nabaichuan.jsonl"
     if _safe_existing_file(run_dir, "media/audio.mp3") is not None:
         artifacts["audio"] = f"{prefix}/media/audio.mp3"
     artifacts["folder"] = f"/api/runs/{run_key}/open-folder"

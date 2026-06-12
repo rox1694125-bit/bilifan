@@ -287,10 +287,12 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
     assert "notes.md" in result.artifact_paths
     assert "content_bundle.json" in result.artifact_paths
     assert "media/audio.mp3" in result.artifact_paths
+    assert "nabaichuan.jsonl" in result.artifact_paths
 
     for artifact_name in (
         "metadata.json",
         "media/audio.mp3",
+        "nabaichuan.jsonl",
         "transcript.json",
         "transcript.txt",
         "transcript.srt",

@@ -81,6 +81,9 @@ def test_render_app_html_contains_workbench_contract():
         "SRT",
         "MD",
         "Bundle",
+        "Nabaichuan",
+        "batch-nabaichuan-button",
+        "exportNabaichuan",
         "audio",
         "data-folder-url",
         "openFolder",
@@ -272,6 +275,7 @@ def test_render_app_script_submits_language_and_renders_export_actions():
                   srt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt?token=test-token",
                   md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md?token=test-token",
                   bundle: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json?token=test-token",
+                  nabaichuan: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/nabaichuan.jsonl?token=test-token",
                   audio: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/media/audio.mp3?token=test-token",
                   folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder?token=test-token"
                 }
@@ -289,6 +293,7 @@ def test_render_app_script_submits_language_and_renders_export_actions():
                 srt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
                 md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
                 bundle: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json",
+                nabaichuan: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/nabaichuan.jsonl",
                 audio: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/media/audio.mp3",
                 folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder"
               },
@@ -308,12 +313,14 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         assert(elements["history-list"].innerHTML.includes("SRT"));
         assert(elements["history-list"].innerHTML.includes("MD"));
         assert(elements["history-list"].innerHTML.includes("Bundle"));
+        assert(elements["history-list"].innerHTML.includes("Nabaichuan"));
         assert(elements["history-list"].innerHTML.includes("audio"));
         assert(elements["history-list"].innerHTML.includes("打开本地文件夹"));
         assert(elements["result-links"].innerHTML.includes("TXT"));
         assert(elements["result-links"].innerHTML.includes("SRT"));
         assert(elements["result-links"].innerHTML.includes("MD"));
         assert(elements["result-links"].innerHTML.includes("Bundle"));
+        assert(elements["result-links"].innerHTML.includes("Nabaichuan"));
         assert(elements["result-links"].innerHTML.includes("audio"));
 
         elements["url-input"].value = "https://www.bilibili.com/video/BV1abcDEF12G";
@@ -337,6 +344,79 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         await document.listeners.click({ target: clickTarget });
         await flush();
         assert(fetchCalls.some((call) => call.method === "POST" && call.path.includes("/open-folder")));
+        """,
+    )
+
+
+def test_render_app_script_exports_nabaichuan_from_history_and_batch_button():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
+          }
+          if (path === "/api/history") {
+            return jsonResponse({
+              items: [{
+                title: "历史",
+                output_id: "BV1abcDEF12G_p1",
+                run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
+                status: "succeeded",
+                stage: "render",
+                artifacts: {
+                  bundle: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json?token=test-token"
+                }
+              }]
+            });
+          }
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "succeeded",
+              stage: "render",
+              message: "",
+              progress: [],
+              artifacts: {
+                bundle: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json"
+              },
+              run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000"
+            });
+          }
+          if (path === "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/exports/nabaichuan") {
+            return jsonResponse({ ok: true, artifact: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/nabaichuan.jsonl" });
+          }
+          if (path === "/api/exports/nabaichuan/batch") {
+            return jsonResponse({ ok: true, artifact: "/api/exports/nabaichuan_batch_20260612_120000.jsonl", exported_runs: 1, skipped_runs: 0 });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["history-list"].innerHTML.includes("导出 Nabaichuan"));
+        assert(elements["result-links"].innerHTML.includes("导出 Nabaichuan"));
+
+        const nabaichuanTarget = {
+          closest(selector) {
+            if (selector !== "[data-nabaichuan-run-key]") return null;
+            return {
+              getAttribute(name) {
+                assert.equal(name, "data-nabaichuan-run-key");
+                return "BV1abcDEF12G_p1/runs/2026-06-08_120000";
+              }
+            };
+          }
+        };
+        await document.listeners.click({ target: nabaichuanTarget });
+        await flush();
+        assert(fetchCalls.some((call) => call.method === "POST" && call.path.endsWith("/exports/nabaichuan")));
+
+        await elements["batch-nabaichuan-button"].listeners.click();
+        await flush();
+        assert(fetchCalls.some((call) => call.method === "POST" && call.path === "/api/exports/nabaichuan/batch"));
+        assert(elements["job-message"].textContent.includes("已批量导出 1 个 run"));
         """,
     )
 

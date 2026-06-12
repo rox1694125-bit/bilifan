@@ -49,6 +49,7 @@ def _make_run(
     )
     (run_dir / "notes.md").write_text("# Notes", encoding="utf-8")
     (run_dir / "content_bundle.json").write_text('{"schema_version":1}', encoding="utf-8")
+    (run_dir / "nabaichuan.jsonl").write_text('{"type":"video"}\n', encoding="utf-8")
     partial_dir = run_dir / "partial_summaries"
     partial_dir.mkdir()
     (partial_dir / "chunk_001.json").write_text("{}", encoding="utf-8")
@@ -86,6 +87,7 @@ def test_list_latest_runs_reads_outputs_latest_json(tmp_path):
         "srt": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
         "md": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
         "bundle": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json",
+        "nabaichuan": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/nabaichuan.jsonl",
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
 
@@ -263,6 +265,7 @@ def test_list_run_files_only_includes_whitelisted_files(tmp_path):
     assert "transcript.srt" in files
     assert "notes.md" in files
     assert "content_bundle.json" in files
+    assert "nabaichuan.jsonl" in files
     assert "partial_summaries/chunk_001.json" in files
     assert "secret.txt" not in files
 
@@ -386,6 +389,7 @@ def test_resolve_run_file_accepts_numeric_partial_summary_chunk(tmp_path):
         ("transcript.srt", "caption"),
         ("notes.md", "# Notes"),
         ("content_bundle.json", "schema_version"),
+        ("nabaichuan.jsonl", "video"),
     ],
 )
 def test_resolve_run_file_accepts_export_artifacts(tmp_path, file_path, content):

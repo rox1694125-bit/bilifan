@@ -80,6 +80,7 @@ outputs/
         report.html
         report.pdf
         content_bundle.json
+        nabaichuan.jsonl
         media/
           audio.mp3
 ```
@@ -99,10 +100,11 @@ or reuse outside Bilifan. Successful runs also publish the final audio as
 
 ## Content Bundle
 
-Successful runs write `content_bundle.json`. This is the stable integration
-artifact for downstream tools such as Nabaichuan. It contains source metadata,
-chapter summaries, transcript segments, artifact links, and provenance without
-local absolute paths.
+Successful runs write `content_bundle.json` and `nabaichuan.jsonl`.
+`content_bundle.json` is the stable integration artifact for downstream tools.
+It contains source metadata, chapter summaries, transcript segments, artifact
+links, and provenance without local absolute paths. `nabaichuan.jsonl` is the
+ready-to-import JSONL export generated from that bundle.
 
 ## Retry
 
@@ -126,13 +128,21 @@ cookies, live streams, and Shorts-specific behavior are outside this phase.
 
 ## Nabaichuan
 
-See `docs/nabaichuan-integration.md` for the bundle mapping and JSONL converter:
+Successful CLI and Web UI runs automatically generate `nabaichuan.jsonl`.
+External systems should consume the generated JSONL file; Bilifan does not write
+directly into Nabaichuan or any other external system.
+
+See `docs/nabaichuan-integration.md` for the record schema and manual JSONL
+converter:
 
 ```bash
 python examples/content_bundle_to_nabaichuan.py \
   outputs/BV1abcDEF12G_p1/runs/2026-06-09_120000/content_bundle.json \
   --out /tmp/nabaichuan.jsonl
 ```
+
+Transcript records are included by default. `--include-transcript` remains
+accepted for older commands, and `--no-transcript` omits transcript records.
 
 ## Local Web UI
 
@@ -168,6 +178,8 @@ Current MVP boundaries:
 - Web UI job outputs are always read from and written to `./outputs`.
 - The Web UI can show HTML/PDF/TXT/SRT/MD/Bundle/audio export links and can ask
   macOS to open a run's local folder.
+- The Web UI can export a single successful run to `nabaichuan.jsonl` and
+  batch-export all successful history runs to a local JSONL file.
 - The Web UI can cancel the current task cooperatively. If a subprocess is
   currently downloading, transcribing, or summarizing, cancellation is applied at
   the next safe stage boundary.

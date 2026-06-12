@@ -70,7 +70,12 @@ def test_build_content_bundle_writes_source_summary_and_transcript():
         metadata=_metadata(),
         transcript=_transcript(),
         chapters=_chapters(),
-        artifact_paths=["report.html", "notes.md", "transcript.txt"],
+        artifact_paths=[
+            "report.html",
+            "notes.md",
+            "transcript.txt",
+            "nabaichuan.jsonl",
+        ],
         platform="bilibili",
         source_id="BV1abcDEF12G",
         part_id="p1",
@@ -84,6 +89,7 @@ def test_build_content_bundle_writes_source_summary_and_transcript():
     assert bundle["transcript"]["segments"][0]["text"] == "第一段"
     assert bundle["artifacts"]["report_html"] == "report.html"
     assert bundle["artifacts"]["content_bundle_json"] == "content_bundle.json"
+    assert bundle["artifacts"]["nabaichuan_jsonl"] == "nabaichuan.jsonl"
     assert "content_bundle.json" in bundle["artifacts"]["all"]
 
 

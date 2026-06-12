@@ -296,6 +296,8 @@ def _artifact_links(run_key: str, artifact_paths: list[str]) -> dict[str, str]:
         artifacts["md"] = f"{prefix}/notes.md"
     if "content_bundle.json" in artifact_paths:
         artifacts["bundle"] = f"{prefix}/content_bundle.json"
+    if "nabaichuan.jsonl" in artifact_paths:
+        artifacts["nabaichuan"] = f"{prefix}/nabaichuan.jsonl"
     if "media/audio.mp3" in artifact_paths:
         artifacts["audio"] = f"{prefix}/media/audio.mp3"
     if artifact_paths:

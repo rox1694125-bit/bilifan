@@ -134,7 +134,9 @@ def test_retry_bundle_writes_bundle_and_success_diagnostics(tmp_path):
     bundle = json.loads((run_dir / "content_bundle.json").read_text(encoding="utf-8"))
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
     assert result.run_key == "BV1abcDEF12G_p1/runs/2026-06-09_120000"
-    assert result.artifact_paths[-1] == "content_bundle.json"
+    assert "content_bundle.json" in result.artifact_paths
+    assert "nabaichuan.jsonl" in result.artifact_paths
+    assert (run_dir / "nabaichuan.jsonl").is_file()
     assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p1"
     assert diagnostics["error_type"] is None
     assert diagnostics["stage"] == "bundle"
@@ -195,7 +197,9 @@ def test_retry_render_rewrites_report_and_bundle(tmp_path, monkeypatch):
     assert (run_dir / "report.html").read_text(encoding="utf-8") == "<html>重试章节</html>"
     assert (run_dir / "report.pdf").is_file()
     assert (run_dir / "content_bundle.json").is_file()
-    assert result.artifact_paths[-1] == "content_bundle.json"
+    assert (run_dir / "nabaichuan.jsonl").is_file()
+    assert "content_bundle.json" in result.artifact_paths
+    assert "nabaichuan.jsonl" in result.artifact_paths
 
 
 def test_retry_summarization_rewrites_chapters_notes_report_and_bundle(tmp_path, monkeypatch):

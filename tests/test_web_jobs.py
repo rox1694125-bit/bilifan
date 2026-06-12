@@ -53,6 +53,7 @@ def _make_run(outputs, output_id="BV1abcDEF12G_p1", run_id="2026-06-08_120000"):
     )
     (run_dir / "notes.md").write_text("# Notes", encoding="utf-8")
     (run_dir / "content_bundle.json").write_text('{"schema_version":1}', encoding="utf-8")
+    (run_dir / "nabaichuan.jsonl").write_text('{"type":"video"}\n', encoding="utf-8")
     (run_dir / "diagnostics.json").write_text(
         json.dumps({"error_type": None, "stage": "render"}),
         encoding="utf-8",
@@ -158,6 +159,7 @@ def test_history_endpoint_returns_direct_artifact_links_with_query_token(tmp_pat
     assert artifacts["srt"].endswith("/transcript.srt?token=test-token")
     assert artifacts["md"].endswith("/notes.md?token=test-token")
     assert artifacts["bundle"].endswith("/content_bundle.json?token=test-token")
+    assert artifacts["nabaichuan"].endswith("/nabaichuan.jsonl?token=test-token")
     assert artifacts["folder"].endswith("/open-folder?token=test-token")
     direct_response = client.get(artifacts["html"])
     assert direct_response.status_code == 200
@@ -430,6 +432,7 @@ def test_run_files_endpoint_returns_safe_file_list(tmp_path):
             "content_bundle.json",
             "diagnostics.json",
             "metadata.json",
+            "nabaichuan.jsonl",
             "notes.md",
             "report.html",
             "transcript.srt",
@@ -497,6 +500,7 @@ def test_run_file_endpoint_serves_artifacts_with_token(tmp_path):
             "transcript.srt",
             "notes.md",
             "content_bundle.json",
+            "nabaichuan.jsonl",
         ]
     }
 
@@ -510,6 +514,12 @@ def test_run_file_endpoint_serves_artifacts_with_token(tmp_path):
     assert responses["notes.md"].text == "# Notes"
     assert responses["content_bundle.json"].status_code == 200
     assert "schema_version" in responses["content_bundle.json"].text
+    nabaichuan_response = client.get(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/nabaichuan.jsonl",
+        headers=_headers(),
+    )
+    assert nabaichuan_response.status_code == 200
+    assert "video" in nabaichuan_response.text
 
 
 def test_run_file_endpoint_maps_not_found_and_invalid_paths(tmp_path):
@@ -1044,6 +1054,128 @@ def test_retry_failure_preserves_run_context_and_diagnostics_link(tmp_path, monk
     assert state["artifacts"]["diagnostics"].endswith("/diagnostics.json")
     assert state["artifacts"]["folder"].endswith("/open-folder")
     assert state["retry_actions"] == ["summarization"]
+
+
+def test_export_single_run_nabaichuan_jsonl_from_web_api(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    (run_dir / "nabaichuan.jsonl").unlink()
+    (run_dir / "content_bundle.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "bundle_id": "bilibili:BV1abcDEF12G:p1",
+                "source": {
+                    "platform": "bilibili",
+                    "id": "BV1abcDEF12G",
+                    "part_id": "p1",
+                    "canonical_url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+                    "title": "Title",
+                },
+                "summary": {"chapters": []},
+                "transcript": {"segments": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/exports/nabaichuan",
+        headers=_headers(),
+    )
+    file_response = client.get(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/nabaichuan.jsonl",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["artifact"].endswith("/nabaichuan.jsonl")
+    assert file_response.status_code == 200
+    assert json.loads(file_response.text.splitlines()[0])["type"] == "video"
+
+
+def test_export_single_run_nabaichuan_rejects_failed_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    (run_dir / "nabaichuan.jsonl").unlink()
+    (run_dir / "diagnostics.json").write_text(
+        json.dumps({"error_type": "SummarizationError", "stage": "summarization"}),
+        encoding="utf-8",
+    )
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/exports/nabaichuan",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 409
+    assert "successful run" in response.json()["detail"]
+
+
+def test_batch_export_all_successful_history_runs_to_nabaichuan_jsonl(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    outputs = tmp_path / "outputs"
+    first = _make_run(outputs, output_id="BV1abcDEF12G_p1", run_id="2026-06-08_120000")
+    older_same_output = _make_run(
+        outputs,
+        output_id="BV1abcDEF12G_p1",
+        run_id="2026-06-07_120000",
+    )
+    second = _make_run(outputs, output_id="BV1abcDEF12H_p1", run_id="2026-06-08_120001")
+    failed = _make_run(outputs, output_id="BV1abcDEF12I_p1", run_id="2026-06-08_120002")
+    (failed / "diagnostics.json").write_text(
+        json.dumps({"error_type": "MetadataIngestError", "stage": "metadata"}),
+        encoding="utf-8",
+    )
+    for run_dir, source_id in [
+        (first, "BV1abcDEF12G"),
+        (older_same_output, "BV1abcDEF12G"),
+        (second, "BV1abcDEF12H"),
+    ]:
+        (run_dir / "content_bundle.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "bundle_id": f"bilibili:{source_id}:p1",
+                    "source": {
+                        "platform": "bilibili",
+                        "id": source_id,
+                        "part_id": "p1",
+                        "canonical_url": f"https://www.bilibili.com/video/{source_id}?p=1",
+                        "title": source_id,
+                    },
+                    "summary": {"chapters": []},
+                    "transcript": {"segments": []},
+                }
+            ),
+            encoding="utf-8",
+        )
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post("/api/exports/nabaichuan/batch", headers=_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["exported_runs"] == 3
+    assert payload["skipped_runs"] == 1
+    export_response = client.get(payload["artifact"], headers=_headers())
+    assert export_response.status_code == 200
+    rows = [json.loads(line) for line in export_response.text.splitlines()]
+    assert sorted(row["source"]["id"] for row in rows) == [
+        "BV1abcDEF12G",
+        "BV1abcDEF12G",
+        "BV1abcDEF12H",
+    ]
 
 
 def test_job_ignores_late_progress_from_previous_job(tmp_path):

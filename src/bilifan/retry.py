@@ -15,7 +15,12 @@ from .diagnostics import (
     validate_artifact_paths,
     write_diagnostics,
 )
-from .exports import ExportError, write_notes_markdown
+from .exports import (
+    ExportError,
+    NABAICHUAN_JSONL,
+    write_nabaichuan_jsonl,
+    write_notes_markdown,
+)
 from .renderer import PdfExportError, RenderError, export_report_pdf, render_report_html
 from .runs import RUN_OUTPUT_ID_PATTERN
 from .summarizer import SummarizationError, summarize_chunks
@@ -232,7 +237,7 @@ def _render_and_bundle(
             metadata=metadata,
             transcript=transcript,
             chapters=chapters,
-            artifact_paths=artifact_paths,
+            artifact_paths=[*artifact_paths, NABAICHUAN_JSONL],
             platform=ref.platform,
             source_id=ref.source_id,
             part_id=ref.part_id,
@@ -251,6 +256,21 @@ def _render_and_bundle(
         )
         raise RetryError(str(exc)) from exc
     artifact_paths = _append_unique(artifact_paths, bundle_path.name)
+    try:
+        nabaichuan_artifact = write_nabaichuan_jsonl(run_dir)
+    except ExportError as exc:
+        _write_failure_diagnostics(
+            run_dir,
+            stage="bundle",
+            error_type=exc.__class__.__name__,
+            ref=ref,
+            transcript=transcript,
+            message=str(exc),
+            artifact_paths=artifact_paths,
+            warnings=["bundle_retry_failed", *warnings, "nabaichuan_export_failed"],
+        )
+        raise RetryError(str(exc)) from exc
+    artifact_paths = _append_unique(artifact_paths, nabaichuan_artifact)
     _write_success_diagnostics(
         run_dir,
         stage="render",
@@ -286,7 +306,7 @@ def _bundle_only(
             metadata=metadata,
             transcript=transcript,
             chapters=chapters,
-            artifact_paths=artifact_paths,
+            artifact_paths=[*artifact_paths, NABAICHUAN_JSONL],
             platform=ref.platform,
             source_id=ref.source_id,
             part_id=ref.part_id,
@@ -305,20 +325,36 @@ def _bundle_only(
         )
         raise RetryError(str(exc)) from exc
     artifact_paths = _append_unique(artifact_paths, bundle_path.name)
+    warnings: list[str] = []
+    try:
+        nabaichuan_artifact = write_nabaichuan_jsonl(run_dir)
+    except ExportError as exc:
+        _write_failure_diagnostics(
+            run_dir,
+            stage="bundle",
+            error_type=exc.__class__.__name__,
+            ref=ref,
+            transcript=transcript,
+            message=str(exc),
+            artifact_paths=artifact_paths,
+            warnings=["bundle_retry_failed", "nabaichuan_export_failed"],
+        )
+        raise RetryError(str(exc)) from exc
+    artifact_paths = _append_unique(artifact_paths, nabaichuan_artifact)
     _write_success_diagnostics(
         run_dir,
         stage="bundle",
         ref=ref,
         transcript=transcript,
         artifact_paths=artifact_paths,
-        warnings=[],
+        warnings=warnings,
     )
     return RetryResult(
         run_key=run_key,
         run_dir=run_dir,
         diagnostics_path=run_dir / "diagnostics.json",
         artifact_paths=artifact_paths,
-        warnings=[],
+        warnings=warnings,
     )
 
 
@@ -370,6 +406,7 @@ def _write_failure_diagnostics(
     transcript: dict[str, Any],
     message: str,
     artifact_paths: list[str] | None = None,
+    warnings: list[str] | None = None,
 ) -> None:
     existing_artifacts = (
         artifact_paths if artifact_paths is not None else _base_artifact_paths(run_dir)
@@ -386,7 +423,7 @@ def _write_failure_diagnostics(
             transcript_check=_transcript_check(run_dir, transcript),
             artifact_paths=existing_artifacts,
             sanitized_message=message,
-            warnings=[f"{stage}_retry_failed"],
+            warnings=warnings if warnings is not None else [f"{stage}_retry_failed"],
         ),
     )
 
@@ -407,6 +444,7 @@ def _existing_artifact_paths(run_dir: Path) -> list[str]:
         "report.html",
         "report.pdf",
         "content_bundle.json",
+        "nabaichuan.jsonl",
     ]:
         if (run_dir / relative_path).is_file():
             paths.append(relative_path)
@@ -424,6 +462,7 @@ def _base_artifact_paths(run_dir: Path) -> list[str]:
         "transcript.txt",
         "transcript.srt",
         "chunks.json",
+        "nabaichuan.jsonl",
     ]:
         if (run_dir / relative_path).is_file():
             paths.append(relative_path)
