@@ -80,6 +80,17 @@ def _chapters():
                         "text_preview": "第一段",
                     }
                 ],
+                "diagram": {
+                    "type": "flow",
+                    "caption": "图解：开场",
+                    "svg": '<svg xmlns="http://www.w3.org/2000/svg"><text>要点</text></svg>',
+                },
+                "frame": {
+                    "path": "media/frames/chapter_001_000001.jpg",
+                    "timestamp": 1.6,
+                    "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1&t=1",
+                    "caption": "视频时间戳：0:01",
+                },
             }
         ],
     }
@@ -108,6 +119,8 @@ def test_build_content_bundle_writes_source_summary_and_transcript():
     assert bundle["summary"]["chapters"][0]["title"] == "开场"
     assert bundle["summary"]["summary_validation"]["status"] == "passed"
     assert bundle["summary"]["chapters"][0]["evidence"][0]["text_preview"] == "第一段"
+    assert bundle["summary"]["chapters"][0]["diagram"]["type"] == "flow"
+    assert bundle["summary"]["chapters"][0]["frame"]["path"] == "media/frames/chapter_001_000001.jpg"
     assert bundle["transcript"]["segments"][0]["text"] == "第一段"
     assert bundle["artifacts"]["report_html"] == "report.html"
     assert bundle["artifacts"]["content_bundle_json"] == "content_bundle.json"

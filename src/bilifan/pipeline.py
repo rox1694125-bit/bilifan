@@ -32,6 +32,7 @@ from .sources import SourceAdapterError, SourceOptions, resolve_source_adapter
 from .sources.bilibili import BilibiliAdapter
 from .summarizer import SummarizationError, summarize_chunks
 from .transcript import TranscriptError, build_transcript
+from .visuals import enrich_chapters_with_visuals, visual_artifact_paths
 
 
 class PipelineStage(str, Enum):
@@ -61,6 +62,8 @@ class PipelineRequest:
     llm_provider: str = "codex-exec"
     llm_model: str = "gpt-5.5"
     summary_template: str = "学习笔记"
+    with_frames: bool = False
+    with_diagrams: bool = False
     require_pdf: bool = False
     allow_long_video: bool = False
     yes_i_understand: bool = False
@@ -457,6 +460,16 @@ def run_summarize_pipeline(
             artifact_paths=artifact_paths,
             warnings=[*export_warnings, "summarization_failed"],
         ) from exc
+    visual_warnings = enrich_chapters_with_visuals(
+        ref=ref,
+        chapters=chapters,
+        media=media,
+        run_dir=run.run_dir,
+        with_frames=request.with_frames,
+        with_diagrams=request.with_diagrams,
+    )
+    export_warnings.extend(visual_warnings)
+    visual_artifacts = visual_artifact_paths(chapters)
     _write_json(run.run_dir / "chapters.json", chapters)
     notes_artifacts: list[str] = []
     try:
@@ -484,6 +497,7 @@ def run_summarize_pipeline(
         *transcript_export_artifacts,
         "chunks.json",
         "chapters.json",
+        *visual_artifacts,
         *notes_artifacts,
     ]
     _progress(progress_callback, PipelineStage.RENDER, "running", "Rendering report.")

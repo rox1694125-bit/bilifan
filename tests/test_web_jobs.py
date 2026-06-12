@@ -87,6 +87,8 @@ def test_config_and_consent_endpoints(tmp_path, monkeypatch):
         "force_whisper": False,
         "language": "auto",
         "summary_template": "学习笔记",
+        "with_frames": False,
+        "with_diagrams": False,
         "require_pdf": False,
         "allow_long_video": False,
     }
@@ -217,6 +219,8 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
             "force_whisper": False,
             "language": "en",
             "summary_template": "教程步骤",
+            "with_frames": True,
+            "with_diagrams": True,
             "require_pdf": False,
             "allow_long_video": False,
         },
@@ -245,6 +249,8 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
     assert calls[0].output_format == "html"
     assert calls[0].language == "en"
     assert calls[0].summary_template == "教程步骤"
+    assert calls[0].with_frames is True
+    assert calls[0].with_diagrams is True
 
 
 def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
@@ -283,6 +289,8 @@ def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
     assert calls[0].output_format == "html,pdf"
     assert calls[0].language == "auto"
     assert calls[0].summary_template == "学习笔记"
+    assert calls[0].with_frames is False
+    assert calls[0].with_diagrams is False
     assert calls[0].force_whisper is False
     assert calls[0].require_pdf is False
     assert calls[0].allow_long_video is False
@@ -889,6 +897,8 @@ def test_retry_failed_run_from_web_api(tmp_path, monkeypatch):
         llm_provider,
         llm_model,
         summary_template,
+        with_frames,
+        with_diagrams,
         require_pdf,
     ):
         calls.append(
@@ -899,6 +909,8 @@ def test_retry_failed_run_from_web_api(tmp_path, monkeypatch):
                 "llm_provider": llm_provider,
                 "llm_model": llm_model,
                 "summary_template": summary_template,
+                "with_frames": with_frames,
+                "with_diagrams": with_diagrams,
                 "require_pdf": require_pdf,
             }
         )
@@ -928,6 +940,8 @@ def test_retry_failed_run_from_web_api(tmp_path, monkeypatch):
             "from_stage": "summarization",
             "format": "html",
             "summary_template": "观点提炼",
+            "with_frames": True,
+            "with_diagrams": True,
         },
     )
     state = client.get("/api/jobs/current", headers=_headers()).json()
@@ -942,6 +956,8 @@ def test_retry_failed_run_from_web_api(tmp_path, monkeypatch):
             "llm_provider": "codex-exec",
             "llm_model": "gpt-5.5",
             "summary_template": "观点提炼",
+            "with_frames": True,
+            "with_diagrams": True,
             "require_pdf": False,
         }
     ]
@@ -1022,6 +1038,8 @@ def test_retry_failure_preserves_run_context_and_diagnostics_link(tmp_path, monk
         llm_provider,
         llm_model,
         summary_template,
+        with_frames,
+        with_diagrams,
         require_pdf,
     ):
         (retry_run_dir / "diagnostics.json").write_text(

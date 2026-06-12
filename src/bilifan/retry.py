@@ -24,6 +24,7 @@ from .exports import (
 from .renderer import PdfExportError, RenderError, export_report_pdf, render_report_html
 from .runs import RUN_OUTPUT_ID_PATTERN
 from .summarizer import SummarizationError, summarize_chunks, validate_summary_style
+from .visuals import enrich_chapters_with_visuals, visual_artifact_paths
 
 RETRY_STAGES = {"summarization", "render", "bundle"}
 RUN_ID_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}")
@@ -85,6 +86,8 @@ def retry_run(
     llm_provider: str = "codex-exec",
     llm_model: str = "gpt-5.5",
     summary_template: str = "学习笔记",
+    with_frames: bool = False,
+    with_diagrams: bool = False,
     require_pdf: bool = False,
 ) -> RetryResult:
     stage = from_stage.strip().lower()
@@ -114,6 +117,14 @@ def retry_run(
                 model=llm_model,
                 style=summary_template,
             )
+            visual_warnings = enrich_chapters_with_visuals(
+                ref=ref,
+                chapters=chapters,
+                media=_visual_media(run_dir),
+                run_dir=run_dir,
+                with_frames=with_frames,
+                with_diagrams=with_diagrams,
+            )
         except SummarizationError as exc:
             _write_failure_diagnostics(
                 run_dir,
@@ -135,11 +146,22 @@ def retry_run(
             requested_formats=requested_formats,
             llm_provider=llm_provider,
             llm_model=llm_model,
+            visual_warnings=visual_warnings,
             require_pdf=require_pdf,
         )
 
     chapters = _read_required_json(run_dir, "chapters.json")
     if stage == "render":
+        visual_warnings = enrich_chapters_with_visuals(
+            ref=ref,
+            chapters=chapters,
+            media=_visual_media(run_dir),
+            run_dir=run_dir,
+            with_frames=with_frames,
+            with_diagrams=with_diagrams,
+        )
+        if with_frames or with_diagrams:
+            _write_json(run_dir / "chapters.json", chapters)
         return _render_and_bundle(
             run_dir=run_dir,
             run_key=run_key,
@@ -150,6 +172,7 @@ def retry_run(
             requested_formats=requested_formats,
             llm_provider=llm_provider,
             llm_model=llm_model,
+            visual_warnings=visual_warnings,
             require_pdf=require_pdf,
         )
 
@@ -176,9 +199,10 @@ def _render_and_bundle(
     requested_formats: set[str],
     llm_provider: str,
     llm_model: str,
-    require_pdf: bool,
+    visual_warnings: list[str] | None = None,
+    require_pdf: bool = False,
 ) -> RetryResult:
-    warnings: list[str] = []
+    warnings: list[str] = list(visual_warnings or [])
 
     try:
         write_notes_markdown(
@@ -231,6 +255,7 @@ def _render_and_bundle(
 
     artifact_paths = _base_artifact_paths(run_dir)
     artifact_paths.extend(["chapters.json", "notes.md", report_html.name])
+    artifact_paths.extend(visual_artifact_paths(chapters))
     if pdf_path is not None:
         artifact_paths.append(pdf_path.name)
     try:
@@ -478,6 +503,7 @@ def _existing_artifact_paths(run_dir: Path) -> list[str]:
         "report.pdf",
         "content_bundle.json",
         "nabaichuan.jsonl",
+        *_frame_artifact_paths(run_dir),
     ]:
         if (run_dir / relative_path).is_file():
             paths.append(relative_path)
@@ -496,6 +522,7 @@ def _base_artifact_paths(run_dir: Path) -> list[str]:
         "transcript.srt",
         "chunks.json",
         "nabaichuan.jsonl",
+        *_frame_artifact_paths(run_dir),
     ]:
         if (run_dir / relative_path).is_file():
             paths.append(relative_path)
@@ -530,6 +557,32 @@ def _cache_audio_paths(run_dir: Path) -> list[str]:
         if path.is_file()
         and path.suffix.lower() in {".mp3", ".m4a", ".webm", ".aac", ".opus"}
     ]
+
+
+def _frame_artifact_paths(run_dir: Path) -> list[str]:
+    frame_dir = run_dir / "media" / "frames"
+    if not frame_dir.is_dir():
+        return []
+    return [
+        f"media/frames/{path.name}"
+        for path in sorted(
+            frame_dir.glob(
+                "chapter_[0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9].jpg"
+            )
+        )
+        if path.is_file()
+    ]
+
+
+def _visual_media(run_dir: Path) -> dict[str, str]:
+    for relative_path in (
+        "media/source.mp4",
+        "media/video.mp4",
+        "source.mp4",
+    ):
+        if (run_dir / relative_path).is_file():
+            return {"video_path": relative_path}
+    return {}
 
 
 def _read_required_json(run_dir: Path, file_name: str) -> dict[str, Any]:

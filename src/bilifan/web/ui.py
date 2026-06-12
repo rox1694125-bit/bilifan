@@ -398,6 +398,14 @@ def render_app_html(token: str = "") -> str:
                           <input id="force-whisper" name="force_whisper" type="checkbox">
                           <span>Force Whisper</span>
                         </label>
+                        <label class="check" for="with-diagrams">
+                          <input id="with-diagrams" name="with_diagrams" type="checkbox">
+                          <span>SVG diagrams</span>
+                        </label>
+                        <label class="check" for="with-frames">
+                          <input id="with-frames" name="with_frames" type="checkbox">
+                          <span>Video frames</span>
+                        </label>
                         <label class="check" for="require-pdf">
                           <input id="require-pdf" name="require_pdf" type="checkbox">
                           <span>Require PDF</span>
@@ -455,6 +463,8 @@ def render_app_html(token: str = "") -> str:
               summaryTemplateSelect: document.getElementById("summary-template-select"),
               languageSelect: document.getElementById("language-select"),
               forceWhisper: document.getElementById("force-whisper"),
+              withDiagrams: document.getElementById("with-diagrams"),
+              withFrames: document.getElementById("with-frames"),
               requirePdf: document.getElementById("require-pdf"),
               allowLongVideo: document.getElementById("allow-long-video"),
               startButton: document.getElementById("start-button"),
@@ -701,6 +711,8 @@ def render_app_html(token: str = "") -> str:
               elements.summaryTemplateSelect.value = defaults.summary_template || "学习笔记";
               elements.languageSelect.value = defaults.language || "auto";
               elements.forceWhisper.checked = Boolean(defaults.force_whisper);
+              elements.withDiagrams.checked = Boolean(defaults.with_diagrams);
+              elements.withFrames.checked = Boolean(defaults.with_frames);
               elements.requirePdf.checked = Boolean(defaults.require_pdf);
               elements.allowLongVideo.checked = Boolean(defaults.allow_long_video);
               elements.consentBanner.classList.toggle("active", !state.consentAccepted);
@@ -779,6 +791,8 @@ def render_app_html(token: str = "") -> str:
                 summary_template: elements.summaryTemplateSelect.value,
                 language: elements.languageSelect.value,
                 force_whisper: elements.forceWhisper.checked,
+                with_diagrams: elements.withDiagrams.checked,
+                with_frames: elements.withFrames.checked,
                 require_pdf: elements.requirePdf.checked,
                 allow_long_video: elements.allowLongVideo.checked,
               };
@@ -850,6 +864,8 @@ def render_app_html(token: str = "") -> str:
                   from_stage: stage,
                   format: elements.formatSelect.value,
                   summary_template: elements.summaryTemplateSelect.value,
+                  with_diagrams: elements.withDiagrams.checked,
+                  with_frames: elements.withFrames.checked,
                   require_pdf: elements.requirePdf.checked,
                 }),
               });

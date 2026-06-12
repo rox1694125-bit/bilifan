@@ -22,6 +22,9 @@ def test_pipeline_request_defaults_for_web_and_cli(tmp_path):
     assert request.force_whisper is False
     assert request.llm_provider == "codex-exec"
     assert request.llm_model == "gpt-5.5"
+    assert request.summary_template == "学习笔记"
+    assert request.with_frames is False
+    assert request.with_diagrams is False
     assert request.require_pdf is False
     assert request.allow_long_video is False
     assert request.yes_i_understand is False
@@ -282,6 +285,8 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
             url="https://www.bilibili.com/video/BV1abcDEF12G",
             out=tmp_path,
             yes_i_understand=True,
+            with_frames=True,
+            with_diagrams=True,
         ),
         progress_callback=record_progress,
     )
@@ -312,10 +317,13 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
         assert (result.run_dir / artifact_name).is_file()
 
     bundle = json.loads((result.run_dir / "content_bundle.json").read_text(encoding="utf-8"))
+    diagnostics = json.loads((result.run_dir / "diagnostics.json").read_text(encoding="utf-8"))
     assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p1"
     assert bundle["artifacts"]["report_html"] == "report.html"
     assert bundle["artifacts"]["audio_mp3"] == "media/audio.mp3"
     assert bundle["summary"]["chapters"][0]["title"] == "开场"
+    assert bundle["summary"]["chapters"][0]["diagram"]["caption"] == "图解：开场"
+    assert "frames_unavailable" in diagnostics["warnings"]
 
     assert [
         (stage, status)

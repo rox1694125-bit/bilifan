@@ -128,6 +128,9 @@ def test_retry_bundle_writes_bundle_and_success_diagnostics(tmp_path):
     run_dir = _run_dir(tmp_path)
     _write_json(run_dir / "chapters.json", _chapters())
     (run_dir / "report.html").write_text("<html></html>", encoding="utf-8")
+    frame_path = run_dir / "media" / "frames" / "chapter_001_000030.jpg"
+    frame_path.parent.mkdir(parents=True)
+    frame_path.write_bytes(b"jpg")
 
     result = retry_run(run_dir, from_stage="bundle")
 
@@ -136,6 +139,8 @@ def test_retry_bundle_writes_bundle_and_success_diagnostics(tmp_path):
     assert result.run_key == "BV1abcDEF12G_p1/runs/2026-06-09_120000"
     assert "content_bundle.json" in result.artifact_paths
     assert "nabaichuan.jsonl" in result.artifact_paths
+    assert "media/frames/chapter_001_000030.jpg" in result.artifact_paths
+    assert "media/frames/chapter_001_000030.jpg" in bundle["artifacts"]["all"]
     assert (run_dir / "nabaichuan.jsonl").is_file()
     assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p1"
     assert diagnostics["error_type"] is None
@@ -269,6 +274,8 @@ def test_cli_retry_command_invokes_retry(tmp_path, monkeypatch):
             "bundle",
             "--summary-template",
             "会议纪要",
+            "--with-frames",
+            "--with-diagrams",
         ],
     )
 
@@ -277,6 +284,8 @@ def test_cli_retry_command_invokes_retry(tmp_path, monkeypatch):
     assert calls[0][0] == run_dir
     assert calls[0][1]["from_stage"] == "bundle"
     assert calls[0][1]["summary_template"] == "会议纪要"
+    assert calls[0][1]["with_frames"] is True
+    assert calls[0][1]["with_diagrams"] is True
 
 
 def test_retry_invalid_format_fails_before_summarization_side_effects(

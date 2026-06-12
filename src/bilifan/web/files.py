@@ -14,6 +14,7 @@ OUTPUT_ID_PATTERN = re.compile(
 )
 RUN_ID_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}")
 CHUNK_FILE_PATTERN = re.compile(r"chunk_[0-9]+\.json")
+FRAME_FILE_PATTERN = re.compile(r"chapter_[0-9]{3}_[0-9]{6}\.jpg")
 ROOT_FILES = {
     "metadata.json",
     "transcript.json",
@@ -149,6 +150,15 @@ def list_run_files(outputs: Path, output_id: str, run_id: str) -> list[str]:
             for path in sorted(partial_dir.glob("*.json"))
             for relative_path in [f"partial_summaries/{path.name}"]
             if _is_valid_chunk_file(path.name)
+            and _safe_existing_file(run_dir, relative_path) is not None
+        )
+    frame_dir = _safe_existing_dir(run_dir, "media/frames")
+    if frame_dir is not None:
+        files.extend(
+            relative_path
+            for path in sorted(frame_dir.glob("*.jpg"))
+            for relative_path in [f"media/frames/{path.name}"]
+            if _is_valid_frame_file(path.name)
             and _safe_existing_file(run_dir, relative_path) is not None
         )
     return files
@@ -306,11 +316,20 @@ def _is_valid_chunk_file(name: str) -> bool:
     return CHUNK_FILE_PATTERN.fullmatch(name) is not None
 
 
+def _is_valid_frame_file(name: str) -> bool:
+    return FRAME_FILE_PATTERN.fullmatch(name) is not None
+
+
 def _is_allowed_run_file(path: PurePosixPath) -> bool:
     return str(path) in ROOT_FILES or str(path) in MEDIA_FILES or (
         len(path.parts) == 2
         and path.parts[0] == "partial_summaries"
         and _is_valid_chunk_file(path.parts[1])
+    ) or (
+        len(path.parts) == 3
+        and path.parts[0] == "media"
+        and path.parts[1] == "frames"
+        and _is_valid_frame_file(path.parts[2])
     )
 
 

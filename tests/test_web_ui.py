@@ -56,6 +56,8 @@ def test_render_app_html_contains_workbench_contract():
         "summary-template-select",
         "language-select",
         "force-whisper",
+        "with-diagrams",
+        "with-frames",
         "require-pdf",
         "allow-long-video",
         "start-button",
@@ -332,11 +334,15 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         elements["url-input"].value = "https://www.bilibili.com/video/BV1abcDEF12G";
         elements["language-select"].value = "en";
         elements["summary-template-select"].value = "观点提炼";
+        elements["with-diagrams"].checked = true;
+        elements["with-frames"].checked = true;
         await elements["job-form"].listeners.submit({ preventDefault() {} });
         await flush();
         const jobCall = fetchCalls.find((call) => call.path === "/api/jobs");
         assert.equal(JSON.parse(jobCall.body).language, "en");
         assert.equal(JSON.parse(jobCall.body).summary_template, "观点提炼");
+        assert.equal(JSON.parse(jobCall.body).with_diagrams, true);
+        assert.equal(JSON.parse(jobCall.body).with_frames, true);
 
         const clickTarget = {
           closest(selector) {
@@ -442,6 +448,8 @@ def test_render_app_script_exports_nabaichuan_from_history_and_batch_button():
         const resummarizeCall = fetchCalls.find((call) => call.method === "POST" && call.path.endsWith("/retry"));
         assert.equal(JSON.parse(resummarizeCall.body).from_stage, "summarization");
         assert.equal(JSON.parse(resummarizeCall.body).summary_template, "会议纪要");
+        assert.equal(JSON.parse(resummarizeCall.body).with_diagrams, false);
+        assert.equal(JSON.parse(resummarizeCall.body).with_frames, false);
 
         await elements["batch-nabaichuan-button"].listeners.click();
         await flush();
@@ -524,6 +532,8 @@ def test_render_app_script_cancels_running_job_and_retries_failed_run():
         const retryCall = fetchCalls.find((call) => call.method === "POST" && call.path.includes("/retry"));
         assert.equal(JSON.parse(retryCall.body).from_stage, "summarization");
         assert.equal(JSON.parse(retryCall.body).summary_template, "会议纪要");
+        assert.equal(JSON.parse(retryCall.body).with_diagrams, false);
+        assert.equal(JSON.parse(retryCall.body).with_frames, false);
         """,
     )
 
@@ -596,6 +606,8 @@ def test_render_app_script_retries_failed_history_item_with_its_run_key():
         assert.equal(retryCall.path, "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry");
         assert.equal(JSON.parse(retryCall.body).from_stage, "summarization");
         assert.equal(JSON.parse(retryCall.body).summary_template, "观点提炼");
+        assert.equal(JSON.parse(retryCall.body).with_diagrams, false);
+        assert.equal(JSON.parse(retryCall.body).with_frames, false);
         """,
     )
 

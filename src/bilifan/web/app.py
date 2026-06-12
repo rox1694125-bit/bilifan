@@ -38,6 +38,8 @@ WEB_DEFAULTS = {
     "force_whisper": False,
     "language": "auto",
     "summary_template": "学习笔记",
+    "with_frames": False,
+    "with_diagrams": False,
     "require_pdf": False,
     "allow_long_video": False,
 }
@@ -52,6 +54,8 @@ class JobCreatePayload(BaseModel):
     force_whisper: bool = WEB_DEFAULTS["force_whisper"]
     language: str = WEB_DEFAULTS["language"]
     summary_template: str = WEB_DEFAULTS["summary_template"]
+    with_frames: bool = WEB_DEFAULTS["with_frames"]
+    with_diagrams: bool = WEB_DEFAULTS["with_diagrams"]
     require_pdf: bool = WEB_DEFAULTS["require_pdf"]
     allow_long_video: bool = WEB_DEFAULTS["allow_long_video"]
 
@@ -62,6 +66,8 @@ class RetryCreatePayload(BaseModel):
     llm_provider: str = "codex-exec"
     llm_model: str = "gpt-5.5"
     summary_template: str = WEB_DEFAULTS["summary_template"]
+    with_frames: bool = WEB_DEFAULTS["with_frames"]
+    with_diagrams: bool = WEB_DEFAULTS["with_diagrams"]
     require_pdf: bool = WEB_DEFAULTS["require_pdf"]
 
 
@@ -141,6 +147,8 @@ def create_app(
             force_whisper=payload.force_whisper,
             language=payload.language,
             summary_template=_validated_summary_template(payload.summary_template),
+            with_frames=payload.with_frames,
+            with_diagrams=payload.with_diagrams,
             require_pdf=payload.require_pdf,
             allow_long_video=payload.allow_long_video,
             yes_i_understand=True,
@@ -210,6 +218,8 @@ def create_app(
                     llm_provider=payload.llm_provider,
                     llm_model=payload.llm_model,
                     summary_template=summary_template,
+                    with_frames=payload.with_frames,
+                    with_diagrams=payload.with_diagrams,
                     require_pdf=payload.require_pdf,
                 )
             except RetryError as exc:

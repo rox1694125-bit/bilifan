@@ -398,6 +398,8 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
             "gpt-5.5",
             "--summary-template",
             "教程步骤",
+            "--with-frames",
+            "--with-diagrams",
             "--require-pdf",
             "--allow-long-video",
             "--yes-i-understand",

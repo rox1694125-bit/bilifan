@@ -69,6 +69,8 @@ def summarize(
     llm_provider: str = typer.Option("codex-exec", "--llm-provider"),
     llm_model: str = typer.Option("gpt-5.5", "--llm-model"),
     summary_template: str = typer.Option("学习笔记", "--summary-template", "--style"),
+    with_frames: bool = typer.Option(False, "--with-frames"),
+    with_diagrams: bool = typer.Option(False, "--with-diagrams"),
     require_pdf: bool = typer.Option(False, "--require-pdf"),
     allow_long_video: bool = typer.Option(False, "--allow-long-video"),
     yes_i_understand: bool = typer.Option(False, "--yes-i-understand"),
@@ -104,6 +106,8 @@ def summarize(
                 llm_provider=llm_provider,
                 llm_model=llm_model,
                 summary_template=summary_template,
+                with_frames=with_frames,
+                with_diagrams=with_diagrams,
                 require_pdf=require_pdf,
                 allow_long_video=allow_long_video,
                 yes_i_understand=yes_i_understand,
@@ -143,6 +147,8 @@ def retry(
     llm_provider: str = typer.Option("codex-exec", "--llm-provider"),
     llm_model: str = typer.Option("gpt-5.5", "--llm-model"),
     summary_template: str = typer.Option("学习笔记", "--summary-template", "--style"),
+    with_frames: bool = typer.Option(False, "--with-frames"),
+    with_diagrams: bool = typer.Option(False, "--with-diagrams"),
     require_pdf: bool = typer.Option(False, "--require-pdf"),
 ) -> None:
     """Retry summarization, render, or bundle stages for an existing run directory."""
@@ -156,6 +162,8 @@ def retry(
             llm_provider=llm_provider,
             llm_model=llm_model,
             summary_template=summary_template,
+            with_frames=with_frames,
+            with_diagrams=with_diagrams,
             require_pdf=require_pdf,
         )
     except RetryError as exc:

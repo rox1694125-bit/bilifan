@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, select_autoescape
+from markupsafe import Markup
 
 from .bilibili import BilibiliPartRef
 from .diagnostics import redact_text
@@ -188,6 +189,8 @@ def _chapters_view(chapters: dict[str, Any]) -> list[dict[str, Any]]:
                 "quotes": _string_list(raw_chapter.get("quotes")),
                 "visual_anchors": _string_list(raw_chapter.get("visual_anchors")),
                 "evidence": _evidence_view(raw_chapter.get("evidence")),
+                "diagram": _diagram_view(raw_chapter.get("diagram")),
+                "frame": _frame_view(raw_chapter.get("frame")),
             }
         )
     return view
@@ -211,6 +214,34 @@ def _evidence_view(value: Any) -> list[dict[str, Any]]:
             }
         )
     return evidence
+
+
+def _diagram_view(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    svg = _first_text(value.get("svg"))
+    if not svg.startswith("<svg") or "<script" in svg.lower():
+        return None
+    return {
+        "type": _first_text(value.get("type")),
+        "caption": _first_text(value.get("caption")),
+        "svg": Markup(svg),
+    }
+
+
+def _frame_view(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    path = _first_text(value.get("path"))
+    if not path or path.startswith("/") or ".." in Path(path).parts:
+        return None
+    timestamp = _float_value(value.get("timestamp")) or 0
+    return {
+        "path": path,
+        "timestamp_label": _format_time(timestamp),
+        "timestamp_url": _first_text(value.get("timestamp_url")),
+        "caption": _first_text(value.get("caption")) or f"视频时间戳：{_format_time(timestamp)}",
+    }
 
 
 def _template():
@@ -280,6 +311,17 @@ def _template():
     }
     .evidence a { color: var(--accent); font-weight: 700; text-decoration: none; }
     .evidence span { color: var(--muted); }
+    .diagram {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      padding: 12px;
+      overflow-x: auto;
+    }
+    .diagram svg { max-width: 100%; height: auto; display: block; }
+    figure.frame { margin: 18px 0 0; }
+    figure.frame img { width: 100%; border: 1px solid var(--line); display: block; }
+    figcaption { color: var(--muted); font-size: 13px; margin-top: 6px; }
     footer { border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; padding-top: 18px; }
     @media (max-width: 720px) {
       main { padding: 24px 16px 42px; }
@@ -357,11 +399,25 @@ def _template():
       {% endfor %}
     </ul>
     {% endif %}
+    {% if chapter.diagram %}
+    <h3>图解</h3>
+    <figure class="diagram">
+      {{ chapter.diagram.svg }}
+      {% if chapter.diagram.caption %}<figcaption>{{ chapter.diagram.caption }}</figcaption>{% endif %}
+    </figure>
+    {% endif %}
+    {% if chapter.frame %}
+    <h3>真实截图</h3>
+    <figure class="frame">
+      <a href="{{ chapter.frame.timestamp_url }}"><img src="{{ chapter.frame.path }}" alt="{{ chapter.frame.caption }}"></a>
+      <figcaption>{{ chapter.frame.caption }}</figcaption>
+    </figure>
+    {% endif %}
   </section>
   {% endfor %}
 
   <footer>
-    <p>本文件可离线打开；时间戳链接会跳回 B 站网页。第一阶段 MVP 不包含 SVG 图解和视频截图。</p>
+    <p>本文件可离线打开；时间戳链接会跳回原视频网页。图解来自章节内容；真实截图仅在可抽帧时生成。</p>
   </footer>
 </main>
 </body>

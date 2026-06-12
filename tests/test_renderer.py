@@ -70,6 +70,17 @@ def _chapters():
                         "text_preview": "转写",
                     }
                 ],
+                "diagram": {
+                    "type": "flow",
+                    "caption": "图解：开场",
+                    "svg": '<svg xmlns="http://www.w3.org/2000/svg"><text>要点一</text></svg>',
+                },
+                "frame": {
+                    "path": "media/frames/chapter_001_000030.jpg",
+                    "timestamp": 30,
+                    "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?p=2&t=30",
+                    "caption": "视频时间戳：0:30",
+                },
             }
         ],
     }
@@ -92,7 +103,11 @@ def test_render_report_html_writes_offline_html_with_timestamp_links(tmp_path):
     assert "总结校验：passed" in html
     assert "证据锚点" in html
     assert "0:00-2:00" in html
-    assert "第一阶段 MVP 不包含 SVG 图解和视频截图" in html
+    assert "图解：开场" in html
+    assert "<svg" in html
+    assert 'src="media/frames/chapter_001_000030.jpg"' in html
+    assert "视频时间戳：0:30" in html
+    assert "图解来自章节内容；真实截图仅在可抽帧时生成" in html
 
 
 def test_export_report_pdf_invokes_chrome_headless(tmp_path):

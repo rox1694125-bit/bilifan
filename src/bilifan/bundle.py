@@ -163,6 +163,8 @@ def _chapter_items(chapters: dict[str, Any]) -> list[dict[str, Any]]:
                     "quotes": _text_list(raw_chapter.get("quotes")),
                     "visual_anchors": _text_list(raw_chapter.get("visual_anchors")),
                     "evidence": _evidence_items(raw_chapter.get("evidence")),
+                    "diagram": _diagram_item(raw_chapter.get("diagram")),
+                    "frame": _frame_item(raw_chapter.get("frame")),
                 }
             )
     return chapter_items
@@ -205,6 +207,33 @@ def _evidence_items(value: object) -> list[dict[str, Any]]:
             }
         )
     return evidence
+
+
+def _diagram_item(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    svg = _nullable_text(value.get("svg"))
+    if not svg:
+        return None
+    return {
+        "type": _nullable_text(value.get("type")),
+        "caption": _nullable_text(value.get("caption")),
+        "svg": svg,
+    }
+
+
+def _frame_item(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    path = _nullable_text(value.get("path"))
+    if not path:
+        return None
+    return {
+        "path": path,
+        "timestamp": _float_or_none(value.get("timestamp")),
+        "timestamp_url": _nullable_text(value.get("timestamp_url")),
+        "caption": _nullable_text(value.get("caption")),
+    }
 
 
 def _segment_items(transcript: dict[str, Any]) -> list[dict[str, Any]]:
