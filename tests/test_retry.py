@@ -300,6 +300,30 @@ def test_retry_render_html_only_does_not_expose_stale_pdf(tmp_path, monkeypatch)
     assert "report_pdf" not in bundle["artifacts"]
 
 
+def test_retry_nabaichuan_failure_keeps_bundle_artifacts_truthful(tmp_path, monkeypatch):
+    run_dir = _run_dir(tmp_path)
+    _write_json(run_dir / "chapters.json", _chapters())
+
+    def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
+        html_path = run_dir / "report.html"
+        html_path.write_text("<html>retry</html>", encoding="utf-8")
+        return html_path
+
+    def fake_write_nabaichuan_jsonl(run_dir):
+        raise retry_module.ExportError("jsonl failed")
+
+    monkeypatch.setattr(retry_module, "render_report_html", fake_render_report_html)
+    monkeypatch.setattr(retry_module, "write_nabaichuan_jsonl", fake_write_nabaichuan_jsonl)
+
+    with pytest.raises(RetryError, match="jsonl failed"):
+        retry_run(run_dir, from_stage="render", output_format="html")
+
+    bundle = json.loads((run_dir / "content_bundle.json").read_text(encoding="utf-8"))
+    assert "content_bundle.json" in bundle["artifacts"]["all"]
+    assert "nabaichuan.jsonl" not in bundle["artifacts"]["all"]
+    assert not (run_dir / "nabaichuan.jsonl").exists()
+
+
 def test_retry_require_pdf_failure_writes_failed_diagnostics(tmp_path, monkeypatch):
     run_dir = _run_dir(tmp_path)
     _write_json(run_dir / "chapters.json", _chapters())

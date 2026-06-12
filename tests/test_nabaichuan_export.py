@@ -102,6 +102,41 @@ def test_nabaichuan_transcript_records_split_long_segments_into_30_to_90_second_
     )
 
 
+def test_nabaichuan_expands_short_transcript_windows_when_source_is_long():
+    bundle = _bundle()
+    bundle["source"]["duration_seconds"] = 120
+    bundle["transcript"]["segments"] = [
+        {"start": 0, "end": 1, "text": "异常短字幕"},
+    ]
+
+    records = build_nabaichuan_records(bundle)
+    transcript_records = [
+        record for record in records if record["type"] == "transcript_segment"
+    ]
+
+    assert len(transcript_records) == 1
+    assert transcript_records[0]["start"] == 0
+    assert transcript_records[0]["end"] == 30
+    assert transcript_records[0]["text"] == "异常短字幕"
+
+
+def test_nabaichuan_allows_short_windows_for_truly_short_sources():
+    bundle = _bundle()
+    bundle["source"]["duration_seconds"] = 12
+    bundle["transcript"]["segments"] = [
+        {"start": 0, "end": 8, "text": "短视频"},
+    ]
+
+    records = build_nabaichuan_records(bundle)
+    transcript_records = [
+        record for record in records if record["type"] == "transcript_segment"
+    ]
+
+    assert len(transcript_records) == 1
+    assert transcript_records[0]["start"] == 0
+    assert transcript_records[0]["end"] == 8
+
+
 def test_nabaichuan_content_hash_changes_only_when_content_changes():
     original = build_nabaichuan_records(_bundle())
     same = build_nabaichuan_records(_bundle())

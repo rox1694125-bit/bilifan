@@ -355,6 +355,8 @@ def _sanitize_nabaichuan_record(value: Any, *, key: str = "") -> Any:
 
 
 def _merged_transcript_segments(bundle: dict[str, Any]) -> list[dict[str, Any]]:
+    source = bundle.get("source") if isinstance(bundle.get("source"), dict) else {}
+    source_duration = _float_value(source.get("duration_seconds"))
     transcript = bundle.get("transcript") if isinstance(bundle.get("transcript"), dict) else {}
     raw_segments = transcript.get("segments") if isinstance(transcript.get("segments"), list) else []
     segments: list[dict[str, Any]] = []
@@ -379,6 +381,18 @@ def _merged_transcript_segments(bundle: dict[str, Any]) -> list[dict[str, Any]]:
 
     transcript_start = min(segment["start"] for segment in segments)
     transcript_end = max(segment["end"] for segment in segments)
+    if (
+        source_duration is not None
+        and source_duration >= NABAICHUAN_MIN_SEGMENT_SECONDS
+        and transcript_end - transcript_start < NABAICHUAN_MIN_SEGMENT_SECONDS
+    ):
+        expanded_end = transcript_start + NABAICHUAN_MIN_SEGMENT_SECONDS
+        expanded_start = transcript_start
+        if expanded_end > source_duration:
+            expanded_end = source_duration
+            expanded_start = max(0.0, expanded_end - NABAICHUAN_MIN_SEGMENT_SECONDS)
+        transcript_start = min(transcript_start, expanded_start)
+        transcript_end = max(transcript_end, expanded_end)
     total_duration = max(0.0, transcript_end - transcript_start)
     if total_duration <= NABAICHUAN_MAX_SEGMENT_SECONDS:
         return [

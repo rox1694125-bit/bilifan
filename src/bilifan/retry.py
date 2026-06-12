@@ -237,7 +237,7 @@ def _render_and_bundle(
             metadata=metadata,
             transcript=transcript,
             chapters=chapters,
-            artifact_paths=[*artifact_paths, NABAICHUAN_JSONL],
+            artifact_paths=artifact_paths,
             platform=ref.platform,
             source_id=ref.source_id,
             part_id=ref.part_id,
@@ -271,6 +271,18 @@ def _render_and_bundle(
         )
         raise RetryError(str(exc)) from exc
     artifact_paths = _append_unique(artifact_paths, nabaichuan_artifact)
+    write_content_bundle(
+        run_dir=run_dir,
+        metadata=metadata,
+        transcript=transcript,
+        chapters=chapters,
+        artifact_paths=artifact_paths,
+        platform=ref.platform,
+        source_id=ref.source_id,
+        part_id=ref.part_id,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+    )
     _write_success_diagnostics(
         run_dir,
         stage="render",
@@ -306,7 +318,7 @@ def _bundle_only(
             metadata=metadata,
             transcript=transcript,
             chapters=chapters,
-            artifact_paths=[*artifact_paths, NABAICHUAN_JSONL],
+            artifact_paths=artifact_paths,
             platform=ref.platform,
             source_id=ref.source_id,
             part_id=ref.part_id,
@@ -341,6 +353,18 @@ def _bundle_only(
         )
         raise RetryError(str(exc)) from exc
     artifact_paths = _append_unique(artifact_paths, nabaichuan_artifact)
+    write_content_bundle(
+        run_dir=run_dir,
+        metadata=metadata,
+        transcript=transcript,
+        chapters=chapters,
+        artifact_paths=artifact_paths,
+        platform=ref.platform,
+        source_id=ref.source_id,
+        part_id=ref.part_id,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+    )
     _write_success_diagnostics(
         run_dir,
         stage="bundle",

@@ -562,7 +562,7 @@ def run_summarize_pipeline(
         metadata=metadata,
         transcript=transcript,
         chapters=chapters,
-        artifact_paths=[*render_artifacts, NABAICHUAN_JSONL],
+        artifact_paths=render_artifacts,
         platform=adapter.platform,
         source_id=source_ref.source_id,
         part_id=source_ref.part_id,
@@ -597,6 +597,18 @@ def run_summarize_pipeline(
             warnings=[*render_warnings, "nabaichuan_export_failed"],
         ) from exc
     render_artifacts.append(nabaichuan_artifact)
+    write_content_bundle(
+        run_dir=run.run_dir,
+        metadata=metadata,
+        transcript=transcript,
+        chapters=chapters,
+        artifact_paths=render_artifacts,
+        platform=adapter.platform,
+        source_id=source_ref.source_id,
+        part_id=source_ref.part_id,
+        llm_provider=request.llm_provider,
+        llm_model=request.llm_model,
+    )
 
     write_diagnostics(
         run.run_dir / "diagnostics.json",
