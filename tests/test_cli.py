@@ -328,7 +328,7 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     assert diagnostics["artifact_paths"] == [
         "diagnostics.json",
         "metadata.json",
-        ".bilifan/cache/BV1abcDEF12G_p2.mp3",
+        "media/audio.mp3",
         "transcript.json",
         "transcript.txt",
         "transcript.srt",
@@ -360,8 +360,10 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     assert (run_dir / "notes.md").is_file()
     assert (run_dir / "report.html").is_file()
     assert (run_dir / "report.pdf").is_file()
+    assert (run_dir / "media" / "audio.mp3").is_file()
     bundle = json.loads((run_dir / "content_bundle.json").read_text(encoding="utf-8"))
     assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p2"
+    assert bundle["artifacts"]["audio_mp3"] == "media/audio.mp3"
     assert bundle["provenance"]["llm_provider"] == "codex-exec"
     assert bundle["provenance"]["llm_model"] == "gpt-5.5"
     assert (config_home / "config.json").exists()

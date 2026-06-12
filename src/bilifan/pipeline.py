@@ -13,7 +13,7 @@ from .bundle import write_content_bundle
 from .chunking import ChunkingError, LongVideoConfirmationRequired, build_chunks
 from .diagnostics import Diagnostics, redact_text, write_diagnostics
 from .exports import ExportError, write_notes_markdown, write_transcript_exports
-from .media import MediaDownloadError, download_current_part_audio
+from .media import MediaDownloadError, download_current_part_audio, publish_audio_artifact
 from .metadata import MetadataIngestError, fetch_current_part_metadata
 from .renderer import PdfExportError, export_report_pdf, render_report_html
 from .runs import RunPaths, create_error_run, create_run
@@ -541,6 +541,15 @@ def run_summarize_pipeline(
 
     if transcript["transcript_check"]["status"] == "transcript_incomplete":
         render_warnings.append("transcript_incomplete")
+
+    try:
+        audio_artifact_path = publish_audio_artifact(run.run_dir, media)
+        render_artifacts = [
+            audio_artifact_path if path == media["audio_path"] else path
+            for path in render_artifacts
+        ]
+    except MediaDownloadError:
+        render_warnings.append("audio_publish_failed")
 
     bundle_path = write_content_bundle(
         run_dir=run.run_dir,

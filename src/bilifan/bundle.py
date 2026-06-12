@@ -122,6 +122,7 @@ def _artifact_map(artifact_paths: list[str]) -> dict[str, Any]:
         "notes.md": "notes_markdown",
         "transcript.txt": "transcript_text",
         "transcript.srt": "transcript_srt",
+        "media/audio.mp3": "audio_mp3",
         "metadata.json": "metadata_json",
         "transcript.json": "transcript_json",
         "chunks.json": "chunks_json",

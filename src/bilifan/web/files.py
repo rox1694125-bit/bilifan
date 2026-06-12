@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .jobs import explain_failure, retry_actions_for
+
 OUTPUT_ID_PATTERN = re.compile(
     r"(?:(?:BV[0-9A-Za-z]{10}|YT[0-9A-Za-z_-]{6,128})_p[1-9][0-9]*|_errors)"
 )
@@ -25,6 +27,7 @@ ROOT_FILES = {
     "transcript.srt",
     "notes.md",
 }
+MEDIA_FILES = {"media/audio.mp3"}
 
 
 def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
@@ -61,6 +64,9 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
         )
         metadata = _read_json_object(_safe_existing_file(run_dir, "metadata.json"))
         status = "failed" if diagnostics.get("error_type") else "succeeded"
+        stage = _text(diagnostics.get("stage"))
+        artifact_paths = _text_list(diagnostics.get("artifact_paths"))
+        warnings = _text_list(diagnostics.get("warnings"))
         items.append(
             {
                 "run_key": f"{output_id}/runs/{run_id}",
@@ -68,9 +74,23 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
                 "run_id": run_id,
                 "title": _text(metadata.get("title")) or output_id,
                 "status": status,
-                "stage": _text(diagnostics.get("stage")),
+                "stage": stage,
                 "generated_at": _text(latest.get("generated_at")),
                 "artifacts": _artifact_links(f"{output_id}/runs/{run_id}", run_dir),
+                "friendly_error": (
+                    explain_failure(
+                        stage=stage,
+                        message=_text(diagnostics.get("sanitized_message")),
+                        warnings=warnings,
+                    )
+                    if status == "failed"
+                    else None
+                ),
+                "retry_actions": (
+                    retry_actions_for(stage, artifact_paths)
+                    if status == "failed"
+                    else []
+                ),
             }
         )
     return sorted(items, key=lambda item: item["generated_at"], reverse=True)
@@ -85,6 +105,11 @@ def list_run_files(outputs: Path, output_id: str, run_id: str) -> list[str]:
         for name in sorted(ROOT_FILES)
         if _safe_existing_file(run_dir, name) is not None
     ]
+    files.extend(
+        name
+        for name in sorted(MEDIA_FILES)
+        if _safe_existing_file(run_dir, name) is not None
+    )
     partial_dir = _safe_existing_dir(run_dir, "partial_summaries")
     if partial_dir is not None:
         files.extend(
@@ -118,7 +143,7 @@ def resolve_run_file(outputs: Path, output_id: str, run_id: str, file_path: str)
 
 
 def open_run_folder(outputs: Path, output_id: str, run_id: str) -> None:
-    run_dir = _run_dir(outputs, output_id, run_id)
+    run_dir = resolve_run_dir(outputs, output_id, run_id)
     if not run_dir.is_dir():
         raise FileNotFoundError(f"{output_id}/runs/{run_id}")
     if platform.system() != "Darwin":
@@ -135,6 +160,10 @@ def open_run_folder(outputs: Path, output_id: str, run_id: str) -> None:
         raise RuntimeError("macOS open command failed.") from exc
     if result.returncode != 0:
         raise RuntimeError("macOS open command failed.")
+
+
+def resolve_run_dir(outputs: Path, output_id: str, run_id: str) -> Path:
+    return _run_dir(outputs, output_id, run_id)
 
 
 def _run_dir(outputs: Path, output_id: str, run_id: str) -> Path:
@@ -185,6 +214,8 @@ def _artifact_links(run_key: str, run_dir: Path) -> dict[str, str]:
         artifacts["md"] = f"{prefix}/notes.md"
     if _safe_existing_file(run_dir, "content_bundle.json") is not None:
         artifacts["bundle"] = f"{prefix}/content_bundle.json"
+    if _safe_existing_file(run_dir, "media/audio.mp3") is not None:
+        artifacts["audio"] = f"{prefix}/media/audio.mp3"
     artifacts["folder"] = f"/api/runs/{run_key}/open-folder"
     return artifacts
 
@@ -193,12 +224,18 @@ def _text(value: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _text_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
 def _is_valid_chunk_file(name: str) -> bool:
     return CHUNK_FILE_PATTERN.fullmatch(name) is not None
 
 
 def _is_allowed_run_file(path: PurePosixPath) -> bool:
-    return str(path) in ROOT_FILES or (
+    return str(path) in ROOT_FILES or str(path) in MEDIA_FILES or (
         len(path.parts) == 2
         and path.parts[0] == "partial_summaries"
         and _is_valid_chunk_file(path.parts[1])

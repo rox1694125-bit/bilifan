@@ -177,6 +177,11 @@ def render_app_html(token: str = "") -> str:
               color: #fff;
             }
             button.primary:hover { background: var(--accent-strong); }
+            button.danger {
+              border-color: #c77f7f;
+              color: var(--danger);
+              background: #fff8f8;
+            }
             button:disabled {
               cursor: not-allowed;
               opacity: 0.55;
@@ -381,7 +386,10 @@ def render_app_html(token: str = "") -> str:
 
                       <div class="actions">
                         <div id="job-message" class="status-line">等待输入。</div>
-                        <button id="start-button" class="primary" type="submit">开始</button>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                          <button id="cancel-button" class="danger" type="button">取消</button>
+                          <button id="start-button" class="primary" type="submit">开始</button>
+                        </div>
                       </div>
                     </form>
                   </div>
@@ -411,6 +419,7 @@ def render_app_html(token: str = "") -> str:
               authExpired: false,
               consentAccepted: false,
               currentStatus: "idle",
+              currentRunKey: "",
               pollingTimer: null,
             };
 
@@ -424,6 +433,7 @@ def render_app_html(token: str = "") -> str:
               requirePdf: document.getElementById("require-pdf"),
               allowLongVideo: document.getElementById("allow-long-video"),
               startButton: document.getElementById("start-button"),
+              cancelButton: document.getElementById("cancel-button"),
               jobMessage: document.getElementById("job-message"),
               consentBanner: document.getElementById("consent-banner"),
               consentButton: document.getElementById("consent-button"),
@@ -492,7 +502,8 @@ def render_app_html(token: str = "") -> str:
             }
 
             function updateStartButton() {
-              elements.startButton.disabled = state.authExpired || !state.consentAccepted || state.currentStatus === "running";
+              elements.startButton.disabled = state.authExpired || !state.consentAccepted || ["running", "canceling"].includes(state.currentStatus);
+              elements.cancelButton.disabled = state.authExpired || state.currentStatus !== "running";
             }
 
             function renderStageList(progress, activeStage, jobStatus) {
@@ -523,6 +534,7 @@ def render_app_html(token: str = "") -> str:
                 if (artifacts.srt) links.push(linkItem("SRT", artifacts.srt));
                 if (artifacts.md) links.push(linkItem("MD", artifacts.md));
                 if (artifacts.bundle) links.push(linkItem("Bundle", artifacts.bundle));
+                if (artifacts.audio) links.push(linkItem("audio", artifacts.audio));
                 if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
                 if (artifacts.folder) links.push(folderButton("打开本地文件夹", artifacts.folder));
               }
@@ -544,7 +556,7 @@ def render_app_html(token: str = "") -> str:
               return `<button class="link-button" type="button" data-folder-url="${escapeAttr(url)}">${escapeHtml(label)}</button>`;
             }
 
-            function renderFailure(stage, message, diagnostics, runKey) {
+            function renderFailure(stage, message, diagnostics, runKey, friendlyError, retryActions) {
               const links = [];
               if (diagnostics) {
                 links.push(`<a href="${escapeAttr(withToken(diagnostics))}" target="_blank" rel="noopener noreferrer">diagnostics</a>`);
@@ -553,11 +565,20 @@ def render_app_html(token: str = "") -> str:
                 links.push(`<a href="${escapeAttr(runFilesUrl(runKey))}" target="_blank" rel="noopener noreferrer">file list</a>`);
               }
               const linkMarkup = links.length ? `<div class="history-links">${links.join("")}</div>` : "";
+              const friendly = friendlyError && typeof friendlyError === "object" ? friendlyError : null;
+              const title = friendly && friendly.title ? friendly.title : "任务失败";
+              const cause = friendly && friendly.cause ? friendly.cause : (message || "Unknown error.");
+              const nextAction = friendly && friendly.next_action ? `<div>${escapeHtml(friendly.next_action)}</div>` : "";
+              const retryButtons = Array.isArray(retryActions) && retryActions.length && runKey
+                ? `<div class="history-links">${retryActions.map((retryStage) => `<button class="link-button" type="button" data-retry-stage="${escapeAttr(retryStage)}" data-retry-run-key="${escapeAttr(runKey)}">${escapeHtml(retryLabel(retryStage))}</button>`).join("")}</div>`
+                : "";
               elements.failurePanel.innerHTML = `
                 <div class="stack" style="gap:6px;">
-                  <h2>任务失败</h2>
+                  <h2>${escapeHtml(title)}</h2>
                   <div>stage: ${escapeHtml(stage || "preflight")}</div>
-                  <div>${escapeHtml(message || "Unknown error.")}</div>
+                  <div>${escapeHtml(cause)}</div>
+                  ${nextAction}
+                  ${retryButtons}
                   ${linkMarkup}
                 </div>
               `;
@@ -583,9 +604,18 @@ def render_app_html(token: str = "") -> str:
                 if (artifacts.srt) links.push(linkItem("SRT", artifacts.srt));
                 if (artifacts.md) links.push(linkItem("MD", artifacts.md));
                 if (artifacts.bundle) links.push(linkItem("Bundle", artifacts.bundle));
+                if (artifacts.audio) links.push(linkItem("audio", artifacts.audio));
                 if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
                 if (artifacts.folder) links.push(folderButton("打开本地文件夹", artifacts.folder));
                 if (item.run_key) links.push(linkItem("file list", `/api/runs/${item.run_key}/files`));
+                const friendly = item.friendly_error && typeof item.friendly_error === "object" ? item.friendly_error : null;
+                const retryActions = Array.isArray(item.retry_actions) ? item.retry_actions : [];
+                const retryButtons = retryActions.length && item.run_key
+                  ? retryActions.map((retryStage) => `<button class="link-button" type="button" data-retry-stage="${escapeAttr(retryStage)}" data-retry-run-key="${escapeAttr(item.run_key)}">${escapeHtml(retryLabel(retryStage))}</button>`).join("")
+                  : "";
+                const failureDetail = friendly
+                  ? `<div class="history-meta"><span>${escapeHtml(friendly.title || "任务失败")}</span><span>${escapeHtml(friendly.cause || "")}</span><span>${escapeHtml(friendly.next_action || "")}</span></div>`
+                  : "";
                 return `
                   <li class="history-item">
                     <div class="history-item-title">${escapeHtml(item.title || item.output_id || "-")}</div>
@@ -594,7 +624,8 @@ def render_app_html(token: str = "") -> str:
                       <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(item.status || "-")}</span>
                       <span>stage: ${escapeHtml(item.stage || "-")}</span>
                     </div>
-                    <div class="history-links">${links.join("")}</div>
+                    ${failureDetail}
+                    <div class="history-links">${links.join("")}${retryButtons}</div>
                   </li>
                 `;
               }).join("");
@@ -611,6 +642,13 @@ def render_app_html(token: str = "") -> str:
 
             function escapeAttr(value) {
               return escapeHtml(value);
+            }
+
+            function retryLabel(stage) {
+              if (stage === "summarization") return "重试总结";
+              if (stage === "render") return "重试渲染";
+              if (stage === "bundle") return "重试 Bundle";
+              return `重试 ${stage}`;
             }
 
             async function loadConfig() {
@@ -643,16 +681,21 @@ def render_app_html(token: str = "") -> str:
               try {
                 const data = await apiFetch("/api/jobs/current");
                 state.currentStatus = typeof data.status === "string" ? data.status : "idle";
+                state.currentRunKey = typeof data.run_key === "string" ? data.run_key : "";
                 updateStartButton();
                 renderStageList(data.progress, data.stage, data.status);
                 renderLinks(data.artifacts, data.run_key);
                 if (data.status === "failed") {
-                  renderFailure(data.stage, data.message, data.artifacts && data.artifacts.diagnostics, data.run_key);
+                  renderFailure(data.stage, data.message, data.artifacts && data.artifacts.diagnostics, data.run_key, data.friendly_error, data.retry_actions);
                   setJobMessage(data.message || "任务失败。", true);
                 } else {
                   clearFailure();
                   if (data.status === "running") {
                     setJobMessage(data.message || `运行中: ${data.stage || "preflight"}`);
+                  } else if (data.status === "canceling") {
+                    setJobMessage(data.message || "正在取消任务。");
+                  } else if (data.status === "canceled") {
+                    setJobMessage(data.message || "任务已取消。");
                   } else if (data.status === "succeeded") {
                     setJobMessage(data.message || "Report ready.");
                     loadHistory();
@@ -730,6 +773,49 @@ def render_app_html(token: str = "") -> str:
               }
             }
 
+            async function cancelJob() {
+              if (state.authExpired) {
+                markAuthExpired();
+                return;
+              }
+              try {
+                const data = await apiFetch("/api/jobs/current/cancel", { method: "POST" });
+                state.currentStatus = typeof data.status === "string" ? data.status : "canceling";
+                updateStartButton();
+                setJobMessage("正在取消任务。");
+                await loadCurrentJob();
+              } catch (error) {
+                setJobMessage(error.message || "取消失败。", true);
+              }
+            }
+
+            async function retryAction(stage, runKey) {
+              if (state.authExpired) {
+                markAuthExpired();
+                return;
+              }
+              if (!stage) return;
+              const targetRunKey = runKey || state.currentRunKey;
+              if (!targetRunKey) {
+                setJobMessage("没有可重试的 run。", true);
+                return;
+              }
+              const data = await apiFetch(`/api/runs/${targetRunKey}/retry`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  from_stage: stage,
+                  format: elements.formatSelect.value,
+                  require_pdf: elements.requirePdf.checked,
+                }),
+              });
+              state.currentStatus = typeof data.status === "string" ? data.status : "running";
+              updateStartButton();
+              clearFailure();
+              setJobMessage(`${retryLabel(stage)}已提交。`);
+              await loadCurrentJob();
+            }
+
             function init() {
               renderStageList([], "preflight", "idle");
               renderLinks({}, "");
@@ -738,7 +824,20 @@ def render_app_html(token: str = "") -> str:
               loadCurrentJob();
               elements.consentButton.addEventListener("click", acceptConsent);
               elements.jobForm.addEventListener("submit", startJob);
+              elements.cancelButton.addEventListener("click", cancelJob);
               document.addEventListener("click", (event) => {
+                const retryTarget = event.target && event.target.closest
+                  ? event.target.closest("[data-retry-stage]")
+                  : null;
+                if (retryTarget) {
+                  retryAction(
+                    retryTarget.getAttribute("data-retry-stage"),
+                    retryTarget.getAttribute("data-retry-run-key"),
+                  ).catch((error) => {
+                    setJobMessage(error.message || "重试失败。", true);
+                  });
+                  return;
+                }
                 const target = event.target && event.target.closest
                   ? event.target.closest("[data-folder-url]")
                   : null;

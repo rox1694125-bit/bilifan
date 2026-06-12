@@ -61,6 +61,7 @@ def test_render_app_html_contains_workbench_contract():
         "stage-list",
         "result-links",
         "failure-panel",
+        "cancel-button",
         "preflight",
         "metadata",
         "audio",
@@ -80,8 +81,10 @@ def test_render_app_html_contains_workbench_contract():
         "SRT",
         "MD",
         "Bundle",
+        "audio",
         "data-folder-url",
         "openFolder",
+        "retryAction",
     ]
 
     for marker in required_strings:
@@ -136,7 +139,7 @@ def test_render_app_html_contains_frontend_state_guards():
     assert "required" in html
     assert "state.currentStatus" in html
     assert (
-        'elements.startButton.disabled = state.authExpired || !state.consentAccepted || state.currentStatus === "running"'
+        'elements.startButton.disabled = state.authExpired || !state.consentAccepted || ["running", "canceling"].includes(state.currentStatus)'
         in html
     )
     assert "markAuthExpired" in html
@@ -269,6 +272,7 @@ def test_render_app_script_submits_language_and_renders_export_actions():
                   srt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt?token=test-token",
                   md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md?token=test-token",
                   bundle: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json?token=test-token",
+                  audio: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/media/audio.mp3?token=test-token",
                   folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder?token=test-token"
                 }
               }]
@@ -285,6 +289,7 @@ def test_render_app_script_submits_language_and_renders_export_actions():
                 srt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
                 md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
                 bundle: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json",
+                audio: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/media/audio.mp3",
                 folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder"
               },
               run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000"
@@ -303,11 +308,13 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         assert(elements["history-list"].innerHTML.includes("SRT"));
         assert(elements["history-list"].innerHTML.includes("MD"));
         assert(elements["history-list"].innerHTML.includes("Bundle"));
+        assert(elements["history-list"].innerHTML.includes("audio"));
         assert(elements["history-list"].innerHTML.includes("打开本地文件夹"));
         assert(elements["result-links"].innerHTML.includes("TXT"));
         assert(elements["result-links"].innerHTML.includes("SRT"));
         assert(elements["result-links"].innerHTML.includes("MD"));
         assert(elements["result-links"].innerHTML.includes("Bundle"));
+        assert(elements["result-links"].innerHTML.includes("audio"));
 
         elements["url-input"].value = "https://www.bilibili.com/video/BV1abcDEF12G";
         elements["language-select"].value = "en";
@@ -330,6 +337,153 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         await document.listeners.click({ target: clickTarget });
         await flush();
         assert(fetchCalls.some((call) => call.method === "POST" && call.path.includes("/open-folder")));
+        """,
+    )
+
+
+def test_render_app_script_cancels_running_job_and_retries_failed_run():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        let jobPolls = 0;
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            jobPolls += 1;
+            if (jobPolls === 1) {
+              return jsonResponse({
+                status: "running",
+                stage: "audio",
+                message: "Downloading audio.",
+                progress: [{ stage: "audio", status: "running" }],
+                artifacts: {},
+                run_key: null,
+                retry_actions: []
+              });
+            }
+            return jsonResponse({
+              status: "failed",
+              stage: "summarization",
+              message: "codex missing",
+              progress: [{ stage: "summarization", status: "failed" }],
+              artifacts: { diagnostics: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json" },
+              run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
+              retry_actions: ["summarization", "bundle"],
+              friendly_error: {
+                title: "Codex CLI 未找到",
+                cause: "找不到 codex。",
+                next_action: "在 Terminal 中修复 codex。"
+              }
+            });
+          }
+          if (path === "/api/jobs/current/cancel") return jsonResponse({ status: "canceling" });
+          if (path === "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry") return jsonResponse({ status: "running" });
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert.equal(elements["cancel-button"].disabled, false);
+        await elements["cancel-button"].listeners.click();
+        await flush();
+        assert(fetchCalls.some((call) => call.method === "POST" && call.path === "/api/jobs/current/cancel"));
+
+        await loadCurrentJob();
+        await flush();
+        assert(elements["failure-panel"].innerHTML.includes("Codex CLI 未找到"));
+
+        const retryTarget = {
+          closest(selector) {
+            if (selector !== "[data-retry-stage]") return null;
+            return {
+              getAttribute(name) {
+                if (name === "data-retry-stage") return "summarization";
+                if (name === "data-retry-run-key") return "BV1abcDEF12G_p1/runs/2026-06-08_120000";
+                return "";
+              }
+            };
+          }
+        };
+        await document.listeners.click({ target: retryTarget });
+        await flush();
+        const retryCall = fetchCalls.find((call) => call.method === "POST" && call.path.includes("/retry"));
+        assert.equal(JSON.parse(retryCall.body).from_stage, "summarization");
+        """,
+    )
+
+
+def test_render_app_script_retries_failed_history_item_with_its_run_key():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
+          }
+          if (path === "/api/history") {
+            return jsonResponse({
+              items: [{
+                title: "失败历史",
+                output_id: "BV1abcDEF12G_p1",
+                run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
+                status: "failed",
+                stage: "summarization",
+                artifacts: { diagnostics: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json" },
+                retry_actions: ["summarization"],
+                friendly_error: {
+                  title: "Codex CLI 未找到",
+                  cause: "找不到 codex。",
+                  next_action: "在 Terminal 中修复 codex。"
+                }
+              }]
+            });
+          }
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null,
+              retry_actions: []
+            });
+          }
+          if (path === "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry") return jsonResponse({ status: "running" });
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["history-list"].innerHTML.includes("Codex CLI 未找到"));
+        assert(elements["history-list"].innerHTML.includes("找不到 codex。"));
+        assert(elements["history-list"].innerHTML.includes("重试总结"));
+
+        const retryTarget = {
+          closest(selector) {
+            if (selector !== "[data-retry-stage]") return null;
+            return {
+              getAttribute(name) {
+                if (name === "data-retry-stage") return "summarization";
+                if (name === "data-retry-run-key") return "BV1abcDEF12G_p1/runs/2026-06-08_120000";
+                return "";
+              }
+            };
+          }
+        };
+        await document.listeners.click({ target: retryTarget });
+        await flush();
+
+        const retryCall = fetchCalls.find((call) => call.method === "POST" && call.path.includes("/retry"));
+        assert.equal(retryCall.path, "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry");
+        assert.equal(JSON.parse(retryCall.body).from_stage, "summarization");
         """,
     )
 

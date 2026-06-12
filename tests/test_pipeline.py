@@ -286,9 +286,11 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
     assert "transcript.srt" in result.artifact_paths
     assert "notes.md" in result.artifact_paths
     assert "content_bundle.json" in result.artifact_paths
+    assert "media/audio.mp3" in result.artifact_paths
 
     for artifact_name in (
         "metadata.json",
+        "media/audio.mp3",
         "transcript.json",
         "transcript.txt",
         "transcript.srt",
@@ -303,6 +305,7 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
     bundle = json.loads((result.run_dir / "content_bundle.json").read_text(encoding="utf-8"))
     assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p1"
     assert bundle["artifacts"]["report_html"] == "report.html"
+    assert bundle["artifacts"]["audio_mp3"] == "media/audio.mp3"
     assert bundle["summary"]["chapters"][0]["title"] == "开场"
 
     assert [

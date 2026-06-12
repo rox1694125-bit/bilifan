@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -24,6 +25,7 @@ DURATION_TOLERANCE_RATIO = 0.05
 MAX_BILIBILI_API_BYTES = 10 * 1024 * 1024
 MAX_AUDIO_BYTES = 512 * 1024 * 1024
 STREAM_CHUNK_SIZE = 1024 * 1024
+VISIBLE_AUDIO_ARTIFACT = "media/audio.mp3"
 
 
 class MediaDownloadError(RuntimeError):
@@ -427,6 +429,26 @@ def convert_audio_to_mp3(
             f"ffmpeg audio conversion failed with exit code {result.returncode}: {detail}",
             source_exit_code=result.returncode,
         )
+
+
+def publish_audio_artifact(run_dir: Path, media: dict[str, Any]) -> str:
+    raw_path = media.get("audio_path")
+    if not isinstance(raw_path, str) or not raw_path:
+        raise MediaDownloadError("Cannot publish audio artifact without audio_path.")
+    if "\\" in raw_path or raw_path.startswith("/") or ".." in Path(raw_path).parts:
+        raise MediaDownloadError("Cannot publish unsafe audio artifact path.")
+
+    source_path = (run_dir / raw_path).resolve(strict=False)
+    resolved_run_dir = run_dir.resolve(strict=False)
+    if not source_path.is_relative_to(resolved_run_dir):
+        raise MediaDownloadError("Cannot publish audio artifact outside run directory.")
+    if not source_path.is_file():
+        raise MediaDownloadError("Cannot publish missing audio artifact.")
+
+    target_path = run_dir / VISIBLE_AUDIO_ARTIFACT
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, target_path)
+    return VISIBLE_AUDIO_ARTIFACT
 
 
 def _run_playurl_audio_download(

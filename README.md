@@ -80,6 +80,8 @@ outputs/
         report.html
         report.pdf
         content_bundle.json
+        media/
+          audio.mp3
 ```
 
 The command prints a relative run path such as:
@@ -91,7 +93,9 @@ Prepared Bilifan run: BV..._p2/runs/<timestamp>
 `report.html` is the success artifact. `report.pdf` is best effort unless
 `--require-pdf` is passed. Successful transcript and summarization stages may
 also write `transcript.txt`, `transcript.srt`, and `notes.md` for easier reading
-or reuse outside Bilifan.
+or reuse outside Bilifan. Successful runs also publish the final audio as
+`media/audio.mp3`; incomplete runs keep intermediate audio under the hidden
+`.bilifan/cache/` directory.
 
 ## Content Bundle
 
@@ -143,22 +147,45 @@ fixed history/output directory, generates a one-time access token, and prints a
 URL like:
 
 ```text
-http://127.0.0.1:8765/?token=<token>
+http://127.0.0.1:8765/
 ```
 
-Open that URL in your browser. Without `--no-open`, the CLI will try to open it
-automatically with your local default browser.
+Open that URL in your browser. The HTML page embeds the current local token and
+uses it for API calls; API routes remain token-protected against stale pages and
+unauthenticated API calls. This is a local workbench guard, not a security
+boundary against other processes on the same machine that can read
+`http://127.0.0.1:<port>/`. If you keep an old browser tab after restarting the
+server, that tab will stop polling once its old token is rejected. Without
+`--no-open`, the CLI will try to open the fixed entry URL automatically with your
+local default browser.
 
 Current MVP boundaries:
 
-- Web UI access is protected by the printed token in the URL.
+- Web UI API access is protected by a per-server local token embedded in the
+  served page; treat the server as local-only and do not expose it on a shared
+  network.
 - The server only supports local `127.0.0.1` binding in this MVP.
 - Web UI job outputs are always read from and written to `./outputs`.
-- The Web UI can show TXT/SRT/MD export links and can ask macOS to open a run's
-  local folder.
+- The Web UI can show HTML/PDF/TXT/SRT/MD/Bundle/audio export links and can ask
+  macOS to open a run's local folder.
+- The Web UI can cancel the current task cooperatively. If a subprocess is
+  currently downloading, transcribing, or summarizing, cancellation is applied at
+  the next safe stage boundary.
+- The Web UI can retry downstream failed runs from `summarization`, `render`, or
+  `bundle` without redownloading audio or rerunning Whisper.
 - The Web UI does not support entering cookies.
 - The CLI still supports `--cookies-file` and `--cookies-from-browser` for
   local runs.
+
+中文快速开始：
+
+```bash
+cd /path/to/bilifan
+.venv/bin/python -m bilifan serve --no-open --port 8792
+```
+
+然后打开 Terminal 打印的固定地址，例如 `http://127.0.0.1:8792/`。输出文件在
+`./outputs`，每个视频的最新成功结果会显示在左侧历史记录里。
 
 ## Runtime Requirements
 

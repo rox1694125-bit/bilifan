@@ -396,6 +396,7 @@ def _existing_artifact_paths(run_dir: Path) -> list[str]:
     for relative_path in [
         "diagnostics.json",
         "metadata.json",
+        "media/audio.mp3",
         *_cache_audio_paths(run_dir),
         "transcript.json",
         "transcript.txt",
@@ -417,6 +418,7 @@ def _base_artifact_paths(run_dir: Path) -> list[str]:
     for relative_path in [
         "diagnostics.json",
         "metadata.json",
+        "media/audio.mp3",
         *_cache_audio_paths(run_dir),
         "transcript.json",
         "transcript.txt",

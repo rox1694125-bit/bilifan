@@ -201,6 +201,36 @@ def test_list_latest_runs_does_not_read_diagnostics_symlink_escape(tmp_path):
     assert items[0]["stage"] == ""
 
 
+def test_list_latest_runs_failed_run_includes_friendly_error_and_retry_actions(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs, success=False)
+    (run_dir / "transcript.json").write_text("{}", encoding="utf-8")
+    (run_dir / "chunks.json").write_text("{}", encoding="utf-8")
+    (run_dir / "diagnostics.json").write_text(
+        json.dumps(
+            {
+                "error_type": "SummarizationError",
+                "stage": "summarization",
+                "sanitized_message": "codex exec failed to start: [Errno 2] No such file or directory: 'codex'",
+                "artifact_paths": [
+                    "diagnostics.json",
+                    "metadata.json",
+                    "transcript.json",
+                    "chunks.json",
+                ],
+                "warnings": ["summarization_failed"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    items = list_latest_runs(outputs)
+
+    assert items[0]["status"] == "failed"
+    assert items[0]["friendly_error"]["title"] == "Codex CLI 未找到"
+    assert items[0]["retry_actions"] == ["summarization"]
+
+
 def test_list_latest_runs_skips_run_dir_symlink_escape(tmp_path):
     outputs = tmp_path / "outputs"
     run_dir = _make_run(outputs)
@@ -235,6 +265,36 @@ def test_list_run_files_only_includes_whitelisted_files(tmp_path):
     assert "content_bundle.json" in files
     assert "partial_summaries/chunk_001.json" in files
     assert "secret.txt" not in files
+
+
+def test_list_and_resolve_visible_audio_artifact_without_exposing_cache(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    audio_path = run_dir / "media" / "audio.mp3"
+    audio_path.parent.mkdir()
+    audio_path.write_bytes(b"audio")
+    cache_path = run_dir / ".bilifan" / "cache" / "hidden.mp3"
+    cache_path.parent.mkdir(parents=True)
+    cache_path.write_bytes(b"hidden")
+
+    files = list_run_files(outputs, "BV1abcDEF12G_p1", "2026-06-08_120000")
+    resolved = resolve_run_file(
+        outputs,
+        "BV1abcDEF12G_p1",
+        "2026-06-08_120000",
+        "media/audio.mp3",
+    )
+
+    assert "media/audio.mp3" in files
+    assert ".bilifan/cache/hidden.mp3" not in files
+    assert resolved == audio_path
+    with pytest.raises(ValueError):
+        resolve_run_file(
+            outputs,
+            "BV1abcDEF12G_p1",
+            "2026-06-08_120000",
+            ".bilifan/cache/hidden.mp3",
+        )
 
 
 def test_list_run_files_only_includes_numeric_partial_summary_chunks(tmp_path):

@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from bilifan.pipeline import PipelineResult, PipelineRunError
+from bilifan.retry import RetryError, RetryResult
 from bilifan.web import files as web_files
 from bilifan.web.app import create_app
 from bilifan.web.jobs import JobManager
@@ -189,6 +190,7 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
                 "transcript.srt",
                 "notes.md",
                 "content_bundle.json",
+                "media/audio.mp3",
             ],
             warnings=[],
         )
@@ -230,8 +232,11 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
         "srt": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
         "md": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
         "bundle": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json",
+        "audio": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/media/audio.mp3",
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
+    assert "job_started_at" in state
+    assert "elapsed_seconds" in state
     assert all(item["status"] == "done" for item in state["progress"])
     assert calls[0].output_format == "html"
     assert calls[0].language == "en"
@@ -341,6 +346,72 @@ def test_running_job_conflict(tmp_path, monkeypatch):
     _wait_for_status(client, "succeeded")
 
 
+def test_running_job_can_be_canceled_from_web_api(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    release = threading.Event()
+    started = threading.Event()
+
+    def fake_pipeline(request, *, progress_callback):
+        progress_callback("audio", "running", "Downloading audio.")
+        started.set()
+        release.wait(timeout=5)
+        progress_callback("audio", "done", "Audio ready.")
+        return PipelineResult(
+            run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
+            run_dir=tmp_path / "outputs" / "BV1abcDEF12G_p1" / "runs" / "2026-06-08_120000",
+            diagnostics_path=tmp_path
+            / "outputs"
+            / "BV1abcDEF12G_p1"
+            / "runs"
+            / "2026-06-08_120000"
+            / "diagnostics.json",
+            artifact_paths=[],
+            warnings=[],
+        )
+
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=False,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    start_response = client.post(
+        "/api/jobs",
+        headers=_headers(),
+        json={"url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1"},
+    )
+    assert start_response.status_code == 200
+    assert started.wait(timeout=2)
+
+    cancel_response = client.post("/api/jobs/current/cancel", headers=_headers())
+    state_after_cancel = client.get("/api/jobs/current", headers=_headers()).json()
+    release.set()
+    final_state = _wait_for_status(client, "canceled")
+
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "canceling"
+    assert state_after_cancel["status"] == "canceling"
+    assert state_after_cancel["stage"] == "audio"
+    assert final_state["status"] == "canceled"
+    assert final_state["progress"][2]["status"] == "canceled"
+    assert "取消" in final_state["message"]
+
+
+def test_cancel_current_job_returns_409_when_idle(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    app = create_app(outputs=tmp_path / "outputs", token="test-token", open_browser=False)
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post("/api/jobs/current/cancel", headers=_headers())
+
+    assert response.status_code == 409
+
+
 def test_run_files_endpoint_returns_safe_file_list(tmp_path):
     outputs = tmp_path / "outputs"
     run_dir = _make_run(outputs)
@@ -366,6 +437,35 @@ def test_run_files_endpoint_returns_safe_file_list(tmp_path):
             "partial_summaries/chunk_001.json",
         ]
     }
+
+
+def test_run_files_endpoint_includes_visible_audio_artifact(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    audio_path = run_dir / "media" / "audio.mp3"
+    audio_path.parent.mkdir()
+    audio_path.write_bytes(b"audio")
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    list_response = client.get(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files",
+        headers=_headers(),
+    )
+    audio_response = client.get(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/media/audio.mp3",
+        headers=_headers(),
+    )
+    hidden_cache_response = client.get(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/.bilifan/cache/audio.mp3",
+        headers=_headers(),
+    )
+
+    assert list_response.status_code == 200
+    assert "media/audio.mp3" in list_response.json()["files"]
+    assert audio_response.status_code == 200
+    assert audio_response.content == b"audio"
+    assert hidden_cache_response.status_code == 400
 
 
 def test_run_files_endpoint_missing_run_returns_404(tmp_path):
@@ -708,6 +808,242 @@ def test_job_pipeline_run_error_exposes_diagnostics_link(tmp_path, monkeypatch):
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
     assert state["warnings"] == ["metadata_failed"]
+
+
+def test_job_pipeline_run_error_exposes_friendly_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+
+    def fake_pipeline(request, *, progress_callback):
+        progress_callback("summarization", "running", "Summarizing chunks.")
+        raise PipelineRunError(
+            "codex exec failed to start: [Errno 2] No such file or directory: 'codex'",
+            run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
+            diagnostics_path=request.out
+            / "BV1abcDEF12G_p1"
+            / "runs"
+            / "2026-06-08_120000"
+            / "diagnostics.json",
+            artifact_paths=[
+                "diagnostics.json",
+                "metadata.json",
+                "transcript.json",
+                "chunks.json",
+            ],
+            warnings=["summarization_failed"],
+        )
+
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/jobs",
+        headers=_headers(),
+        json={"url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1"},
+    )
+
+    assert response.status_code == 200
+    state = client.get("/api/jobs/current", headers=_headers()).json()
+    assert state["status"] == "failed"
+    assert state["friendly_error"]["title"] == "Codex CLI 未找到"
+    assert "codex" in state["friendly_error"]["cause"].lower()
+    assert "Terminal" in state["friendly_error"]["next_action"]
+    assert state["retry_actions"] == ["summarization"]
+
+
+def test_retry_failed_run_from_web_api(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    (run_dir / "diagnostics.json").write_text(
+        json.dumps({"error_type": "SummarizationError", "stage": "summarization"}),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_retry_runner(
+        retry_run_dir,
+        *,
+        from_stage,
+        output_format,
+        llm_provider,
+        llm_model,
+        require_pdf,
+    ):
+        calls.append(
+            {
+                "run_dir": retry_run_dir,
+                "from_stage": from_stage,
+                "output_format": output_format,
+                "llm_provider": llm_provider,
+                "llm_model": llm_model,
+                "require_pdf": require_pdf,
+            }
+        )
+        (retry_run_dir / "report.html").write_text("<html>retried</html>", encoding="utf-8")
+        return RetryResult(
+            run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
+            run_dir=retry_run_dir,
+            diagnostics_path=retry_run_dir / "diagnostics.json",
+            artifact_paths=["diagnostics.json", "report.html", "content_bundle.json"],
+            warnings=[],
+        )
+
+    app = create_app(
+        outputs=outputs,
+        token="test-token",
+        open_browser=False,
+        retry_runner=fake_retry_runner,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry",
+        headers=_headers(),
+        json={"from_stage": "summarization", "format": "html"},
+    )
+    state = client.get("/api/jobs/current", headers=_headers()).json()
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "running"
+    assert calls == [
+        {
+            "run_dir": run_dir.resolve(strict=False),
+            "from_stage": "summarization",
+            "output_format": "html",
+            "llm_provider": "codex-exec",
+            "llm_model": "gpt-5.5",
+            "require_pdf": False,
+        }
+    ]
+    assert state["status"] == "succeeded"
+    assert state["artifacts"]["html"].endswith("/report.html")
+
+
+def test_retry_requires_local_processing_consent(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    outputs = tmp_path / "outputs"
+    _make_run(outputs)
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry",
+        headers=_headers(),
+        json={"from_stage": "summarization"},
+    )
+
+    assert response.status_code == 409
+    assert "consent" in response.json()["detail"]
+
+
+def test_retry_invalid_stage_returns_400(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    outputs = tmp_path / "outputs"
+    _make_run(outputs)
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry",
+        headers=_headers(),
+        json={"from_stage": "audio"},
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"from_stage": "summarization", "format": "docx"},
+        {"from_stage": "summarization", "llm_provider": "unknown"},
+    ],
+)
+def test_retry_invalid_options_return_400(tmp_path, monkeypatch, payload):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    outputs = tmp_path / "outputs"
+    _make_run(outputs)
+    app = create_app(outputs=outputs, token="test-token", open_browser=False)
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry",
+        headers=_headers(),
+        json=payload,
+    )
+
+    assert response.status_code == 400
+
+
+def test_retry_failure_preserves_run_context_and_diagnostics_link(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    (run_dir / "transcript.json").write_text("{}", encoding="utf-8")
+    (run_dir / "chunks.json").write_text("{}", encoding="utf-8")
+
+    def fake_retry_runner(
+        retry_run_dir,
+        *,
+        from_stage,
+        output_format,
+        llm_provider,
+        llm_model,
+        require_pdf,
+    ):
+        (retry_run_dir / "diagnostics.json").write_text(
+            json.dumps(
+                {
+                    "error_type": "SummarizationError",
+                    "stage": "summarization",
+                    "sanitized_message": "codex exec failed",
+                    "artifact_paths": [
+                        "diagnostics.json",
+                        "metadata.json",
+                        "transcript.json",
+                        "chunks.json",
+                    ],
+                    "warnings": ["summarization_retry_failed"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        raise RetryError("codex exec failed")
+
+    app = create_app(
+        outputs=outputs,
+        token="test-token",
+        open_browser=False,
+        retry_runner=fake_retry_runner,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry",
+        headers=_headers(),
+        json={"from_stage": "summarization"},
+    )
+    state = client.get("/api/jobs/current", headers=_headers()).json()
+
+    assert response.status_code == 200
+    assert state["status"] == "failed"
+    assert state["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120000"
+    assert state["artifacts"]["diagnostics"].endswith("/diagnostics.json")
+    assert state["artifacts"]["folder"].endswith("/open-folder")
+    assert state["retry_actions"] == ["summarization"]
 
 
 def test_job_ignores_late_progress_from_previous_job(tmp_path):
