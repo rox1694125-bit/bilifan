@@ -429,6 +429,28 @@ def render_app_html(token: str = "") -> str:
 
                 <section class="panel">
                   <div class="panel-header">
+                    <h1>批量队列</h1>
+                    <p class="subtle">sequential local jobs</p>
+                  </div>
+                  <div class="panel-body stack">
+                    <label for="batch-urls">
+                      批量 URL
+                      <textarea id="batch-urls" rows="4" placeholder="每行一个 B 站或 YouTube URL"></textarea>
+                    </label>
+                    <div class="actions">
+                      <div id="queue-summary" class="status-line">队列空闲。</div>
+                      <div style="display:flex; gap:8px; align-items:center;">
+                        <button id="queue-pause-button" type="button">暂停队列</button>
+                        <button id="queue-resume-button" type="button">恢复队列</button>
+                        <button id="batch-submit-button" class="primary" type="button">加入队列</button>
+                      </div>
+                    </div>
+                    <ul id="queue-list" class="history-list"></ul>
+                  </div>
+                </section>
+
+                <section class="panel">
+                  <div class="panel-header">
                     <h1>进度</h1>
                     <p class="subtle">/api/jobs/current</p>
                   </div>
@@ -470,6 +492,12 @@ def render_app_html(token: str = "") -> str:
               startButton: document.getElementById("start-button"),
               cancelButton: document.getElementById("cancel-button"),
               batchNabaichuanButton: document.getElementById("batch-nabaichuan-button"),
+              batchUrls: document.getElementById("batch-urls"),
+              batchSubmitButton: document.getElementById("batch-submit-button"),
+              queuePauseButton: document.getElementById("queue-pause-button"),
+              queueResumeButton: document.getElementById("queue-resume-button"),
+              queueSummary: document.getElementById("queue-summary"),
+              queueList: document.getElementById("queue-list"),
               jobMessage: document.getElementById("job-message"),
               consentBanner: document.getElementById("consent-banner"),
               consentButton: document.getElementById("consent-button"),
@@ -541,6 +569,9 @@ def render_app_html(token: str = "") -> str:
               elements.startButton.disabled = state.authExpired || !state.consentAccepted || ["running", "canceling"].includes(state.currentStatus);
               elements.cancelButton.disabled = state.authExpired || state.currentStatus !== "running";
               elements.batchNabaichuanButton.disabled = state.authExpired || !state.consentAccepted;
+              elements.batchSubmitButton.disabled = state.authExpired || !state.consentAccepted;
+              elements.queuePauseButton.disabled = state.authExpired || !state.consentAccepted;
+              elements.queueResumeButton.disabled = state.authExpired || !state.consentAccepted;
             }
 
             function renderStageList(progress, activeStage, jobStatus) {
@@ -678,6 +709,37 @@ def render_app_html(token: str = "") -> str:
               }).join("");
             }
 
+            function renderQueue(queue) {
+              const counts = queue && queue.counts ? queue.counts : {};
+              elements.queueSummary.textContent = `queued ${counts.queued || 0} · running ${counts.running || 0} · succeeded ${counts.succeeded || 0} · failed ${counts.failed || 0} · canceled ${counts.canceled || 0}`;
+              const items = queue && Array.isArray(queue.items) ? queue.items : [];
+              if (!items.length) {
+                elements.queueList.innerHTML = '<li class="muted-panel">暂无队列任务。</li>';
+                return;
+              }
+              elements.queueList.innerHTML = items.map((item) => {
+                const artifacts = item && typeof item.artifacts === "object" ? item.artifacts : {};
+                const links = [];
+                if (artifacts.html) links.push(linkItem("HTML", artifacts.html));
+                if (artifacts.pdf) links.push(linkItem("PDF", artifacts.pdf));
+                if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
+                if (item.status === "queued") links.push(`<button class="link-button" type="button" data-queue-cancel="${escapeAttr(item.job_id || "")}">取消排队</button>`);
+                if (["failed", "canceled"].includes(item.status)) links.push(`<button class="link-button" type="button" data-queue-retry="${escapeAttr(item.job_id || "")}">重新排队</button>`);
+                const request = item.request && typeof item.request === "object" ? item.request : {};
+                return `
+                  <li class="history-item">
+                    <div class="history-item-title">${escapeHtml(request.url || item.job_id || "-")}</div>
+                    <div class="history-meta">
+                      <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(item.status || "-")}</span>
+                      <span>stage: ${escapeHtml(item.stage || "-")}</span>
+                    </div>
+                    <div class="history-meta"><span>${escapeHtml(item.message || "")}</span></div>
+                    <div class="history-links">${links.join("")}</div>
+                  </li>
+                `;
+              }).join("");
+            }
+
             function escapeHtml(value) {
               return String(value)
                 .replaceAll("&", "&amp;")
@@ -730,6 +792,17 @@ def render_app_html(token: str = "") -> str:
               }
             }
 
+            async function loadQueue() {
+              if (state.authExpired) return;
+              try {
+                const data = await apiFetch("/api/jobs/queue");
+                renderQueue(data);
+              } catch (error) {
+                if (state.authExpired) return;
+                elements.queueList.innerHTML = `<li class="muted-panel">${escapeHtml(error.message || "Queue load failed.")}</li>`;
+              }
+            }
+
             async function loadCurrentJob() {
               if (state.authExpired) return;
               try {
@@ -753,6 +826,7 @@ def render_app_html(token: str = "") -> str:
                   } else if (data.status === "succeeded") {
                     setJobMessage(data.message || "Report ready.");
                     loadHistory();
+                    loadQueue();
                   } else {
                     setJobMessage("等待输入。");
                   }
@@ -828,6 +902,45 @@ def render_app_html(token: str = "") -> str:
                 }
                 setJobMessage(message, consentError || runningConflict || Boolean(message));
               }
+            }
+
+            function currentOptionsPayload() {
+              return {
+                format: elements.formatSelect.value,
+                summary_template: elements.summaryTemplateSelect.value,
+                language: elements.languageSelect.value,
+                force_whisper: elements.forceWhisper.checked,
+                with_diagrams: elements.withDiagrams.checked,
+                with_frames: elements.withFrames.checked,
+                require_pdf: elements.requirePdf.checked,
+                allow_long_video: elements.allowLongVideo.checked,
+              };
+            }
+
+            async function submitBatch() {
+              if (state.authExpired) {
+                markAuthExpired();
+                return;
+              }
+              const urls = elements.batchUrls.value.split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);
+              if (!urls.length) {
+                setJobMessage("请输入至少一个批量 URL。", true);
+                elements.batchUrls.focus();
+                return;
+              }
+              const payload = { urls, ...currentOptionsPayload() };
+              const data = await apiFetch("/api/jobs/batch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              });
+              renderQueue(data);
+              setJobMessage(`已加入队列: ${urls.length} 个 URL。`);
+            }
+
+            async function queueAction(path) {
+              const data = await apiFetch(path, { method: "POST" });
+              renderQueue(data);
             }
 
             async function cancelJob() {
@@ -914,6 +1027,7 @@ def render_app_html(token: str = "") -> str:
               loadConfig().catch((error) => setJobMessage(error.message || "配置读取失败。", true));
               loadHistory();
               loadCurrentJob();
+              loadQueue();
               elements.consentButton.addEventListener("click", acceptConsent);
               elements.jobForm.addEventListener("submit", startJob);
               elements.cancelButton.addEventListener("click", cancelJob);
@@ -922,7 +1036,40 @@ def render_app_html(token: str = "") -> str:
                   setJobMessage(error.message || "批量导出失败。", true);
                 });
               });
+              elements.batchSubmitButton.addEventListener("click", () => {
+                submitBatch().catch((error) => {
+                  setJobMessage(error.message || "批量加入队列失败。", true);
+                });
+              });
+              elements.queuePauseButton.addEventListener("click", () => {
+                queueAction("/api/jobs/queue/pause").catch((error) => {
+                  setJobMessage(error.message || "暂停队列失败。", true);
+                });
+              });
+              elements.queueResumeButton.addEventListener("click", () => {
+                queueAction("/api/jobs/queue/resume").catch((error) => {
+                  setJobMessage(error.message || "恢复队列失败。", true);
+                });
+              });
               document.addEventListener("click", (event) => {
+                const queueCancelTarget = event.target && event.target.closest
+                  ? event.target.closest("[data-queue-cancel]")
+                  : null;
+                if (queueCancelTarget) {
+                  queueAction(`/api/jobs/queue/${queueCancelTarget.getAttribute("data-queue-cancel")}/cancel`).catch((error) => {
+                    setJobMessage(error.message || "取消排队失败。", true);
+                  });
+                  return;
+                }
+                const queueRetryTarget = event.target && event.target.closest
+                  ? event.target.closest("[data-queue-retry]")
+                  : null;
+                if (queueRetryTarget) {
+                  queueAction(`/api/jobs/queue/${queueRetryTarget.getAttribute("data-queue-retry")}/retry`).catch((error) => {
+                    setJobMessage(error.message || "重新排队失败。", true);
+                  });
+                  return;
+                }
                 const retryTarget = event.target && event.target.closest
                   ? event.target.closest("[data-retry-stage]")
                   : null;
@@ -964,7 +1111,10 @@ def render_app_html(token: str = "") -> str:
                   setJobMessage(error.message || "打开文件夹失败。", true);
                 });
               });
-              state.pollingTimer = setInterval(loadCurrentJob, 1000);
+              state.pollingTimer = setInterval(() => {
+                loadCurrentJob();
+                loadQueue();
+              }, 1000);
             }
 
             async function openFolder(url) {

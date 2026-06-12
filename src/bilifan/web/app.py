@@ -30,6 +30,7 @@ from .files import (
     resolve_run_dir,
 )
 from .jobs import JobManager
+from .queue import BatchQueueManager
 from .security import TokenAuth
 from .ui import render_app_html
 
@@ -71,6 +72,18 @@ class RetryCreatePayload(BaseModel):
     require_pdf: bool = WEB_DEFAULTS["require_pdf"]
 
 
+class BatchJobCreatePayload(BaseModel):
+    urls: list[str]
+    format: str = WEB_DEFAULTS["format"]
+    force_whisper: bool = WEB_DEFAULTS["force_whisper"]
+    language: str = WEB_DEFAULTS["language"]
+    summary_template: str = WEB_DEFAULTS["summary_template"]
+    with_frames: bool = WEB_DEFAULTS["with_frames"]
+    with_diagrams: bool = WEB_DEFAULTS["with_diagrams"]
+    require_pdf: bool = WEB_DEFAULTS["require_pdf"]
+    allow_long_video: bool = WEB_DEFAULTS["allow_long_video"]
+
+
 def create_app(
     outputs: Path,
     token: str,
@@ -81,6 +94,11 @@ def create_app(
 ) -> FastAPI:
     auth = TokenAuth(token)
     jobs = JobManager(runner=pipeline_runner, run_jobs_inline=run_jobs_inline)
+    queue = BatchQueueManager(
+        runner=pipeline_runner,
+        storage_path=outputs / "_jobs" / "jobs.json",
+        run_jobs_inline=run_jobs_inline,
+    )
     app = FastAPI()
 
     @app.middleware("http")
@@ -162,6 +180,66 @@ def create_app(
     @app.get("/api/jobs/current")
     def current_job(_: None = Depends(require_token)) -> dict[str, object]:
         return jobs.current().as_dict()
+
+    @app.get("/api/jobs/queue")
+    def queue_state(_: None = Depends(require_token)) -> dict[str, object]:
+        return queue.state()
+
+    @app.post("/api/jobs/batch")
+    def create_batch_jobs(
+        payload: BatchJobCreatePayload,
+        _: None = Depends(require_token),
+    ) -> dict[str, object]:
+        config = read_config(default_config_path())
+        if config.local_processing_notice_accepted_at is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Local processing consent is required before starting a batch.",
+            )
+        urls = [url.strip() for url in payload.urls if url.strip()]
+        if not urls:
+            raise HTTPException(status_code=400, detail="Batch requires at least one URL.")
+        summary_template = _validated_summary_template(payload.summary_template)
+        requests = [
+            PipelineRequest(
+                url=url,
+                out=outputs,
+                output_format=payload.format,
+                force_whisper=payload.force_whisper,
+                language=payload.language,
+                summary_template=summary_template,
+                with_frames=payload.with_frames,
+                with_diagrams=payload.with_diagrams,
+                require_pdf=payload.require_pdf,
+                allow_long_video=payload.allow_long_video,
+                yes_i_understand=True,
+                overwrite=False,
+            )
+            for url in urls
+        ]
+        return queue.submit(requests)
+
+    @app.post("/api/jobs/queue/pause")
+    def pause_queue(_: None = Depends(require_token)) -> dict[str, object]:
+        return queue.pause()
+
+    @app.post("/api/jobs/queue/resume")
+    def resume_queue(_: None = Depends(require_token)) -> dict[str, object]:
+        return queue.resume()
+
+    @app.post("/api/jobs/queue/{job_id}/cancel")
+    def cancel_queued_job(
+        job_id: str,
+        _: None = Depends(require_token),
+    ) -> dict[str, object]:
+        return queue.cancel_pending(job_id)
+
+    @app.post("/api/jobs/queue/{job_id}/retry")
+    def retry_queued_job(
+        job_id: str,
+        _: None = Depends(require_token),
+    ) -> dict[str, object]:
+        return queue.retry(job_id)
 
     @app.post("/api/jobs/current/cancel")
     def cancel_current_job(_: None = Depends(require_token)) -> dict[str, object]:

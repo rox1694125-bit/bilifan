@@ -86,6 +86,11 @@ def test_render_app_html_contains_workbench_contract():
         "Bundle",
         "Nabaichuan",
         "batch-nabaichuan-button",
+        "batch-urls",
+        "batch-submit-button",
+        "queue-list",
+        "/api/jobs/batch",
+        "/api/jobs/queue",
         "exportNabaichuan",
         "audio",
         "data-folder-url",
@@ -310,6 +315,9 @@ def test_render_app_script_submits_language_and_renders_export_actions():
           if (path === "/api/jobs") {
             return jsonResponse({ job_id: "job-1", status: "running" });
           }
+          if (path === "/api/jobs/batch") {
+            return jsonResponse({ counts: { queued: 0, running: 0, succeeded: 2, failed: 0, canceled: 0 }, items: [] });
+          }
           if (path.includes("/open-folder")) return jsonResponse({ ok: true });
           throw new Error(`unexpected fetch ${path}`);
         }
@@ -343,6 +351,16 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         assert.equal(JSON.parse(jobCall.body).summary_template, "观点提炼");
         assert.equal(JSON.parse(jobCall.body).with_diagrams, true);
         assert.equal(JSON.parse(jobCall.body).with_frames, true);
+
+        elements["batch-urls"].value = "https://www.bilibili.com/video/BV1abcDEF12G\\nhttps://www.youtube.com/watch?v=dQw4w9WgXcQ";
+        await elements["batch-submit-button"].listeners.click();
+        await flush();
+        const batchCall = fetchCalls.find((call) => call.path === "/api/jobs/batch");
+        const batchBody = JSON.parse(batchCall.body);
+        assert.equal(batchBody.urls.length, 2);
+        assert.equal(batchBody.summary_template, "观点提炼");
+        assert.equal(batchBody.with_diagrams, true);
+        assert.equal(batchBody.with_frames, true);
 
         const clickTarget = {
           closest(selector) {

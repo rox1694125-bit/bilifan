@@ -3,6 +3,7 @@ import json
 import pytest
 
 from bilifan.web.files import (
+    list_all_runs,
     list_latest_runs,
     list_run_files,
     resolve_run_file,
@@ -234,6 +235,65 @@ def test_list_latest_runs_failed_run_includes_friendly_error_and_retry_actions(t
     assert items[0]["status"] == "failed"
     assert items[0]["friendly_error"]["title"] == "Codex CLI 未找到"
     assert items[0]["retry_actions"] == ["summarization"]
+
+
+def test_failed_latest_run_uses_diagnostics_artifacts_not_stale_files(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs, success=False)
+    (run_dir / "diagnostics.json").write_text(
+        json.dumps(
+            {
+                "error_type": "SummarizationError",
+                "stage": "summarization",
+                "artifact_paths": [
+                    "diagnostics.json",
+                    "metadata.json",
+                    "transcript.json",
+                    "chunks.json",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    items = list_latest_runs(outputs)
+
+    artifacts = items[0]["artifacts"]
+    assert artifacts == {
+        "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
+        "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+    }
+
+
+def test_failed_all_runs_uses_diagnostics_artifacts_not_stale_files(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs, success=False)
+    (run_dir / "diagnostics.json").write_text(
+        json.dumps(
+            {
+                "error_type": "RenderError",
+                "stage": "render",
+                "artifact_paths": [
+                    "diagnostics.json",
+                    "metadata.json",
+                    "transcript.json",
+                    "chunks.json",
+                    "chapters.json",
+                    "content_bundle.json",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    items = list_all_runs(outputs)
+
+    artifacts = items[0]["artifacts"]
+    assert artifacts == {
+        "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
+        "bundle": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json",
+        "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+    }
 
 
 def test_list_latest_runs_skips_run_dir_symlink_escape(tmp_path):

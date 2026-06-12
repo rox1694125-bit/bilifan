@@ -78,7 +78,11 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
                 "status": status,
                 "stage": stage,
                 "generated_at": _text(latest.get("generated_at")),
-                "artifacts": _artifact_links(f"{output_id}/runs/{run_id}", run_dir),
+                "artifacts": _artifact_links(
+                    f"{output_id}/runs/{run_id}",
+                    run_dir,
+                    artifact_paths=artifact_paths if status == "failed" else None,
+                ),
                 "friendly_error": (
                     explain_failure(
                         stage=stage,
@@ -239,7 +243,11 @@ def _run_item(
         "status": status,
         "stage": stage,
         "generated_at": generated_at,
-        "artifacts": _artifact_links(f"{output_id}/runs/{run_id}", run_dir),
+        "artifacts": _artifact_links(
+            f"{output_id}/runs/{run_id}",
+            run_dir,
+            artifact_paths=artifact_paths if status == "failed" else None,
+        ),
         "friendly_error": (
             explain_failure(
                 stage=stage,
@@ -277,8 +285,15 @@ def _read_json_object(path: Path | None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _artifact_links(run_key: str, run_dir: Path) -> dict[str, str]:
+def _artifact_links(
+    run_key: str,
+    run_dir: Path,
+    *,
+    artifact_paths: list[str] | None = None,
+) -> dict[str, str]:
     prefix = f"/api/runs/{run_key}/files"
+    if artifact_paths is not None:
+        return _artifact_links_from_paths(prefix, run_key, run_dir, artifact_paths)
     artifacts: dict[str, str] = {}
     if _safe_existing_file(run_dir, "report.html") is not None:
         artifacts["html"] = f"{prefix}/report.html"
@@ -299,6 +314,36 @@ def _artifact_links(run_key: str, run_dir: Path) -> dict[str, str]:
     if _safe_existing_file(run_dir, "media/audio.mp3") is not None:
         artifacts["audio"] = f"{prefix}/media/audio.mp3"
     artifacts["folder"] = f"/api/runs/{run_key}/open-folder"
+    return artifacts
+
+
+def _artifact_links_from_paths(
+    prefix: str,
+    run_key: str,
+    run_dir: Path,
+    artifact_paths: list[str],
+) -> dict[str, str]:
+    artifact_set = set(artifact_paths)
+    artifacts: dict[str, str] = {}
+    known_artifacts = {
+        "html": "report.html",
+        "pdf": "report.pdf",
+        "diagnostics": "diagnostics.json",
+        "txt": "transcript.txt",
+        "srt": "transcript.srt",
+        "md": "notes.md",
+        "bundle": "content_bundle.json",
+        "nabaichuan": "nabaichuan.jsonl",
+        "audio": "media/audio.mp3",
+    }
+    for key, relative_path in known_artifacts.items():
+        if (
+            relative_path in artifact_set
+            and _safe_existing_file(run_dir, relative_path) is not None
+        ):
+            artifacts[key] = f"{prefix}/{relative_path}"
+    if artifact_paths:
+        artifacts["folder"] = f"/api/runs/{run_key}/open-folder"
     return artifacts
 
 

@@ -296,6 +296,103 @@ def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
     assert calls[0].allow_long_video is False
 
 
+def test_batch_jobs_endpoint_runs_queue_and_persists_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    calls = []
+
+    def fake_pipeline(request, *, progress_callback):
+        calls.append(request)
+        progress_callback("metadata", "running", f"metadata {len(calls)}")
+        run_key = f"BV1abcDEF12G_p{len(calls)}/runs/2026-06-08_120000"
+        return PipelineResult(
+            run_key=run_key,
+            run_dir=request.out / run_key,
+            diagnostics_path=request.out / run_key / "diagnostics.json",
+            artifact_paths=["diagnostics.json", "report.html"],
+            warnings=[],
+        )
+
+    outputs = tmp_path / "outputs"
+    app = create_app(
+        outputs=outputs,
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/jobs/batch",
+        headers=_headers(),
+        json={
+            "urls": [
+                "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+                "https://www.bilibili.com/video/BV1abcDEF12G?p=2",
+            ],
+            "format": "html",
+            "summary_template": "教程步骤",
+            "with_diagrams": True,
+        },
+    )
+    queue_state = client.get("/api/jobs/queue", headers=_headers()).json()
+
+    assert response.status_code == 200
+    assert [call.url for call in calls] == [
+        "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+        "https://www.bilibili.com/video/BV1abcDEF12G?p=2",
+    ]
+    assert calls[0].summary_template == "教程步骤"
+    assert calls[0].with_diagrams is True
+    assert queue_state["counts"]["succeeded"] == 2
+    assert queue_state["items"][0]["artifacts"]["html"].endswith("/report.html")
+    assert (outputs / "_jobs" / "jobs.json").is_file()
+
+
+def test_batch_queue_pause_cancel_and_resume_endpoints(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    calls = []
+
+    def fake_pipeline(request, *, progress_callback):
+        calls.append(request.url)
+        return PipelineResult(
+            run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
+            run_dir=request.out / "BV1abcDEF12G_p1/runs/2026-06-08_120000",
+            diagnostics_path=request.out
+            / "BV1abcDEF12G_p1/runs/2026-06-08_120000/diagnostics.json",
+            artifact_paths=[],
+            warnings=[],
+        )
+
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    paused = client.post("/api/jobs/queue/pause", headers=_headers())
+    queued = client.post(
+        "/api/jobs/batch",
+        headers=_headers(),
+        json={"urls": ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"]},
+    ).json()
+    job_id = queued["items"][0]["job_id"]
+    canceled = client.post(f"/api/jobs/queue/{job_id}/cancel", headers=_headers()).json()
+    retry_state = client.post(f"/api/jobs/queue/{job_id}/retry", headers=_headers()).json()
+    resumed = client.post("/api/jobs/queue/resume", headers=_headers()).json()
+
+    assert paused.status_code == 200
+    assert canceled["items"][0]["status"] == "canceled"
+    assert retry_state["items"][1]["status"] == "queued"
+    assert resumed["items"][1]["status"] == "succeeded"
+    assert calls == ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"]
+
+
 def test_job_requires_local_processing_consent(tmp_path, monkeypatch):
     monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
     app = create_app(outputs=tmp_path / "outputs", token="test-token", open_browser=False)
