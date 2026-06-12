@@ -112,6 +112,16 @@ def test_query_token_works_for_config_and_file_route(tmp_path):
     assert file_response.text == "<html></html>"
 
 
+def test_index_embeds_current_service_token(tmp_path):
+    app = create_app(outputs=tmp_path / "outputs", token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert '"test-token"' in response.text
+
+
 def test_document_responses_send_no_referrer_policy(tmp_path):
     outputs = tmp_path / "outputs"
     _make_run(outputs)

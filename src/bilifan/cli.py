@@ -173,7 +173,7 @@ def serve(
         token=token,
         open_browser=not no_open,
     )
-    url = f"http://127.0.0.1:{selected_port}/?token={token}"
+    url = f"http://127.0.0.1:{selected_port}/"
     typer.echo(url)
     if not no_open:
         _schedule_browser_open(url)

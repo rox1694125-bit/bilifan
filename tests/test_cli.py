@@ -1174,7 +1174,7 @@ def test_serve_prints_url_and_starts_uvicorn(monkeypatch):
     result = runner.invoke(app, ["serve"])
 
     assert result.exit_code == 0
-    assert "http://127.0.0.1:8765/?token=fixed-token" in result.output
+    assert "http://127.0.0.1:8765/" in result.output
     assert calls["create_app"] == {
         "outputs": cli.Path("./outputs"),
         "token": "fixed-token",
@@ -1184,7 +1184,7 @@ def test_serve_prints_url_and_starts_uvicorn(monkeypatch):
         "host": "127.0.0.1",
         "preferred_port": 8765,
     }
-    assert calls["schedule_browser_open"] == "http://127.0.0.1:8765/?token=fixed-token"
+    assert calls["schedule_browser_open"] == "http://127.0.0.1:8765/"
     assert calls["uvicorn_run"] == {
         "app_instance": "app-instance",
         "host": "127.0.0.1",
@@ -1225,7 +1225,7 @@ def test_serve_no_open_does_not_open_browser(monkeypatch):
     result = runner.invoke(app, ["serve", "--no-open"])
 
     assert result.exit_code == 0
-    assert "http://127.0.0.1:8765/?token=fixed-token" in result.output
+    assert "http://127.0.0.1:8765/" in result.output
     assert calls["create_app"] == {
         "outputs": cli.Path("./outputs"),
         "token": "fixed-token",
@@ -1268,8 +1268,8 @@ def test_serve_uses_next_available_port(monkeypatch):
     result = runner.invoke(app, ["serve", "--port", "8765"])
 
     assert result.exit_code == 0
-    assert "http://127.0.0.1:8766/?token=fixed-token" in result.output
-    assert calls["url"] == "http://127.0.0.1:8766/?token=fixed-token"
+    assert "http://127.0.0.1:8766/" in result.output
+    assert calls["url"] == "http://127.0.0.1:8766/"
     assert calls["uvicorn_run"] == {
         "app_instance": "app-instance",
         "host": "127.0.0.1",
@@ -1346,7 +1346,7 @@ def test_serve_schedules_browser_open_without_calling_it_before_uvicorn(monkeypa
     delay, callback, args = scheduled[0]
     assert delay > 0
     assert callback is cli._open_browser_when_ready
-    assert args == ("http://127.0.0.1:8765/?token=fixed-token",)
+    assert args == ("http://127.0.0.1:8765/",)
 
 
 def test_schedule_browser_open_waits_for_local_url_before_opening(monkeypatch):
@@ -1376,14 +1376,14 @@ def test_schedule_browser_open_waits_for_local_url_before_opening(monkeypatch):
     monkeypatch.setattr(cli, "_local_url_ready", fake_url_ready)
     monkeypatch.setattr(cli, "_open_browser", fake_open_browser)
 
-    cli._schedule_browser_open("http://127.0.0.1:8765/?token=fixed-token")
+    cli._schedule_browser_open("http://127.0.0.1:8765/")
 
     assert calls == [
         ("timer", str(cli.OPEN_BROWSER_DELAY_SECONDS)),
-        ("ready", "http://127.0.0.1:8765/?token=fixed-token"),
+        ("ready", "http://127.0.0.1:8765/"),
         ("sleep", str(cli.OPEN_BROWSER_RETRY_SECONDS)),
-        ("ready", "http://127.0.0.1:8765/?token=fixed-token"),
+        ("ready", "http://127.0.0.1:8765/"),
         ("sleep", str(cli.OPEN_BROWSER_RETRY_SECONDS)),
-        ("ready", "http://127.0.0.1:8765/?token=fixed-token"),
-        ("open", "http://127.0.0.1:8765/?token=fixed-token"),
+        ("ready", "http://127.0.0.1:8765/"),
+        ("open", "http://127.0.0.1:8765/"),
     ]

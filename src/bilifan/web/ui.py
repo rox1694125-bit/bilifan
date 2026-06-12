@@ -1,7 +1,9 @@
+import json
 from textwrap import dedent
 
 
-def render_app_html() -> str:
+def render_app_html(token: str = "") -> str:
+    embedded_token = json.dumps(token)
     return dedent(
         """\
         <!doctype html>
@@ -402,7 +404,8 @@ def render_app_html() -> str:
 
           <script>
             const STAGES = ["preflight", "metadata", "audio", "transcript", "chunking", "summarization", "render"];
-            const token = new URLSearchParams(location.search).get("token") || "";
+            const embeddedToken = __BILIFAN_EMBEDDED_TOKEN__;
+            const token = new URLSearchParams(location.search).get("token") || embeddedToken;
 
             const state = {
               authExpired: false,
@@ -761,4 +764,4 @@ def render_app_html() -> str:
         </body>
         </html>
         """
-    )
+    ).replace("__BILIFAN_EMBEDDED_TOKEN__", embedded_token)

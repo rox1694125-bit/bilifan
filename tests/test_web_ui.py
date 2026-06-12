@@ -88,6 +88,44 @@ def test_render_app_html_contains_workbench_contract():
         assert marker in html
 
 
+def test_render_app_html_can_embed_token_for_fixed_entrypoint():
+    html = render_app_html(token="embedded-token")
+    script = _extract_inline_script(html)
+
+    _run_node_ui_harness(
+        script,
+        location_search="",
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({
+            path,
+            method: options.method || "GET",
+            token: options.headers ? options.headers.get("X-Bilifan-Token") : ""
+          });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(fetchCalls.length > 0);
+        assert(fetchCalls.every((call) => call.token === "embedded-token"));
+        """,
+    )
+
+
 def test_render_app_html_contains_frontend_state_guards():
     html = render_app_html()
 
@@ -390,7 +428,13 @@ def _extract_inline_script(html):
     return match.group(1)
 
 
-def _run_node_ui_harness(script, *, fetch_logic, assertions):
+def _run_node_ui_harness(
+    script,
+    *,
+    fetch_logic,
+    assertions,
+    location_search="?token=test-token",
+):
     if shutil.which("node") is None:
         pytest.skip("node is required for UI behavior tests")
 
@@ -459,7 +503,7 @@ def _run_node_ui_harness(script, *, fetch_logic, assertions):
         return elements[id];
       }}
     }};
-    global.location = {{ search: "?token=test-token", origin: "http://127.0.0.1:8765" }};
+    global.location = {{ search: {json.dumps(location_search)}, origin: "http://127.0.0.1:8765" }};
     global.window = {{ location: global.location }};
     global.setInterval = (callback, interval) => {{
       global.__poll = {{ callback, interval }};

@@ -67,7 +67,7 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        return render_app_html()
+        return render_app_html(token=token)
 
     @app.get("/api/config")
     def get_config(_: None = Depends(require_token)) -> dict[str, object]:
