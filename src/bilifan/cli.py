@@ -27,7 +27,7 @@ from .pipeline import (
 )
 from .renderer import PdfExportError
 from .retry import RetryError, retry_run
-from .summarizer import SummarizationError
+from .summarizer import SummarizationError, validate_summary_style
 from .transcript import TranscriptError
 from .web.app import create_app
 from .web.security import generate_token
@@ -68,6 +68,7 @@ def summarize(
     force_whisper: bool = typer.Option(False, "--force-whisper"),
     llm_provider: str = typer.Option("codex-exec", "--llm-provider"),
     llm_model: str = typer.Option("gpt-5.5", "--llm-model"),
+    summary_template: str = typer.Option("学习笔记", "--summary-template", "--style"),
     require_pdf: bool = typer.Option(False, "--require-pdf"),
     allow_long_video: bool = typer.Option(False, "--allow-long-video"),
     yes_i_understand: bool = typer.Option(False, "--yes-i-understand"),
@@ -80,7 +81,10 @@ def summarize(
     try:
         validate_output_format(output_format)
         validate_language(language)
+        summary_template = validate_summary_style(summary_template)
     except ValueError as exc:
+        raise typer.BadParameter(redact_text(str(exc))) from exc
+    except SummarizationError as exc:
         raise typer.BadParameter(redact_text(str(exc))) from exc
 
     uses_cookies = cookies_from_browser is not None or cookies_file is not None
@@ -99,6 +103,7 @@ def summarize(
                 force_whisper=force_whisper,
                 llm_provider=llm_provider,
                 llm_model=llm_model,
+                summary_template=summary_template,
                 require_pdf=require_pdf,
                 allow_long_video=allow_long_video,
                 yes_i_understand=yes_i_understand,
@@ -137,6 +142,7 @@ def retry(
     output_format: str = typer.Option("html,pdf", "--format"),
     llm_provider: str = typer.Option("codex-exec", "--llm-provider"),
     llm_model: str = typer.Option("gpt-5.5", "--llm-model"),
+    summary_template: str = typer.Option("学习笔记", "--summary-template", "--style"),
     require_pdf: bool = typer.Option(False, "--require-pdf"),
 ) -> None:
     """Retry summarization, render, or bundle stages for an existing run directory."""
@@ -149,6 +155,7 @@ def retry(
             output_format=output_format,
             llm_provider=llm_provider,
             llm_model=llm_model,
+            summary_template=summary_template,
             require_pdf=require_pdf,
         )
     except RetryError as exc:

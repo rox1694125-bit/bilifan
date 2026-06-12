@@ -86,6 +86,7 @@ def test_config_and_consent_endpoints(tmp_path, monkeypatch):
         "format": "html,pdf",
         "force_whisper": False,
         "language": "auto",
+        "summary_template": "学习笔记",
         "require_pdf": False,
         "allow_long_video": False,
     }
@@ -215,6 +216,7 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
             "format": "html",
             "force_whisper": False,
             "language": "en",
+            "summary_template": "教程步骤",
             "require_pdf": False,
             "allow_long_video": False,
         },
@@ -242,6 +244,7 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
     assert all(item["status"] == "done" for item in state["progress"])
     assert calls[0].output_format == "html"
     assert calls[0].language == "en"
+    assert calls[0].summary_template == "教程步骤"
 
 
 def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
@@ -279,6 +282,7 @@ def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
     assert response.json()["status"] == "running"
     assert calls[0].output_format == "html,pdf"
     assert calls[0].language == "auto"
+    assert calls[0].summary_template == "学习笔记"
     assert calls[0].force_whisper is False
     assert calls[0].require_pdf is False
     assert calls[0].allow_long_video is False
@@ -884,6 +888,7 @@ def test_retry_failed_run_from_web_api(tmp_path, monkeypatch):
         output_format,
         llm_provider,
         llm_model,
+        summary_template,
         require_pdf,
     ):
         calls.append(
@@ -893,6 +898,7 @@ def test_retry_failed_run_from_web_api(tmp_path, monkeypatch):
                 "output_format": output_format,
                 "llm_provider": llm_provider,
                 "llm_model": llm_model,
+                "summary_template": summary_template,
                 "require_pdf": require_pdf,
             }
         )
@@ -918,7 +924,11 @@ def test_retry_failed_run_from_web_api(tmp_path, monkeypatch):
     response = client.post(
         "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry",
         headers=_headers(),
-        json={"from_stage": "summarization", "format": "html"},
+        json={
+            "from_stage": "summarization",
+            "format": "html",
+            "summary_template": "观点提炼",
+        },
     )
     state = client.get("/api/jobs/current", headers=_headers()).json()
 
@@ -931,6 +941,7 @@ def test_retry_failed_run_from_web_api(tmp_path, monkeypatch):
             "output_format": "html",
             "llm_provider": "codex-exec",
             "llm_model": "gpt-5.5",
+            "summary_template": "观点提炼",
             "require_pdf": False,
         }
     ]
@@ -1010,6 +1021,7 @@ def test_retry_failure_preserves_run_context_and_diagnostics_link(tmp_path, monk
         output_format,
         llm_provider,
         llm_model,
+        summary_template,
         require_pdf,
     ):
         (retry_run_dir / "diagnostics.json").write_text(

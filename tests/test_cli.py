@@ -396,6 +396,8 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
             "codex-exec",
             "--llm-model",
             "gpt-5.5",
+            "--summary-template",
+            "教程步骤",
             "--require-pdf",
             "--allow-long-video",
             "--yes-i-understand",
@@ -413,6 +415,7 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
     assert transcript_calls[0]["language"] == "en"
     assert summary_calls[0]["provider"] == "codex-exec"
     assert summary_calls[0]["model"] == "gpt-5.5"
+    assert summary_calls[0]["style"] == "教程步骤"
 
 
 def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):

@@ -53,6 +53,7 @@ def test_render_app_html_contains_workbench_contract():
         "history-list",
         "url-input",
         "format-select",
+        "summary-template-select",
         "language-select",
         "force-whisper",
         "require-pdf",
@@ -88,6 +89,10 @@ def test_render_app_html_contains_workbench_contract():
         "data-folder-url",
         "openFolder",
         "retryAction",
+        "重总结",
+        "教程步骤",
+        "观点提炼",
+        "会议纪要",
     ]
 
     for marker in required_strings:
@@ -109,7 +114,7 @@ def test_render_app_html_can_embed_token_for_fixed_entrypoint():
             token: options.headers ? options.headers.get("X-Bilifan-Token") : ""
           });
           if (path === "/api/config") {
-            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "教程步骤" } });
           }
           if (path === "/api/history") return jsonResponse({ items: [] });
           if (path === "/api/jobs/current") {
@@ -190,7 +195,7 @@ def test_render_app_script_disables_start_without_consent_or_while_running():
         async function fetchMock(path, options = {}) {
           fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
           if (path === "/api/config") {
-            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "会议纪要" } });
           }
           if (path === "/api/history") return jsonResponse({ items: [] });
           if (path === "/api/jobs/current") {
@@ -222,7 +227,7 @@ def test_render_app_script_blocks_empty_url_before_posting_job():
         async function fetchMock(path, options = {}) {
           fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
           if (path === "/api/config") {
-            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "教程步骤" } });
           }
           if (path === "/api/history") return jsonResponse({ items: [] });
           if (path === "/api/jobs/current") {
@@ -260,7 +265,7 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         async function fetchMock(path, options = {}) {
           fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
           if (path === "/api/config") {
-            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "en" } });
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "en", summary_template: "教程步骤" } });
           }
           if (path === "/api/history") {
             return jsonResponse({
@@ -309,6 +314,7 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         """,
         assertions="""
         assert.equal(elements["language-select"].value, "en");
+        assert.equal(elements["summary-template-select"].value, "教程步骤");
         assert(elements["history-list"].innerHTML.includes("TXT"));
         assert(elements["history-list"].innerHTML.includes("SRT"));
         assert(elements["history-list"].innerHTML.includes("MD"));
@@ -325,10 +331,12 @@ def test_render_app_script_submits_language_and_renders_export_actions():
 
         elements["url-input"].value = "https://www.bilibili.com/video/BV1abcDEF12G";
         elements["language-select"].value = "en";
+        elements["summary-template-select"].value = "观点提炼";
         await elements["job-form"].listeners.submit({ preventDefault() {} });
         await flush();
         const jobCall = fetchCalls.find((call) => call.path === "/api/jobs");
         assert.equal(JSON.parse(jobCall.body).language, "en");
+        assert.equal(JSON.parse(jobCall.body).summary_template, "观点提炼");
 
         const clickTarget = {
           closest(selector) {
@@ -357,7 +365,7 @@ def test_render_app_script_exports_nabaichuan_from_history_and_batch_button():
         async function fetchMock(path, options = {}) {
           fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
           if (path === "/api/config") {
-            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "会议纪要" } });
           }
           if (path === "/api/history") {
             return jsonResponse({
@@ -391,12 +399,17 @@ def test_render_app_script_exports_nabaichuan_from_history_and_batch_button():
           if (path === "/api/exports/nabaichuan/batch") {
             return jsonResponse({ ok: true, artifact: "/api/exports/nabaichuan_batch_20260612_120000.jsonl", exported_runs: 1, skipped_runs: 0 });
           }
+          if (path === "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry") {
+            return jsonResponse({ status: "running" });
+          }
           throw new Error(`unexpected fetch ${path}`);
         }
         """,
         assertions="""
         assert(elements["history-list"].innerHTML.includes("导出 Nabaichuan"));
         assert(elements["result-links"].innerHTML.includes("导出 Nabaichuan"));
+        assert(elements["history-list"].innerHTML.includes("重总结"));
+        assert(elements["result-links"].innerHTML.includes("重总结"));
 
         const nabaichuanTarget = {
           closest(selector) {
@@ -412,6 +425,23 @@ def test_render_app_script_exports_nabaichuan_from_history_and_batch_button():
         await document.listeners.click({ target: nabaichuanTarget });
         await flush();
         assert(fetchCalls.some((call) => call.method === "POST" && call.path.endsWith("/exports/nabaichuan")));
+
+        const resummarizeTarget = {
+          closest(selector) {
+            if (selector !== "[data-resummarize-run-key]") return null;
+            return {
+              getAttribute(name) {
+                assert.equal(name, "data-resummarize-run-key");
+                return "BV1abcDEF12G_p1/runs/2026-06-08_120000";
+              }
+            };
+          }
+        };
+        await document.listeners.click({ target: resummarizeTarget });
+        await flush();
+        const resummarizeCall = fetchCalls.find((call) => call.method === "POST" && call.path.endsWith("/retry"));
+        assert.equal(JSON.parse(resummarizeCall.body).from_stage, "summarization");
+        assert.equal(JSON.parse(resummarizeCall.body).summary_template, "会议纪要");
 
         await elements["batch-nabaichuan-button"].listeners.click();
         await flush();
@@ -431,7 +461,7 @@ def test_render_app_script_cancels_running_job_and_retries_failed_run():
         async function fetchMock(path, options = {}) {
           fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
           if (path === "/api/config") {
-            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "会议纪要" } });
           }
           if (path === "/api/history") return jsonResponse({ items: [] });
           if (path === "/api/jobs/current") {
@@ -493,6 +523,7 @@ def test_render_app_script_cancels_running_job_and_retries_failed_run():
         await flush();
         const retryCall = fetchCalls.find((call) => call.method === "POST" && call.path.includes("/retry"));
         assert.equal(JSON.parse(retryCall.body).from_stage, "summarization");
+        assert.equal(JSON.parse(retryCall.body).summary_template, "会议纪要");
         """,
     )
 
@@ -506,7 +537,7 @@ def test_render_app_script_retries_failed_history_item_with_its_run_key():
         async function fetchMock(path, options = {}) {
           fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
           if (path === "/api/config") {
-            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "观点提炼" } });
           }
           if (path === "/api/history") {
             return jsonResponse({
@@ -564,6 +595,7 @@ def test_render_app_script_retries_failed_history_item_with_its_run_key():
         const retryCall = fetchCalls.find((call) => call.method === "POST" && call.path.includes("/retry"));
         assert.equal(retryCall.path, "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry");
         assert.equal(JSON.parse(retryCall.body).from_stage, "summarization");
+        assert.equal(JSON.parse(retryCall.body).summary_template, "观点提炼");
         """,
     )
 

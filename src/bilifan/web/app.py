@@ -19,6 +19,7 @@ from bilifan.pipeline import (
     validate_output_format,
 )
 from bilifan.retry import RETRY_STAGES, RetryError, retry_run
+from bilifan.summarizer import SummarizationError, validate_summary_style
 
 from .files import (
     list_all_runs,
@@ -36,6 +37,7 @@ WEB_DEFAULTS = {
     "format": "html,pdf",
     "force_whisper": False,
     "language": "auto",
+    "summary_template": "学习笔记",
     "require_pdf": False,
     "allow_long_video": False,
 }
@@ -49,6 +51,7 @@ class JobCreatePayload(BaseModel):
     format: str = WEB_DEFAULTS["format"]
     force_whisper: bool = WEB_DEFAULTS["force_whisper"]
     language: str = WEB_DEFAULTS["language"]
+    summary_template: str = WEB_DEFAULTS["summary_template"]
     require_pdf: bool = WEB_DEFAULTS["require_pdf"]
     allow_long_video: bool = WEB_DEFAULTS["allow_long_video"]
 
@@ -58,6 +61,7 @@ class RetryCreatePayload(BaseModel):
     format: str = WEB_DEFAULTS["format"]
     llm_provider: str = "codex-exec"
     llm_model: str = "gpt-5.5"
+    summary_template: str = WEB_DEFAULTS["summary_template"]
     require_pdf: bool = WEB_DEFAULTS["require_pdf"]
 
 
@@ -136,6 +140,7 @@ def create_app(
             output_format=payload.format,
             force_whisper=payload.force_whisper,
             language=payload.language,
+            summary_template=_validated_summary_template(payload.summary_template),
             require_pdf=payload.require_pdf,
             allow_long_video=payload.allow_long_video,
             yes_i_understand=True,
@@ -181,6 +186,7 @@ def create_app(
             )
         if not payload.llm_model.strip():
             raise HTTPException(status_code=400, detail="Retry llm_model is required.")
+        summary_template = _validated_summary_template(payload.summary_template)
         config = read_config(default_config_path())
         if config.local_processing_notice_accepted_at is None:
             raise HTTPException(
@@ -203,6 +209,7 @@ def create_app(
                     output_format=payload.format,
                     llm_provider=payload.llm_provider,
                     llm_model=payload.llm_model,
+                    summary_template=summary_template,
                     require_pdf=payload.require_pdf,
                 )
             except RetryError as exc:
@@ -386,6 +393,13 @@ def _retry_failure_context(run_dir: Path) -> tuple[list[str], list[str]]:
         if isinstance(raw_warnings, list):
             warnings = [item for item in raw_warnings if isinstance(item, str)]
     return artifact_paths, warnings
+
+
+def _validated_summary_template(value: str) -> str:
+    try:
+        return validate_summary_style(value)
+    except SummarizationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _is_successful_run_dir(run_dir: Path) -> bool:

@@ -43,6 +43,7 @@ def render_report_html(
             ref=ref,
             metadata=_metadata_view(metadata),
             transcript=_transcript_view(transcript),
+            summary=_summary_view(chapters),
             chapters=_chapters_view(chapters),
         )
         + "\n",
@@ -144,6 +145,26 @@ def _transcript_view(transcript: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _summary_view(chapters: dict[str, Any]) -> dict[str, Any]:
+    validation = (
+        chapters.get("summary_validation")
+        if isinstance(chapters.get("summary_validation"), dict)
+        else {}
+    )
+    checks = validation.get("checks") if isinstance(validation.get("checks"), dict) else {}
+    warnings = validation.get("warnings") if isinstance(validation.get("warnings"), list) else []
+    return {
+        "style": _first_text(chapters.get("style")) or "学习笔记",
+        "validation_status": _first_text(validation.get("status")) or "unknown",
+        "validation_warnings": [_first_text(warning) for warning in warnings if _first_text(warning)],
+        "validation_checks": [
+            f"{key}: {value}"
+            for key, value in checks.items()
+            if isinstance(value, bool)
+        ],
+    }
+
+
 def _chapters_view(chapters: dict[str, Any]) -> list[dict[str, Any]]:
     raw_chapters = chapters.get("chapters")
     if not isinstance(raw_chapters, list):
@@ -166,9 +187,30 @@ def _chapters_view(chapters: dict[str, Any]) -> list[dict[str, Any]]:
                 "key_points": _string_list(raw_chapter.get("key_points")),
                 "quotes": _string_list(raw_chapter.get("quotes")),
                 "visual_anchors": _string_list(raw_chapter.get("visual_anchors")),
+                "evidence": _evidence_view(raw_chapter.get("evidence")),
             }
         )
     return view
+
+
+def _evidence_view(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    evidence: list[dict[str, Any]] = []
+    for raw_item in value:
+        if not isinstance(raw_item, dict):
+            continue
+        start = _float_value(raw_item.get("start")) or 0
+        end = _float_value(raw_item.get("end")) or start
+        evidence.append(
+            {
+                "start_label": _format_time(start),
+                "end_label": _format_time(end),
+                "timestamp_url": _first_text(raw_item.get("timestamp_url")),
+                "text_preview": _first_text(raw_item.get("text_preview")),
+            }
+        )
+    return evidence
 
 
 def _template():
@@ -224,6 +266,8 @@ def _template():
       white-space: nowrap;
     }
     .summary { margin: 14px 0; font-size: 16px; }
+    .qa { border: 1px solid var(--line); background: var(--panel); padding: 10px 12px; margin: 18px 0; color: var(--muted); font-size: 13px; }
+    .qa strong { color: var(--ink); }
     h3 { font-size: 15px; margin: 18px 0 6px; color: #344054; }
     ul { margin: 6px 0 0; padding-left: 22px; }
     li { margin: 4px 0; }
@@ -234,6 +278,8 @@ def _template():
       background: #fff8e8;
       color: #3b2d12;
     }
+    .evidence a { color: var(--accent); font-weight: 700; text-decoration: none; }
+    .evidence span { color: var(--muted); }
     footer { border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; padding-top: 18px; }
     @media (max-width: 720px) {
       main { padding: 24px 16px 42px; }
@@ -273,6 +319,13 @@ def _template():
     <div class="stat"><strong>{{ transcript.source }}</strong><span>转写来源</span></div>
     <div class="stat"><strong>{{ transcript.check_status }}</strong><span>完整性</span></div>
   </div>
+  <div class="qa">
+    <strong>总结模板：{{ summary.style }}</strong>
+    <span> · 总结校验：{{ summary.validation_status }}</span>
+    {% if summary.validation_warnings %}
+    <span> · warning: {{ summary.validation_warnings|join(", ") }}</span>
+    {% endif %}
+  </div>
 
   {% for chapter in chapters %}
   <section class="chapter">
@@ -292,6 +345,17 @@ def _template():
     {% if chapter.visual_anchors %}
     <h3>视觉锚点</h3>
     <ul>{% for anchor in chapter.visual_anchors %}<li>{{ anchor }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if chapter.evidence %}
+    <h3>证据锚点</h3>
+    <ul class="evidence">
+      {% for evidence in chapter.evidence %}
+      <li>
+        <a href="{{ evidence.timestamp_url }}">{{ evidence.start_label }}-{{ evidence.end_label }}</a>
+        {% if evidence.text_preview %}<span>{{ evidence.text_preview }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
     {% endif %}
   </section>
   {% endfor %}

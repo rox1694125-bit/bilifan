@@ -10,7 +10,12 @@ from typing import Any
 
 from .bilibili import BilibiliPartRef
 from .bundle import write_content_bundle
-from .chunking import ChunkingError, LongVideoConfirmationRequired, build_chunks
+from .chunking import (
+    ChunkingError,
+    LongVideoConfirmationRequired,
+    build_chunks,
+    estimate_chunk_plan,
+)
 from .diagnostics import Diagnostics, redact_text, write_diagnostics
 from .exports import (
     ExportError,
@@ -55,6 +60,7 @@ class PipelineRequest:
     force_whisper: bool = False
     llm_provider: str = "codex-exec"
     llm_model: str = "gpt-5.5"
+    summary_template: str = "学习笔记"
     require_pdf: bool = False
     allow_long_video: bool = False
     yes_i_understand: bool = False
@@ -201,7 +207,12 @@ def run_summarize_pipeline(
         ) from exc
 
     _write_json(run.run_dir / "metadata.json", metadata)
-    _progress(progress_callback, PipelineStage.METADATA, "done", "Metadata saved.")
+    _progress(
+        progress_callback,
+        PipelineStage.METADATA,
+        "done",
+        _metadata_done_message(metadata),
+    )
 
     _progress(progress_callback, PipelineStage.AUDIO, "running", "Downloading audio.")
     try:
@@ -406,7 +417,7 @@ def run_summarize_pipeline(
             run_dir=run.run_dir,
             provider=request.llm_provider,
             model=request.llm_model,
-            style="学习笔记",
+            style=request.summary_template,
         )
     except SummarizationError as exc:
         sanitized_message = redact_text(str(exc))
@@ -691,6 +702,24 @@ def _download_source_audio(
             cookies_file=source_options.cookies_file,
         )
     return adapter.download_audio(source_ref, metadata, run_dir, source_options)
+
+
+def _metadata_done_message(metadata: dict[str, Any]) -> str:
+    estimate = estimate_chunk_plan(metadata.get("duration"))
+    if estimate["mode"] == "single_pass":
+        return "Metadata saved."
+    min_count = estimate["estimated_chunk_count_min"]
+    max_count = estimate["estimated_chunk_count_max"]
+    if min_count == max_count:
+        chunk_label = str(min_count)
+    else:
+        chunk_label = f"{min_count}-{max_count}"
+    message = f"Metadata saved. Estimated summary chunks: {chunk_label}."
+    if estimate["requires_allow_long_video"]:
+        return f"{message} Videos over 180 minutes require allow long video."
+    if estimate["requires_confirmation"]:
+        return f"{message} Videos between 90 and 180 minutes require confirmation."
+    return message
 
 
 def _progress(

@@ -39,6 +39,16 @@ def _transcript():
 def _chapters():
     return {
         "style": "学习笔记",
+        "summary_validation": {
+            "status": "passed",
+            "checks": {
+                "required_fields_present": True,
+                "timestamps_anchored": True,
+                "chapter_timestamps_within_chunk": True,
+                "evidence_anchors_present": True,
+            },
+            "warnings": [],
+        },
         "chapters": [
             {
                 "chapter_index": 1,
@@ -50,6 +60,16 @@ def _chapters():
                 "key_points": ["要点一"],
                 "quotes": ["关键句"],
                 "visual_anchors": ["白板"],
+                "evidence": [
+                    {
+                        "segment_start_index": 0,
+                        "segment_end_index": 0,
+                        "start": 0,
+                        "end": 120,
+                        "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?p=2&t=0",
+                        "text_preview": "转写",
+                    }
+                ],
             }
         ],
     }
@@ -69,6 +89,9 @@ def test_render_report_html_writes_offline_html_with_timestamp_links(tmp_path):
     assert "report.css" not in html
     assert 'src="assets/cover.jpg"' in html
     assert "https://www.bilibili.com/video/BV1abcDEF12G?p=2&amp;t=0" in html
+    assert "总结校验：passed" in html
+    assert "证据锚点" in html
+    assert "0:00-2:00" in html
     assert "第一阶段 MVP 不包含 SVG 图解和视频截图" in html
 
 

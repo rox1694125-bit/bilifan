@@ -48,6 +48,7 @@ def build_content_bundle(
             "artifacts": _artifact_map(artifact_paths),
             "summary": {
                 "style": _first_text(chapters.get("style")) or "学习笔记",
+                "summary_validation": _summary_validation(chapters.get("summary_validation")),
                 "chapters": _chapter_items(chapters),
             },
             "transcript": {
@@ -161,9 +162,49 @@ def _chapter_items(chapters: dict[str, Any]) -> list[dict[str, Any]]:
                     "key_points": _text_list(raw_chapter.get("key_points")),
                     "quotes": _text_list(raw_chapter.get("quotes")),
                     "visual_anchors": _text_list(raw_chapter.get("visual_anchors")),
+                    "evidence": _evidence_items(raw_chapter.get("evidence")),
                 }
             )
     return chapter_items
+
+
+def _summary_validation(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {
+            "status": "unknown",
+            "checks": {},
+            "warnings": [],
+        }
+    checks = value.get("checks") if isinstance(value.get("checks"), dict) else {}
+    return {
+        "status": _nullable_text(value.get("status")) or "unknown",
+        "checks": {
+            _first_text(key): bool(check_value)
+            for key, check_value in checks.items()
+            if _first_text(key) and isinstance(check_value, bool)
+        },
+        "warnings": _text_list(value.get("warnings")),
+    }
+
+
+def _evidence_items(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    evidence: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        evidence.append(
+            {
+                "segment_start_index": _int_or_none(item.get("segment_start_index")),
+                "segment_end_index": _int_or_none(item.get("segment_end_index")),
+                "start": _float_or_none(item.get("start")),
+                "end": _float_or_none(item.get("end")),
+                "timestamp_url": _nullable_text(item.get("timestamp_url")),
+                "text_preview": _nullable_text(item.get("text_preview")),
+            }
+        )
+    return evidence
 
 
 def _segment_items(transcript: dict[str, Any]) -> list[dict[str, Any]]:
@@ -213,6 +254,23 @@ def _float_or_none(value: object) -> float | None:
         except ValueError:
             return None
         return parsed if math.isfinite(parsed) else None
+    return None
+
+
+def _int_or_none(value: object) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        try:
+            parsed = float(value)
+        except ValueError:
+            return None
+        if math.isfinite(parsed) and parsed.is_integer():
+            return int(parsed)
     return None
 
 

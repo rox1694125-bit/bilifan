@@ -48,6 +48,13 @@ def test_default_progress_accepts_all_known_stages():
         default_progress(stage.value, "running", f"{stage.value} running")
 
 
+def test_metadata_done_message_includes_long_video_chunk_estimate():
+    message = pipeline._metadata_done_message({"duration": 2.5 * 60 * 60})
+
+    assert "Estimated summary chunks: 4-5" in message
+    assert "require confirmation" in message
+
+
 def test_pipeline_resolves_adapter_before_creating_run(tmp_path, monkeypatch):
     calls = {"parse": 0}
 

@@ -204,10 +204,12 @@ def test_retry_render_rewrites_report_and_bundle(tmp_path, monkeypatch):
 
 def test_retry_summarization_rewrites_chapters_notes_report_and_bundle(tmp_path, monkeypatch):
     run_dir = _run_dir(tmp_path)
+    summary_styles = []
 
     def fake_summarize_chunks(*, ref, metadata, chunks, run_dir, provider, model, style):
         assert provider == "codex-exec"
         assert model == "gpt-5.5"
+        summary_styles.append(style)
         return _chapters()
 
     def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
@@ -218,9 +220,15 @@ def test_retry_summarization_rewrites_chapters_notes_report_and_bundle(tmp_path,
     monkeypatch.setattr(retry_module, "summarize_chunks", fake_summarize_chunks)
     monkeypatch.setattr(retry_module, "render_report_html", fake_render_report_html)
 
-    result = retry_run(run_dir, from_stage="summarization", output_format="html")
+    result = retry_run(
+        run_dir,
+        from_stage="summarization",
+        output_format="html",
+        summary_template="观点提炼",
+    )
 
     chapters = json.loads((run_dir / "chapters.json").read_text(encoding="utf-8"))
+    assert summary_styles == ["观点提炼"]
     assert chapters["chapters"][0]["title"] == "重试章节"
     assert (run_dir / "notes.md").is_file()
     assert (run_dir / "report.html").is_file()
@@ -252,12 +260,23 @@ def test_cli_retry_command_invokes_retry(tmp_path, monkeypatch):
 
     monkeypatch.setattr("bilifan.cli.retry_run", fake_retry_run)
 
-    result = runner.invoke(app, ["retry", str(run_dir), "--from", "bundle"])
+    result = runner.invoke(
+        app,
+        [
+            "retry",
+            str(run_dir),
+            "--from",
+            "bundle",
+            "--summary-template",
+            "会议纪要",
+        ],
+    )
 
     assert result.exit_code == 0
     assert "Retried Bilifan run: BV1abcDEF12G_p1/runs/2026-06-09_120000" in result.output
     assert calls[0][0] == run_dir
     assert calls[0][1]["from_stage"] == "bundle"
+    assert calls[0][1]["summary_template"] == "会议纪要"
 
 
 def test_retry_invalid_format_fails_before_summarization_side_effects(
@@ -274,6 +293,25 @@ def test_retry_invalid_format_fails_before_summarization_side_effects(
 
     with pytest.raises(RetryError, match="--format"):
         retry_run(run_dir, from_stage="summarization", output_format="docx")
+
+    assert calls == []
+    assert not (run_dir / "chapters.json").exists()
+
+
+def test_retry_invalid_summary_template_fails_before_summarization_side_effects(
+    tmp_path, monkeypatch
+):
+    run_dir = _run_dir(tmp_path)
+    calls = []
+
+    def fake_summarize_chunks(**kwargs):
+        calls.append(kwargs)
+        return _chapters()
+
+    monkeypatch.setattr(retry_module, "summarize_chunks", fake_summarize_chunks)
+
+    with pytest.raises(RetryError, match="Unsupported summary template"):
+        retry_run(run_dir, from_stage="summarization", summary_template="营销文案")
 
     assert calls == []
     assert not (run_dir / "chapters.json").exists()

@@ -49,6 +49,16 @@ def _transcript():
 def _chapters():
     return {
         "style": "学习笔记",
+        "summary_validation": {
+            "status": "passed",
+            "checks": {
+                "required_fields_present": True,
+                "timestamps_anchored": True,
+                "chapter_timestamps_within_chunk": True,
+                "evidence_anchors_present": True,
+            },
+            "warnings": [],
+        },
         "chapters": [
             {
                 "chapter_index": 1,
@@ -60,6 +70,16 @@ def _chapters():
                 "key_points": ["要点"],
                 "quotes": [],
                 "visual_anchors": [],
+                "evidence": [
+                    {
+                        "segment_start_index": 0,
+                        "segment_end_index": 0,
+                        "start": 0,
+                        "end": 3.2,
+                        "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1&t=0",
+                        "text_preview": "第一段",
+                    }
+                ],
             }
         ],
     }
@@ -86,6 +106,8 @@ def test_build_content_bundle_writes_source_summary_and_transcript():
     assert bundle["source"]["platform"] == "bilibili"
     assert bundle["source"]["title"] == "测试视频"
     assert bundle["summary"]["chapters"][0]["title"] == "开场"
+    assert bundle["summary"]["summary_validation"]["status"] == "passed"
+    assert bundle["summary"]["chapters"][0]["evidence"][0]["text_preview"] == "第一段"
     assert bundle["transcript"]["segments"][0]["text"] == "第一段"
     assert bundle["artifacts"]["report_html"] == "report.html"
     assert bundle["artifacts"]["content_bundle_json"] == "content_bundle.json"

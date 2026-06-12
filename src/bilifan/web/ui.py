@@ -373,6 +373,15 @@ def render_app_html(token: str = "") -> str:
                             <option value="html,pdf">html,pdf</option>
                           </select>
                         </label>
+                        <label for="summary-template-select">
+                          总结模板
+                          <select id="summary-template-select" name="summary_template">
+                            <option value="学习笔记">学习笔记</option>
+                            <option value="教程步骤">教程步骤</option>
+                            <option value="观点提炼">观点提炼</option>
+                            <option value="会议纪要">会议纪要</option>
+                          </select>
+                        </label>
                       </div>
 
                       <div class="checks">
@@ -443,6 +452,7 @@ def render_app_html(token: str = "") -> str:
               jobForm: document.getElementById("job-form"),
               urlInput: document.getElementById("url-input"),
               formatSelect: document.getElementById("format-select"),
+              summaryTemplateSelect: document.getElementById("summary-template-select"),
               languageSelect: document.getElementById("language-select"),
               forceWhisper: document.getElementById("force-whisper"),
               requirePdf: document.getElementById("require-pdf"),
@@ -553,6 +563,7 @@ def render_app_html(token: str = "") -> str:
                 if (artifacts.bundle) links.push(linkItem("Bundle", artifacts.bundle));
                 if (artifacts.nabaichuan) links.push(linkItem("Nabaichuan", artifacts.nabaichuan));
                 if (!artifacts.nabaichuan && artifacts.bundle && runKey && status === "succeeded") links.push(nabaichuanButton("导出 Nabaichuan", runKey));
+                if (runKey && status === "succeeded") links.push(resummarizeButton("重总结", runKey));
                 if (artifacts.audio) links.push(linkItem("audio", artifacts.audio));
                 if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
                 if (artifacts.folder) links.push(folderButton("打开本地文件夹", artifacts.folder));
@@ -629,6 +640,7 @@ def render_app_html(token: str = "") -> str:
                 if (artifacts.bundle) links.push(linkItem("Bundle", artifacts.bundle));
                 if (artifacts.nabaichuan) links.push(linkItem("Nabaichuan", artifacts.nabaichuan));
                 if (!artifacts.nabaichuan && artifacts.bundle && item.run_key && item.status === "succeeded") links.push(nabaichuanButton("导出 Nabaichuan", item.run_key));
+                if (item.run_key && item.status === "succeeded") links.push(resummarizeButton("重总结", item.run_key));
                 if (artifacts.audio) links.push(linkItem("audio", artifacts.audio));
                 if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
                 if (artifacts.folder) links.push(folderButton("打开本地文件夹", artifacts.folder));
@@ -676,12 +688,17 @@ def render_app_html(token: str = "") -> str:
               return `重试 ${stage}`;
             }
 
+            function resummarizeButton(label, runKey) {
+              return `<button class="link-button" type="button" data-resummarize-run-key="${escapeAttr(runKey)}">${escapeHtml(label)}</button>`;
+            }
+
             async function loadConfig() {
               const data = await apiFetch("/api/config");
               const defaults = data.defaults || {};
               const consent = data.consent || {};
               state.consentAccepted = Boolean(consent.local_processing);
               elements.formatSelect.value = defaults.format || "html,pdf";
+              elements.summaryTemplateSelect.value = defaults.summary_template || "学习笔记";
               elements.languageSelect.value = defaults.language || "auto";
               elements.forceWhisper.checked = Boolean(defaults.force_whisper);
               elements.requirePdf.checked = Boolean(defaults.require_pdf);
@@ -759,6 +776,7 @@ def render_app_html(token: str = "") -> str:
               const payload = {
                 url: elements.urlInput.value.trim(),
                 format: elements.formatSelect.value,
+                summary_template: elements.summaryTemplateSelect.value,
                 language: elements.languageSelect.value,
                 force_whisper: elements.forceWhisper.checked,
                 require_pdf: elements.requirePdf.checked,
@@ -831,6 +849,7 @@ def render_app_html(token: str = "") -> str:
                 body: JSON.stringify({
                   from_stage: stage,
                   format: elements.formatSelect.value,
+                  summary_template: elements.summaryTemplateSelect.value,
                   require_pdf: elements.requirePdf.checked,
                 }),
               });
@@ -906,6 +925,18 @@ def render_app_html(token: str = "") -> str:
                 if (nabaichuanTarget) {
                   exportNabaichuan(nabaichuanTarget.getAttribute("data-nabaichuan-run-key")).catch((error) => {
                     setJobMessage(error.message || "Nabaichuan 导出失败。", true);
+                  });
+                  return;
+                }
+                const resummarizeTarget = event.target && event.target.closest
+                  ? event.target.closest("[data-resummarize-run-key]")
+                  : null;
+                if (resummarizeTarget) {
+                  retryAction(
+                    "summarization",
+                    resummarizeTarget.getAttribute("data-resummarize-run-key"),
+                  ).catch((error) => {
+                    setJobMessage(error.message || "重总结失败。", true);
                   });
                   return;
                 }

@@ -7,11 +7,13 @@ import bilifan.summarizer as summarizer
 from bilifan.bilibili import BilibiliPartRef
 from bilifan.summarizer import (
     CHUNK_SUMMARY_SCHEMA,
+    SUMMARY_TEMPLATES,
     SummarizationError,
     build_chunk_prompt,
     merge_partial_summaries,
     run_codex_chunk_summary,
     summarize_chunks,
+    validate_summary_style,
 )
 
 
@@ -75,6 +77,21 @@ def test_build_chunk_prompt_contains_schema_and_learning_note_style():
     assert "transcript_segments" in prompt
     assert '"start": 60.0' in prompt
     assert json.dumps(CHUNK_SUMMARY_SCHEMA["required"], ensure_ascii=False) in prompt
+
+
+def test_summary_templates_are_explicitly_supported():
+    assert list(SUMMARY_TEMPLATES) == ["学习笔记", "教程步骤", "观点提炼", "会议纪要"]
+    assert validate_summary_style("教程步骤") == "教程步骤"
+
+    with pytest.raises(SummarizationError, match="Unsupported summary template"):
+        validate_summary_style("营销文案")
+
+
+def test_build_chunk_prompt_includes_template_specific_instruction():
+    prompt = build_chunk_prompt(metadata=_metadata(), chunk=_chunks()["chunks"][0], style="教程步骤")
+
+    assert "教程步骤" in prompt
+    assert "按可执行步骤组织" in prompt
 
 
 def test_run_codex_chunk_summary_invokes_codex_exec_and_reads_output(tmp_path):
@@ -217,6 +234,18 @@ def test_summarize_chunks_writes_partial_and_merges_chapters(tmp_path):
     assert chapters["style"] == "学习笔记"
     assert chapters["chapters"][0]["chapter_index"] == 1
     assert chapters["chapters"][0]["timestamp_url"].endswith("&t=0")
+    assert chapters["summary_validation"]["status"] == "passed"
+    assert chapters["summary_validation"]["checks"]["evidence_anchors_present"] is True
+    assert chapters["chapters"][0]["evidence"] == [
+        {
+            "segment_start_index": 0,
+            "segment_end_index": 1,
+            "start": 0.0,
+            "end": 120.0,
+            "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?p=2&t=0",
+            "text_preview": "这是转写内容 第二段",
+        }
+    ]
 
 
 def test_summarize_chunks_normalizes_small_chunk_boundary_drift(tmp_path):

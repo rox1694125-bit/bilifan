@@ -23,7 +23,7 @@ from .exports import (
 )
 from .renderer import PdfExportError, RenderError, export_report_pdf, render_report_html
 from .runs import RUN_OUTPUT_ID_PATTERN
-from .summarizer import SummarizationError, summarize_chunks
+from .summarizer import SummarizationError, summarize_chunks, validate_summary_style
 
 RETRY_STAGES = {"summarization", "render", "bundle"}
 RUN_ID_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}")
@@ -84,12 +84,14 @@ def retry_run(
     output_format: str = "html,pdf",
     llm_provider: str = "codex-exec",
     llm_model: str = "gpt-5.5",
+    summary_template: str = "学习笔记",
     require_pdf: bool = False,
 ) -> RetryResult:
     stage = from_stage.strip().lower()
     if stage not in RETRY_STAGES:
         raise RetryError("--from must be summarization, render, or bundle.")
     requested_formats = _parse_output_formats(output_format)
+    summary_template = _validate_summary_template(summary_template)
 
     run_dir = run_dir.resolve(strict=False)
     if not run_dir.is_dir():
@@ -110,7 +112,7 @@ def retry_run(
                 run_dir=run_dir,
                 provider=llm_provider,
                 model=llm_model,
-                style="学习笔记",
+                style=summary_template,
             )
         except SummarizationError as exc:
             _write_failure_diagnostics(
@@ -298,6 +300,13 @@ def _render_and_bundle(
         artifact_paths=artifact_paths,
         warnings=warnings,
     )
+
+
+def _validate_summary_template(value: str) -> str:
+    try:
+        return validate_summary_style(value)
+    except SummarizationError as exc:
+        raise RetryError(str(exc)) from exc
 
 
 def _bundle_only(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from .diagnostics import redact_text
@@ -92,6 +93,27 @@ def estimate_text_tokens(text: str) -> int:
     non_space = sum(1 for char in text if not char.isspace())
     ascii_like = max(0, non_space - cjk)
     return max(1, cjk + (ascii_like + 3) // 4)
+
+
+def estimate_chunk_plan(duration_seconds: Any) -> dict[str, Any]:
+    duration = _positive_float(duration_seconds) or 0.0
+    mode = "single_pass" if duration <= SINGLE_PASS_MAX_SECONDS else "dynamic"
+    if mode == "single_pass":
+        estimated_min = 1 if duration > 0 else 0
+        estimated_max = estimated_min
+    else:
+        estimated_min = max(1, math.ceil(duration / MAX_CHUNK_SECONDS))
+        estimated_max = max(estimated_min, math.ceil(duration / MIN_CHUNK_SECONDS))
+    return {
+        "duration_seconds": float(duration),
+        "mode": mode,
+        "estimated_chunk_count_min": estimated_min,
+        "estimated_chunk_count_max": estimated_max,
+        "min_chunk_seconds": MIN_CHUNK_SECONDS,
+        "max_chunk_seconds": MAX_CHUNK_SECONDS,
+        "requires_confirmation": LONG_VIDEO_CONFIRM_SECONDS <= duration <= DEFAULT_LONG_VIDEO_LIMIT_SECONDS,
+        "requires_allow_long_video": duration > DEFAULT_LONG_VIDEO_LIMIT_SECONDS,
+    }
 
 
 def _normalized_segments(transcript: dict[str, Any]) -> list[dict[str, Any]]:

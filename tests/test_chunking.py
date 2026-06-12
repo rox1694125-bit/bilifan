@@ -4,6 +4,7 @@ from bilifan.chunking import (
     ChunkingError,
     LongVideoConfirmationRequired,
     build_chunks,
+    estimate_chunk_plan,
     estimate_text_tokens,
 )
 
@@ -11,6 +12,21 @@ from bilifan.chunking import (
 def test_estimate_text_tokens_counts_cjk_more_densely_than_ascii():
     assert estimate_text_tokens("中文测试") == 4
     assert estimate_text_tokens("abcd efgh") == 2
+
+
+def test_estimate_chunk_plan_uses_long_video_duration_before_heavy_stages():
+    estimate = estimate_chunk_plan(2.5 * 60 * 60)
+
+    assert estimate == {
+        "duration_seconds": 9000.0,
+        "mode": "dynamic",
+        "estimated_chunk_count_min": 4,
+        "estimated_chunk_count_max": 5,
+        "min_chunk_seconds": 30 * 60,
+        "max_chunk_seconds": 45 * 60,
+        "requires_confirmation": True,
+        "requires_allow_long_video": False,
+    }
 
 
 def test_build_chunks_uses_single_pass_for_short_video():

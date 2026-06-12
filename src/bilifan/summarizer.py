@@ -27,6 +27,15 @@ CODEX_EXEC_CANDIDATES = (
 CHAPTER_BOUNDARY_TOLERANCE_SECONDS = 2.0
 CHAPTER_SEGMENT_ANCHOR_TOLERANCE_SECONDS = 2.0
 TIMESTAMP_EPSILON_SECONDS = 0.001
+TEXT_PREVIEW_MAX_CHARS = 160
+
+
+SUMMARY_TEMPLATES: dict[str, str] = {
+    "学习笔记": "输出面向学习复盘，突出概念、问题、陷阱、步骤和结论。",
+    "教程步骤": "按可执行步骤组织，突出前提、操作顺序、检查点、常见错误和完成标准。",
+    "观点提炼": "按观点和论据组织，突出核心判断、支撑证据、反方风险和适用边界。",
+    "会议纪要": "按议题组织，突出讨论结论、决策、待办、负责人线索和风险。",
+}
 
 
 CHUNK_SUMMARY_SCHEMA: dict[str, Any] = {
@@ -76,10 +85,38 @@ CHUNK_SUMMARY_SCHEMA: dict[str, Any] = {
 
 CHAPTERS_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "required": ["style", "chapters"],
+    "required": ["style", "summary_validation", "chapters"],
     "additionalProperties": False,
     "properties": {
         "style": {"type": "string"},
+        "summary_validation": {
+            "type": "object",
+            "required": ["status", "checks", "warnings"],
+            "additionalProperties": False,
+            "properties": {
+                "status": {"type": "string", "enum": ["passed", "warning"]},
+                "checks": {
+                    "type": "object",
+                    "required": [
+                        "required_fields_present",
+                        "timestamps_anchored",
+                        "chapter_timestamps_within_chunk",
+                        "evidence_anchors_present",
+                    ],
+                    "additionalProperties": False,
+                    "properties": {
+                        "required_fields_present": {"type": "boolean"},
+                        "timestamps_anchored": {"type": "boolean"},
+                        "chapter_timestamps_within_chunk": {"type": "boolean"},
+                        "evidence_anchors_present": {"type": "boolean"},
+                    },
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+        },
         "chapters": {
             "type": "array",
             "items": {
@@ -94,6 +131,7 @@ CHAPTERS_SCHEMA: dict[str, Any] = {
                     "key_points",
                     "quotes",
                     "visual_anchors",
+                    "evidence",
                 ],
                 "additionalProperties": False,
                 "properties": {
@@ -114,6 +152,29 @@ CHAPTERS_SCHEMA: dict[str, Any] = {
                     "visual_anchors": {
                         "type": "array",
                         "items": {"type": "string"},
+                    },
+                    "evidence": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "segment_start_index",
+                                "segment_end_index",
+                                "start",
+                                "end",
+                                "timestamp_url",
+                                "text_preview",
+                            ],
+                            "additionalProperties": False,
+                            "properties": {
+                                "segment_start_index": {"type": "integer", "minimum": 0},
+                                "segment_end_index": {"type": "integer", "minimum": 0},
+                                "start": {"type": "number", "minimum": 0},
+                                "end": {"type": "number", "minimum": 0},
+                                "timestamp_url": {"type": "string", "minLength": 1},
+                                "text_preview": {"type": "string"},
+                            },
+                        },
                     },
                 },
             },
@@ -143,6 +204,7 @@ def summarize_chunks(
 ) -> dict[str, Any]:
     if provider != "codex-exec":
         raise SummarizationError(f"Unsupported LLM provider: {provider}")
+    style = validate_summary_style(style)
 
     partial_dir = run_dir / "partial_summaries"
     partial_dir.mkdir(parents=True, exist_ok=True)
@@ -171,8 +233,19 @@ def summarize_chunks(
         partials=partials,
         style=style,
     )
+    _add_evidence_and_validation(chapters, chunks, ref)
     _validate_json(chapters, CHAPTERS_SCHEMA, "chapters")
     return chapters
+
+
+def validate_summary_style(style: str) -> str:
+    normalized = _first_text(style).strip() or "学习笔记"
+    if normalized not in SUMMARY_TEMPLATES:
+        supported = "、".join(SUMMARY_TEMPLATES)
+        raise SummarizationError(
+            f"Unsupported summary template: {normalized}. Supported: {supported}."
+        )
+    return normalized
 
 
 def run_codex_chunk_summary(
@@ -266,6 +339,7 @@ def build_chunk_prompt(
     chunk: dict[str, Any],
     style: str,
 ) -> str:
+    style = validate_summary_style(style)
     safe_metadata = {
         "title": _first_text(metadata.get("title")),
         "part_title": _first_text(metadata.get("part_title")),
@@ -289,6 +363,7 @@ def build_chunk_prompt(
     return (
         "你是 Bilifan 的视频学习笔记生成器。请只根据输入 transcript 内容总结，"
         "不要编造视频里没有的信息。输出必须是严格 JSON，且必须匹配 schema。\n"
+        f"本次输出模板：{style}。模板要求：{SUMMARY_TEMPLATES[style]}\n"
         "章节按视频自然结构组织，不要机械套模板。每章用白话短句提炼问题、陷阱、"
         "步骤和结论。每章 start/end 必须落在输入 transcript_segments 的真实时间范围内，"
         "优先使用某个 segment 的 start 作为章节 start，保证能回跳到视频。quotes 只放 "
@@ -466,8 +541,176 @@ def _prompt_segments(chunk: dict[str, Any]) -> list[dict[str, Any]]:
         text = redact_text(_first_text(raw_segment.get("text")).strip(), max_length=None)
         if start is None or end is None or end <= start or not text:
             continue
-        segments.append({"start": start, "end": end, "text": text})
+        source_index = _int_value(raw_segment.get("source_index"))
+        segment: dict[str, Any] = {"start": start, "end": end, "text": text}
+        if source_index is not None and source_index >= 0:
+            segment["source_index"] = source_index
+        segments.append(segment)
     return segments
+
+
+def _add_evidence_and_validation(
+    chapters: dict[str, Any],
+    chunks: dict[str, Any],
+    ref: BilibiliPartRef,
+) -> None:
+    chunk_items = _chunk_items(chunks)
+    segments = _all_chunk_segments(chunk_items)
+    warnings: list[str] = []
+    checks = {
+        "required_fields_present": True,
+        "timestamps_anchored": True,
+        "chapter_timestamps_within_chunk": True,
+        "evidence_anchors_present": True,
+    }
+
+    raw_chapters = chapters.get("chapters")
+    if not isinstance(raw_chapters, list):
+        raw_chapters = []
+
+    for chapter in raw_chapters:
+        if not isinstance(chapter, dict):
+            checks["required_fields_present"] = False
+            continue
+        if not _chapter_required_fields_present(chapter):
+            checks["required_fields_present"] = False
+            warnings.append(f"chapter_{chapter.get('chapter_index', '?')}_missing_required_fields")
+
+        start = _float_value(chapter.get("start"))
+        end = _float_value(chapter.get("end"))
+        if start is None or end is None or end < start:
+            checks["required_fields_present"] = False
+            checks["chapter_timestamps_within_chunk"] = False
+            checks["timestamps_anchored"] = False
+            checks["evidence_anchors_present"] = False
+            chapter["evidence"] = []
+            warnings.append(f"chapter_{chapter.get('chapter_index', '?')}_invalid_timestamps")
+            continue
+
+        if not _chapter_within_any_chunk(start, end, chunk_items):
+            checks["chapter_timestamps_within_chunk"] = False
+            warnings.append(f"chapter_{chapter.get('chapter_index', '?')}_outside_chunk")
+        if not _timestamp_in_segments(start, segments):
+            checks["timestamps_anchored"] = False
+            warnings.append(f"chapter_{chapter.get('chapter_index', '?')}_start_unanchored")
+
+        evidence = _evidence_for_chapter(start, end, segments, ref)
+        chapter["evidence"] = evidence
+        if not evidence:
+            checks["evidence_anchors_present"] = False
+            warnings.append(f"chapter_{chapter.get('chapter_index', '?')}_missing_evidence")
+
+    chapters["summary_validation"] = {
+        "status": "passed" if all(checks.values()) else "warning",
+        "checks": checks,
+        "warnings": _unique_strings(warnings),
+    }
+
+
+def _all_chunk_segments(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    seen: set[tuple[int, float, float, str]] = set()
+    for chunk in chunks:
+        for segment in _prompt_segments(chunk):
+            source_index = _int_value(segment.get("source_index"))
+            if source_index is None:
+                source_index = len(segments)
+            normalized = {
+                "source_index": source_index,
+                "start": segment["start"],
+                "end": segment["end"],
+                "text": segment["text"],
+            }
+            key = (
+                normalized["source_index"],
+                normalized["start"],
+                normalized["end"],
+                normalized["text"],
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            segments.append(normalized)
+    return sorted(segments, key=lambda item: (item["start"], item["end"], item["source_index"]))
+
+
+def _chapter_required_fields_present(chapter: dict[str, Any]) -> bool:
+    return bool(
+        _first_text(chapter.get("title")).strip()
+        and _first_text(chapter.get("summary")).strip()
+        and _first_text(chapter.get("timestamp_url")).strip()
+        and isinstance(chapter.get("key_points"), list)
+        and isinstance(chapter.get("quotes"), list)
+        and isinstance(chapter.get("visual_anchors"), list)
+    )
+
+
+def _chapter_within_any_chunk(
+    start: float,
+    end: float,
+    chunks: list[dict[str, Any]],
+) -> bool:
+    for chunk in chunks:
+        chunk_start = _float_value(chunk.get("start"))
+        chunk_end = _float_value(chunk.get("end"))
+        if chunk_start is None or chunk_end is None:
+            continue
+        if (
+            chunk_start - TIMESTAMP_EPSILON_SECONDS
+            <= start
+            <= end
+            <= chunk_end + TIMESTAMP_EPSILON_SECONDS
+        ):
+            return True
+    return False
+
+
+def _evidence_for_chapter(
+    start: float,
+    end: float,
+    segments: list[dict[str, Any]],
+    ref: BilibiliPartRef,
+) -> list[dict[str, Any]]:
+    overlapping = [
+        segment
+        for segment in segments
+        if segment["start"] < end + TIMESTAMP_EPSILON_SECONDS
+        and segment["end"] > start - TIMESTAMP_EPSILON_SECONDS
+    ]
+    if not overlapping and segments:
+        containing = _segment_containing_timestamp(start, segments)
+        overlapping = [containing] if containing is not None else []
+    if not overlapping:
+        return []
+
+    evidence_start = min(segment["start"] for segment in overlapping)
+    evidence_end = max(segment["end"] for segment in overlapping)
+    text_preview = _preview_text(" ".join(segment["text"] for segment in overlapping))
+    return [
+        {
+            "segment_start_index": min(segment["source_index"] for segment in overlapping),
+            "segment_end_index": max(segment["source_index"] for segment in overlapping),
+            "start": evidence_start,
+            "end": evidence_end,
+            "timestamp_url": ref.timestamp_url(evidence_start),
+            "text_preview": text_preview,
+        }
+    ]
+
+
+def _preview_text(text: str) -> str:
+    normalized = " ".join(text.split())
+    if len(normalized) <= TEXT_PREVIEW_MAX_CHARS:
+        return normalized
+    return normalized[: TEXT_PREVIEW_MAX_CHARS - 1].rstrip() + "…"
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    unique: list[str] = []
+    for value in values:
+        if value not in unique:
+            unique.append(value)
+    return unique
 
 
 def _timestamp_in_segments(
