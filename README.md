@@ -2,11 +2,11 @@
 
 Bilifan is a local Bilibili video learning-note generator.
 
-The current implementation is a first-stage local MVP. It accepts one Bilibili
-or YouTube public video URL, processes only the current P/video, downloads audio, builds a transcript,
-chunks the transcript, asks `codex exec` for structured learning-note chapters,
-and renders an offline `report.html`. If Chrome is available it also tries to
-export `report.pdf`.
+The current implementation is a local MVP. It accepts Bilibili or YouTube public
+video URLs, processes only the current P/video, prefers platform subtitles,
+downloads audio only when Whisper is needed, chunks the transcript, asks
+`codex exec` for structured learning-note chapters, and renders an offline
+`report.html`. If Chrome is available it also tries to export `report.pdf`.
 
 ## Boundaries
 
@@ -17,7 +17,8 @@ export `report.pdf`.
 - You are responsible for having permission to access and summarize the content.
 - If you provide cookies, they must only be used locally for content your account can already view.
 - Codex-backed summarization sends transcript chunks to the model service configured in your local Codex environment.
-- First-stage MVP does not generate SVG diagrams, extract video screenshots, or run a batch queue.
+- SVG diagrams and frame screenshots are experimental helpers, not stable
+  evidence. The Web UI includes a local sequential task center for batch jobs.
 
 ## Usage
 
@@ -82,7 +83,7 @@ outputs/
         content_bundle.json
         nabaichuan.jsonl
         media/
-          audio.mp3
+          audio.mp3        # present only when audio was needed
 ```
 
 The command prints a relative run path such as:
@@ -179,7 +180,8 @@ Current MVP boundaries:
 - The Web UI can show HTML/PDF/TXT/SRT/MD/Bundle/audio export links and can ask
   macOS to open a run's local folder.
 - The Web UI can export a single successful run to `nabaichuan.jsonl` and
-  batch-export all successful history runs to a local JSONL file.
+  batch-export all successful history runs to a local JSONL file plus a
+  `.report.json` summary.
 - The Web UI can cancel the current task cooperatively. If a subprocess is
   currently downloading, transcribing, or summarizing, cancellation is applied at
   the next safe stage boundary.

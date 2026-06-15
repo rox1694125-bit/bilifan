@@ -8,6 +8,9 @@ that JSONL file; they do not write back into Bilifan.
 Stable fields:
 
 - `schema_version`
+- `contract.name`
+- `contract.schema_version`
+- `contract.compatibility`
 - `bundle_id`
 - `source.platform`
 - `source.id`
@@ -25,9 +28,15 @@ Generated Nabaichuan records use the same schema as
 
 | Record type | Key fields |
 | --- | --- |
-| `video` | `record_id`, `content_hash`, `source`, `title`, `text` |
-| `chapter` | `record_id`, `content_hash`, `source`, `chapter_id`, `parent_record_id`, `chapter_index`, `title`, `summary`, `key_points`, `start`, `end`, `timestamp_url`, `text` |
-| `transcript_segment` | `record_id`, `content_hash`, `source`, `parent_record_id`, `chapter_id`, `start`, `end`, `timestamp_url`, `text` |
+| `video` | `schema_version`, `export_contract`, `bundle_id`, `run_key`, `record_id`, `content_hash`, `source`, `title`, `text` |
+| `chapter` | `schema_version`, `export_contract`, `bundle_id`, `run_key`, `record_id`, `content_hash`, `source`, `chapter_id`, `parent_record_id`, `chapter_index`, `title`, `summary`, `key_points`, `start`, `end`, `timestamp_url`, `text` |
+| `transcript_segment` | `schema_version`, `export_contract`, `bundle_id`, `run_key`, `record_id`, `content_hash`, `source`, `parent_record_id`, `chapter_id`, `start`, `end`, `timestamp_url`, `text` |
+
+`schema_version` is currently `1`, and `export_contract` is
+`bilifan.nabaichuan.records.v1`. `run_key` is present when the export comes
+from a Bilifan run directory. `content_hash` is deterministic for the record
+content and ignores export metadata such as `schema_version`, `export_contract`,
+and `run_key`.
 
 Manual conversion remains available when you already have a bundle file:
 
@@ -48,8 +57,10 @@ python examples/content_bundle_to_nabaichuan.py \
 ```
 
 The local Web UI can export one successful run to `nabaichuan.jsonl` and can
-batch-export all successful history runs to a timestamped JSONL file. These
-actions generate local files only; they do not call Nabaichuan APIs or mutate an
+batch-export all successful history runs to a timestamped JSONL file. Batch
+export also writes `nabaichuan_batch_<timestamp>.report.json` with `export_id`,
+exported/skipped counts, `records_written`, and per-run status. These actions
+generate local files only; they do not call Nabaichuan APIs or mutate an
 external system.
 
 The converter does not import Nabaichuan code and does not depend on Bilifan run

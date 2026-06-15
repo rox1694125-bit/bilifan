@@ -30,6 +30,11 @@ def build_content_bundle(
     return _sanitize_json_value(
         {
             "schema_version": BUNDLE_SCHEMA_VERSION,
+            "contract": {
+                "name": "bilifan.content_bundle",
+                "schema_version": BUNDLE_SCHEMA_VERSION,
+                "compatibility": "additive",
+            },
             "bundle_id": f"{platform}:{source_id}:{part_id}",
             "source": {
                 "platform": platform,

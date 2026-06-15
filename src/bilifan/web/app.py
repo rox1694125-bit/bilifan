@@ -45,7 +45,7 @@ WEB_DEFAULTS = {
     "allow_long_video": False,
 }
 EXPORT_FILE_PATTERN = re.compile(
-    r"nabaichuan_batch_[0-9]{8}_[0-9]{6}_[0-9]{6}\.jsonl"
+    r"nabaichuan_batch_[0-9]{8}_[0-9]{6}_[0-9]{6}(?:\.jsonl|\.report\.json)"
 )
 
 
@@ -347,13 +347,19 @@ def create_app(
                 status_code=409,
                 detail="Nabaichuan export requires a successful run.",
             )
+        run_key = f"{output_id}/runs/{run_id}"
         try:
-            artifact = write_nabaichuan_jsonl(run_dir)
+            artifact = write_nabaichuan_jsonl(run_dir, run_key=run_key)
         except ExportError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        record_count = _jsonl_record_count(run_dir / artifact)
         return {
             "ok": True,
+            "status": "ready",
+            "export_id": run_key.replace("/", "-"),
+            "run_key": run_key,
             "artifact": f"/api/runs/{output_id}/runs/{run_id}/files/{artifact}",
+            "record_count": record_count,
         }
 
     @app.post("/api/exports/nabaichuan/batch")
@@ -366,20 +372,39 @@ def create_app(
             )
         export_dir = outputs / "_exports"
         export_dir.mkdir(parents=True, exist_ok=True)
-        file_name = datetime.now(timezone.utc).strftime(
-            "nabaichuan_batch_%Y%m%d_%H%M%S_%f.jsonl"
+        export_id = datetime.now(timezone.utc).strftime(
+            "nabaichuan_batch_%Y%m%d_%H%M%S_%f"
         )
+        file_name = f"{export_id}.jsonl"
+        report_name = f"{export_id}.report.json"
         output_path = export_dir / file_name
+        report_path = export_dir / report_name
         exported_runs = 0
         skipped_runs = 0
+        records_written = 0
         lines: list[str] = []
+        report_items: list[dict[str, object]] = []
         for item in list_all_runs(outputs):
+            run_key = item.get("run_key")
             if item.get("status") != "succeeded":
                 skipped_runs += 1
+                report_items.append(
+                    {
+                        "run_key": run_key if isinstance(run_key, str) else "",
+                        "status": "skipped",
+                        "reason": "run_not_succeeded",
+                    }
+                )
                 continue
-            run_key = item.get("run_key")
             if not isinstance(run_key, str):
                 skipped_runs += 1
+                report_items.append(
+                    {
+                        "run_key": "",
+                        "status": "skipped",
+                        "reason": "missing_run_key",
+                    }
+                )
                 continue
             try:
                 output_id, marker, run_id = run_key.split("/")
@@ -388,23 +413,59 @@ def create_app(
                 run_dir = resolve_run_dir(outputs, output_id, run_id)
                 if not _is_successful_run_dir(run_dir):
                     raise ValueError
-                artifact = write_nabaichuan_jsonl(run_dir)
-                lines.extend(
-                    (run_dir / artifact).read_text(encoding="utf-8").splitlines()
-                )
-            except (ValueError, FileNotFoundError, OSError, ExportError):
+                artifact = write_nabaichuan_jsonl(run_dir, run_key=run_key)
+                run_lines = (run_dir / artifact).read_text(encoding="utf-8").splitlines()
+                lines.extend(run_lines)
+            except (ValueError, FileNotFoundError, OSError, ExportError) as exc:
                 skipped_runs += 1
+                report_items.append(
+                    {
+                        "run_key": run_key,
+                        "status": "skipped",
+                        "reason": type(exc).__name__,
+                    }
+                )
                 continue
             exported_runs += 1
+            records_written += len(run_lines)
+            report_items.append(
+                {
+                    "run_key": run_key,
+                    "status": "exported",
+                    "artifact": f"/api/runs/{output_id}/runs/{run_id}/files/{artifact}",
+                    "record_count": len(run_lines),
+                }
+            )
         output_path.write_text(
             "".join(line + "\n" for line in lines),
             encoding="utf-8",
         )
+        report_path.write_text(
+            json.dumps(
+                {
+                    "export_id": export_id,
+                    "artifact": f"/api/exports/{file_name}",
+                    "records_written": records_written,
+                    "exported_runs": exported_runs,
+                    "skipped_runs": skipped_runs,
+                    "items": report_items,
+                },
+                ensure_ascii=False,
+                indent=2,
+                allow_nan=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         return {
             "ok": True,
+            "export_id": export_id,
             "artifact": f"/api/exports/{file_name}",
+            "report": f"/api/exports/{report_name}",
             "exported_runs": exported_runs,
             "skipped_runs": skipped_runs,
+            "records_written": records_written,
+            "items": report_items,
         }
 
     @app.get("/api/exports/{file_name}")
@@ -529,6 +590,13 @@ def _add_token_to_artifact_links(
             }
         linked_items.append(linked_item)
     return linked_items
+
+
+def _jsonl_record_count(path: Path) -> int:
+    try:
+        return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+    except OSError:
+        return 0
 
 
 def _task_center_state(

@@ -559,11 +559,11 @@ def render_app_html(token: str = "") -> str:
                             </label>
                             <label class="check" for="with-diagrams">
                               <input id="with-diagrams" name="with_diagrams" type="checkbox">
-                              <span>生成图解</span>
+                              <span>实验性图解</span>
                             </label>
                             <label class="check" for="with-frames">
                               <input id="with-frames" name="with_frames" type="checkbox">
-                              <span>抽取截图</span>
+                              <span>实验性截图</span>
                             </label>
                             <label class="check" for="require-pdf">
                               <input id="require-pdf" name="require_pdf" type="checkbox">
@@ -574,7 +574,7 @@ def render_app_html(token: str = "") -> str:
                               <span>允许长视频</span>
                             </label>
                           </div>
-                          <p class="hint">任务中心里的批量任务会使用这里的当前设置；默认设置适合大多数视频。</p>
+                          <p class="hint">任务中心里的批量任务会使用这里的当前设置；图解和截图目前只作为辅助理解，不作为稳定证据链。</p>
                         </div>
                       </details>
 
@@ -1076,8 +1076,8 @@ def render_app_html(token: str = "") -> str:
                 languageLabel(elements.languageSelect.value),
               ];
               if (elements.forceWhisper.checked) parts.push("强制 Whisper");
-              if (elements.withDiagrams.checked) parts.push("图解");
-              if (elements.withFrames.checked) parts.push("截图");
+              if (elements.withDiagrams.checked) parts.push("实验性图解");
+              if (elements.withFrames.checked) parts.push("实验性截图");
               if (elements.requirePdf.checked) parts.push("必须 PDF");
               if (elements.allowLongVideo.checked) parts.push("长视频");
               elements.currentOptionsSummary.textContent = parts.join(" · ");
@@ -1379,11 +1379,13 @@ def render_app_html(token: str = "") -> str:
               const data = await apiFetch("/api/exports/nabaichuan/batch", { method: "POST" });
               const count = Number.isFinite(Number(data.exported_runs)) ? Number(data.exported_runs) : 0;
               const skipped = Number.isFinite(Number(data.skipped_runs)) ? Number(data.skipped_runs) : 0;
+              const records = Number.isFinite(Number(data.records_written)) ? Number(data.records_written) : 0;
               const artifact = data && typeof data.artifact === "string" ? withToken(data.artifact) : "";
+              const report = data && typeof data.report === "string" ? withToken(data.report) : "";
               setJobMessage(
                 artifact
-                  ? `已批量导出 ${count} 个 run，跳过 ${skipped} 个: ${artifact}`
-                  : `已批量导出 ${count} 个 run，跳过 ${skipped} 个。`
+                  ? `已批量导出 ${count} 个 run、${records} 条记录，跳过 ${skipped} 个: ${artifact}${report ? `；报告: ${report}` : ""}`
+                  : `已批量导出 ${count} 个 run、${records} 条记录，跳过 ${skipped} 个。`
               );
             }
 

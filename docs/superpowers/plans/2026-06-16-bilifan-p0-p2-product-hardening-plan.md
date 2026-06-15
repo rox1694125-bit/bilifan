@@ -224,7 +224,7 @@ git push
 - Test: `tests/test_web_jobs.py`
 - Test: `tests/test_web_ui.py`
 
-- [ ] **Step 1: Add failing contract tests**
+- [x] **Step 1: Add failing contract tests**
 
 Add tests that `content_bundle.json` contains stable contract metadata:
 
@@ -236,15 +236,15 @@ assert bundle["contract"]["compatibility"] == "additive"
 
 Add tests that Nabaichuan records include `schema_version`, `bundle_id`, and deterministic `content_hash`.
 
-- [ ] **Step 2: Add batch export summary artifact**
+- [x] **Step 2: Add batch export summary artifact**
 
 When Web UI batch exports Nabaichuan JSONL, also write a JSON summary next to it with exported/skipped counts and run keys. Return both links from the API.
 
-- [ ] **Step 3: Update docs**
+- [x] **Step 3: Update docs**
 
 Update `docs/nabaichuan-integration.md` to say Bilifan writes local files only, treats `content_bundle.json` as the stable contract, and provides a batch export summary JSON.
 
-- [ ] **Step 4: Run focused tests and commit**
+- [x] **Step 4: Run focused tests and commit**
 
 Run:
 
@@ -264,11 +264,11 @@ git push
 - Test: `tests/test_web_ui.py`
 - Test if needed: `tests/test_visuals.py`
 
-- [ ] **Step 1: Add UI tests for experimental wording**
+- [x] **Step 1: Add UI tests for experimental wording**
 
 Add a test that the Web UI labels `with_diagrams` and `with_frames` as experimental and does not present them as default polished output.
 
-- [ ] **Step 2: Update UI copy**
+- [x] **Step 2: Update UI copy**
 
 Move diagram/frame controls into advanced settings with labels:
 
@@ -279,7 +279,7 @@ Move diagram/frame controls into advanced settings with labels:
 
 Keep default unchecked.
 
-- [ ] **Step 3: Update README boundary**
+- [x] **Step 3: Update README boundary**
 
 Update README to remove the stale statement that the first-stage MVP does not run a batch queue. State that diagrams and frames are optional experimental features, not the original high-quality dynamic SVG/screenshot pipeline.
 

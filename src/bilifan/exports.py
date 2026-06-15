@@ -15,6 +15,8 @@ class ExportError(RuntimeError):
 
 
 NABAICHUAN_JSONL = "nabaichuan.jsonl"
+NABAICHUAN_EXPORT_SCHEMA_VERSION = 1
+NABAICHUAN_EXPORT_CONTRACT = "bilifan.nabaichuan.records.v1"
 NABAICHUAN_MIN_SEGMENT_SECONDS = 30.0
 NABAICHUAN_MAX_SEGMENT_SECONDS = 90.0
 
@@ -63,11 +65,12 @@ def write_nabaichuan_jsonl(
     run_dir: str | Path,
     bundle: dict[str, Any] | None = None,
     overwrite: bool = True,
+    run_key: str | None = None,
 ) -> str:
     output_dir = Path(run_dir)
     _ensure_output_dir(output_dir)
     content_bundle = bundle if bundle is not None else _read_content_bundle(output_dir)
-    records = build_nabaichuan_records(content_bundle)
+    records = build_nabaichuan_records(content_bundle, run_key=run_key)
     output_path = output_dir / NABAICHUAN_JSONL
     _write_if_allowed(
         output_path,
@@ -84,6 +87,7 @@ def build_nabaichuan_records(
     bundle: dict[str, Any],
     *,
     include_transcript: bool = True,
+    run_key: str | None = None,
 ) -> list[dict[str, Any]]:
     if not isinstance(bundle, dict):
         raise ExportError("content_bundle must be a JSON object.")
@@ -111,7 +115,7 @@ def build_nabaichuan_records(
         "title": source_payload["title"],
         "text": source_payload["title"],
     }
-    records = [_with_content_hash(video_record)]
+    records = [_with_export_metadata(video_record, bundle_id=bundle_id, run_key=run_key)]
 
     summary = bundle.get("summary") if isinstance(bundle.get("summary"), dict) else {}
     chapters = summary.get("chapters") if isinstance(summary.get("chapters"), list) else []
@@ -143,7 +147,9 @@ def build_nabaichuan_records(
             *chapter_record["key_points"],
         )
         chapter_records.append(chapter_record)
-        records.append(_with_content_hash(chapter_record))
+        records.append(
+            _with_export_metadata(chapter_record, bundle_id=bundle_id, run_key=run_key)
+        )
 
     if include_transcript:
         for index, segment in enumerate(
@@ -170,7 +176,7 @@ def build_nabaichuan_records(
                 "timestamp_url": _timestamp_url(source_payload["canonical_url"], start),
                 "text": _first_text(segment.get("text")),
             }
-            records.append(_with_content_hash(record))
+            records.append(_with_export_metadata(record, bundle_id=bundle_id, run_key=run_key))
     return records
 
 
@@ -317,12 +323,35 @@ def _read_content_bundle(run_dir: Path) -> dict[str, Any]:
     return data
 
 
+def _with_export_metadata(
+    record: dict[str, Any],
+    *,
+    bundle_id: str,
+    run_key: str | None,
+) -> dict[str, Any]:
+    enriched = {
+        "schema_version": NABAICHUAN_EXPORT_SCHEMA_VERSION,
+        "export_contract": NABAICHUAN_EXPORT_CONTRACT,
+        "bundle_id": bundle_id,
+        **record,
+    }
+    if run_key:
+        enriched["run_key"] = run_key
+    return _with_content_hash(enriched)
+
+
 def _with_content_hash(record: dict[str, Any]) -> dict[str, Any]:
     sanitized = _sanitize_nabaichuan_record(record)
     normalized = {
         key: value
         for key, value in sanitized.items()
-        if key not in {"content_hash"}
+        if key
+        not in {
+            "content_hash",
+            "schema_version",
+            "export_contract",
+            "run_key",
+        }
     }
     digest = hashlib.sha256(
         json.dumps(

@@ -3,6 +3,8 @@ import json
 import pytest
 
 from bilifan.exports import (
+    NABAICHUAN_EXPORT_CONTRACT,
+    NABAICHUAN_EXPORT_SCHEMA_VERSION,
     build_nabaichuan_records,
     write_nabaichuan_jsonl,
 )
@@ -82,6 +84,28 @@ def test_build_nabaichuan_records_outputs_video_chapter_and_transcript_records()
     assert "第一段" in records[3]["text"]
     assert "第四段" in records[4]["text"]
     assert records[3]["timestamp_url"].endswith("t=0")
+
+
+def test_nabaichuan_records_include_stable_export_contract_metadata():
+    records = build_nabaichuan_records(
+        _bundle(),
+        run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
+    )
+    same_content_other_run = build_nabaichuan_records(
+        _bundle(),
+        run_key="BV1abcDEF12G_p1/runs/2026-06-09_120000",
+    )
+
+    assert all(
+        record["schema_version"] == NABAICHUAN_EXPORT_SCHEMA_VERSION
+        for record in records
+    )
+    assert all(record["export_contract"] == NABAICHUAN_EXPORT_CONTRACT for record in records)
+    assert all(record["bundle_id"] == "bilibili:BV1abcDEF12G:p1" for record in records)
+    assert all(record["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120000" for record in records)
+    assert [record["content_hash"] for record in records] == [
+        record["content_hash"] for record in same_content_other_run
+    ]
 
 
 def test_nabaichuan_transcript_records_split_long_segments_into_30_to_90_second_ranges():

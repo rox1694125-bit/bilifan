@@ -113,6 +113,11 @@ def test_build_content_bundle_writes_source_summary_and_transcript():
     )
 
     assert bundle["schema_version"] == 1
+    assert bundle["contract"] == {
+        "name": "bilifan.content_bundle",
+        "schema_version": 1,
+        "compatibility": "additive",
+    }
     assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p1"
     assert bundle["source"]["platform"] == "bilibili"
     assert bundle["source"]["title"] == "测试视频"

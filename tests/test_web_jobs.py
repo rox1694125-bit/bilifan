@@ -1317,7 +1317,12 @@ def test_export_single_run_nabaichuan_jsonl_from_web_api(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json()["artifact"].endswith("/nabaichuan.jsonl")
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["export_id"] == "BV1abcDEF12G_p1-runs-2026-06-08_120000"
+    assert payload["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120000"
+    assert payload["record_count"] == 1
+    assert payload["artifact"].endswith("/nabaichuan.jsonl")
     assert file_response.status_code == 200
     assert json.loads(file_response.text.splitlines()[0])["type"] == "video"
 
@@ -1390,11 +1395,21 @@ def test_batch_export_all_successful_history_runs_to_nabaichuan_jsonl(tmp_path, 
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["export_id"].startswith("nabaichuan_batch_")
     assert payload["exported_runs"] == 3
     assert payload["skipped_runs"] == 1
+    assert payload["records_written"] == 3
+    assert payload["report"].endswith(".report.json")
     export_response = client.get(payload["artifact"], headers=_headers())
+    report_response = client.get(payload["report"], headers=_headers())
     assert export_response.status_code == 200
+    assert report_response.status_code == 200
     rows = [json.loads(line) for line in export_response.text.splitlines()]
+    report = report_response.json()
+    assert report["export_id"] == payload["export_id"]
+    assert len(report["items"]) == 4
+    assert [item["status"] for item in report["items"]].count("exported") == 3
+    assert [item["status"] for item in report["items"]].count("skipped") == 1
     assert sorted(row["source"]["id"] for row in rows) == [
         "BV1abcDEF12G",
         "BV1abcDEF12G",
