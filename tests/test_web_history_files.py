@@ -96,6 +96,21 @@ def test_list_latest_runs_reads_outputs_latest_json(tmp_path):
     }
 
 
+def test_list_latest_runs_includes_transcript_source_label(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    (run_dir / "transcript.json").write_text(
+        json.dumps({"source": "whisper", "model": "turbo", "language": "zh"}),
+        encoding="utf-8",
+    )
+
+    latest_items = list_latest_runs(outputs)
+    all_items = list_all_runs(outputs)
+
+    assert latest_items[0]["transcript_source_label"] == "Whisper turbo"
+    assert all_items[0]["transcript_source_label"] == "Whisper turbo"
+
+
 def test_list_latest_runs_accepts_youtube_output_id(tmp_path):
     outputs = tmp_path / "outputs"
     _make_run(outputs, output_id="YTdQw4w9WgXcQ_p1")

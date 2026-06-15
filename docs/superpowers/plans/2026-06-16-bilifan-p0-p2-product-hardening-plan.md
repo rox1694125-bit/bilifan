@@ -161,7 +161,7 @@ Keep existing `/api/jobs/current` for compatibility. Add a combined task view fr
 
 Keep `RECENT_COMPLETED_LIMIT = 3`. Hide failed/canceled jobs when a later successful job with the same normalized URL exists. Keep `clear_completed` for manual cleanup.
 
-- [ ] **Step 4: Run focused tests and commit**
+- [x] **Step 4: Run focused tests and commit**
 
 Run:
 
@@ -181,7 +181,7 @@ git push
 - Test: `tests/test_web_jobs.py`
 - Test: `tests/test_web_ui.py`
 
-- [ ] **Step 1: Add tests for recovery classification**
+- [x] **Step 1: Add tests for recovery classification**
 
 Add tests for user-facing failure cases:
 
@@ -192,11 +192,11 @@ assert explain_failure(stage="summarization", message="chunk summary chapter sta
 
 Also add a UI snapshot/assertion that successful run cards show transcript source text such as `逐字稿：B站字幕` or `逐字稿：Whisper turbo`.
 
-- [ ] **Step 2: Expose transcript source metadata in history/task payloads**
+- [x] **Step 2: Expose transcript source metadata in history/task payloads**
 
 When listing runs in `src/bilifan/web/files.py`, read `transcript.json` and expose a small `transcript_source_label`.
 
-- [ ] **Step 3: Render transcript source in UI cards**
+- [x] **Step 3: Render transcript source in UI cards**
 
 In `src/bilifan/web/ui.py`, show `逐字稿：...` in history and task cards. Keep raw JSON links under "更多".
 

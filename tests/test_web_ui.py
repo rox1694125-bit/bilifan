@@ -748,6 +748,72 @@ def test_render_app_script_task_center_shows_current_job_item():
     )
 
 
+def test_render_app_script_shows_transcript_source_labels():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "AI 自动判断" } });
+          }
+          if (path === "/api/history") {
+            return jsonResponse({
+              items: [{
+                title: "历史视频",
+                output_id: "BV1abcDEF12G_p1",
+                run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
+                status: "succeeded",
+                stage: "render",
+                transcript_source_label: "B站字幕",
+                artifacts: {}
+              }]
+            });
+          }
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 0, running: 0, succeeded: 1, failed: 0, canceled: 0 },
+              visible_counts: { queued: 0, running: 0, succeeded: 1, failed: 0, canceled: 0 },
+              queue_counts: { queued: 0, running: 0, succeeded: 1, failed: 0, canceled: 0 },
+              total_items: 1,
+              hidden_completed: 0,
+              hidden_replaced: 0,
+              items: [{
+                source: "queue",
+                job_id: "job-1",
+                title: "队列视频",
+                status: "succeeded",
+                stage: "render",
+                message: "Report ready.",
+                transcript_source_label: "Whisper turbo",
+                request: { url: "https://www.bilibili.com/video/BV1abcDEF12H?p=1" },
+                run_key: "BV1abcDEF12H_p1/runs/2026-06-08_120000",
+                artifacts: {}
+              }]
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["history-list"].innerHTML.includes("逐字稿：B站字幕"));
+        assert(elements["queue-list"].innerHTML.includes("逐字稿：Whisper turbo"));
+        """,
+    )
+
+
 def test_render_app_script_renders_stage_names_in_chinese():
     script = _extract_inline_script(render_app_html())
 

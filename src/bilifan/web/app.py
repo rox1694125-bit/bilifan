@@ -571,6 +571,9 @@ def _current_task_item(current_job: dict[str, object]) -> dict[str, object] | No
         "stage": current_job.get("stage") or "preflight",
         "message": current_job.get("message") or "",
         "title": title if isinstance(title, str) and title.strip() else "当前任务",
+        "transcript_source_label": current_job.get("transcript_source_label")
+        if isinstance(current_job.get("transcript_source_label"), str)
+        else "",
         "request": dict(request),
         "progress": current_job.get("progress") if isinstance(current_job.get("progress"), list) else [],
         "run_key": current_job.get("run_key"),

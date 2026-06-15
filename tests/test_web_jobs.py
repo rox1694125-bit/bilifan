@@ -9,7 +9,7 @@ from bilifan.pipeline import PipelineResult, PipelineRunError
 from bilifan.retry import RetryError, RetryResult
 from bilifan.web import files as web_files
 from bilifan.web.app import create_app
-from bilifan.web.jobs import JobManager
+from bilifan.web.jobs import JobManager, explain_failure
 
 
 def _headers(token="test-token"):
@@ -1053,6 +1053,24 @@ def test_job_pipeline_run_error_exposes_friendly_error(tmp_path, monkeypatch):
     assert "codex" in state["friendly_error"]["cause"].lower()
     assert "Terminal" in state["friendly_error"]["next_action"]
     assert state["retry_actions"] == ["summarization"]
+
+
+def test_explain_failure_classifies_audio_and_timestamp_errors():
+    audio = explain_failure(
+        stage="audio",
+        message="Bilibili audio stream download failed.",
+        warnings=[],
+    )
+    timestamp = explain_failure(
+        stage="summarization",
+        message="chunk summary chapter start was not anchored to a transcript segment.",
+        warnings=[],
+    )
+
+    assert audio["title"] == "音频下载超时或中断"
+    assert "cookies" in audio["next_action"].lower()
+    assert timestamp["title"] == "总结时间戳校验失败"
+    assert "重试总结" in timestamp["next_action"]
 
 
 def test_retry_failed_run_from_web_api(tmp_path, monkeypatch):

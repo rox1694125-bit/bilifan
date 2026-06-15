@@ -929,6 +929,7 @@ def render_app_html(token: str = "") -> str:
                 const stageMeta = item.status === "failed"
                   ? `<span>失败阶段: ${escapeHtml(stageLabel(item.stage))}</span>`
                   : (item.status && item.status !== "succeeded" ? `<span>阶段: ${escapeHtml(stageLabel(item.stage))}</span>` : "");
+                const transcriptMeta = transcriptSourceMeta(item);
                 return `
                   <li class="history-item">
                     <div class="history-item-title">${escapeHtml(item.title || item.output_id || "-")}</div>
@@ -936,6 +937,7 @@ def render_app_html(token: str = "") -> str:
                       <span>${escapeHtml(item.output_id || "-")}</span>
                       <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(statusLabel(item.status))}</span>
                       ${stageMeta}
+                      ${transcriptMeta}
                     </div>
                     ${failureDetail}
                     ${retryButtons}
@@ -985,6 +987,7 @@ def render_app_html(token: str = "") -> str:
                 const displayTitle = queueDisplayTitle(item, requestUrl);
                 const compactUrl = compactSourceUrl(requestUrl);
                 const sourceLabel = item.source === "current" ? "当前任务" : "队列任务";
+                const transcriptMeta = transcriptSourceMeta(item);
                 return `
                   <li class="history-item">
                     <div class="history-item-title">${escapeHtml(displayTitle)}</div>
@@ -992,6 +995,7 @@ def render_app_html(token: str = "") -> str:
                       <span>${escapeHtml(sourceLabel)}</span>
                       <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(statusLabel(item.status))}</span>
                       <span>阶段: ${escapeHtml(stageLabel(item.stage))}</span>
+                      ${transcriptMeta}
                       ${compactUrl ? `<span class="queue-url">${escapeHtml(compactUrl)}</span>` : ""}
                     </div>
                     <div class="history-meta"><span>${escapeHtml(item.message || "")}</span></div>
@@ -1004,6 +1008,13 @@ def render_app_html(token: str = "") -> str:
 
             function stageLabel(stage) {
               return STAGE_LABELS[stage] || stage || "-";
+            }
+
+            function transcriptSourceMeta(item) {
+              const label = item && typeof item.transcript_source_label === "string"
+                ? item.transcript_source_label.trim()
+                : "";
+              return label ? `<span>逐字稿：${escapeHtml(label)}</span>` : "";
             }
 
             function stageDescription(stage) {

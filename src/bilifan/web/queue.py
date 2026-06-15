@@ -11,6 +11,7 @@ from bilifan.diagnostics import redact_text
 from bilifan.pipeline import PipelineRequest, PipelineRunError
 
 from .jobs import STAGES, _artifact_links, _now_iso, explain_failure
+from .run_info import read_transcript_source_label
 
 QUEUE_SCHEMA_VERSION = 1
 RECENT_COMPLETED_LIMIT = 3
@@ -22,6 +23,7 @@ class QueueJob:
     status: str
     request: dict[str, Any]
     title: str | None = None
+    transcript_source_label: str | None = None
     stage: str = "preflight"
     message: str = ""
     progress: list[dict[str, str]] = field(default_factory=list)
@@ -196,6 +198,10 @@ class BatchQueueManager:
                 job.run_key = exc.run_key
                 job.artifacts = _artifact_links(exc.run_key, exc.artifact_paths)
                 job.title = _read_metadata_title(Path(str(request.out)) / exc.run_key) or job.title
+                job.transcript_source_label = (
+                    read_transcript_source_label(Path(str(request.out)) / exc.run_key)
+                    or job.transcript_source_label
+                )
                 job.warnings = list(exc.warnings)
                 job.friendly_error = explain_failure(
                     stage=job.stage,
@@ -233,6 +239,9 @@ class BatchQueueManager:
             job.run_key = result.run_key
             job.artifacts = _artifact_links(result.run_key, result.artifact_paths)
             job.title = _read_metadata_title(result.run_dir) or job.title
+            job.transcript_source_label = (
+                read_transcript_source_label(result.run_dir) or job.transcript_source_label
+            )
             job.warnings = list(result.warnings)
             job.friendly_error = None
             job.finished_at = _now_iso()
@@ -325,6 +334,7 @@ class BatchQueueManager:
                 status=str(raw_job.get("status") or "queued"),
                 request=raw_job.get("request") if isinstance(raw_job.get("request"), dict) else {},
                 title=_optional_text(raw_job.get("title")),
+                transcript_source_label=_optional_text(raw_job.get("transcript_source_label")),
                 stage=str(raw_job.get("stage") or "preflight"),
                 message=str(raw_job.get("message") or ""),
                 progress=raw_job.get("progress") if isinstance(raw_job.get("progress"), list) else _initial_progress(),
@@ -338,6 +348,10 @@ class BatchQueueManager:
             )
             if job.title is None and run_key:
                 job.title = _read_metadata_title(outputs_root / run_key)
+            if job.transcript_source_label is None and run_key:
+                job.transcript_source_label = read_transcript_source_label(
+                    outputs_root / run_key
+                )
             if job.status in {"running", "canceling"}:
                 job.status = "failed"
                 job.stage = "interrupted"

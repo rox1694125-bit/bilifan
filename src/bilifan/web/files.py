@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .jobs import explain_failure, retry_actions_for
+from .run_info import transcript_source_label
 
 OUTPUT_ID_PATTERN = re.compile(
     r"(?:(?:BV[0-9A-Za-z]{10}|YT[0-9A-Za-z_-]{6,128})_p[1-9][0-9]*|_errors)"
@@ -65,6 +66,7 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
             _safe_existing_file(run_dir, "diagnostics.json")
         )
         metadata = _read_json_object(_safe_existing_file(run_dir, "metadata.json"))
+        transcript = _read_json_object(_safe_existing_file(run_dir, "transcript.json"))
         status = "failed" if diagnostics.get("error_type") else "succeeded"
         stage = _text(diagnostics.get("stage"))
         artifact_paths = _text_list(diagnostics.get("artifact_paths"))
@@ -77,6 +79,7 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
                 "title": _text(metadata.get("title")) or output_id,
                 "status": status,
                 "stage": stage,
+                "transcript_source_label": transcript_source_label(transcript),
                 "generated_at": _text(latest.get("generated_at")),
                 "artifacts": _artifact_links(
                     f"{output_id}/runs/{run_id}",
@@ -231,6 +234,7 @@ def _run_item(
     run_dir = _run_dir(outputs, output_id, run_id)
     diagnostics = _read_json_object(_safe_existing_file(run_dir, "diagnostics.json"))
     metadata = _read_json_object(_safe_existing_file(run_dir, "metadata.json"))
+    transcript = _read_json_object(_safe_existing_file(run_dir, "transcript.json"))
     status = "failed" if diagnostics.get("error_type") else "succeeded"
     stage = _text(diagnostics.get("stage"))
     artifact_paths = _text_list(diagnostics.get("artifact_paths"))
@@ -242,6 +246,7 @@ def _run_item(
         "title": _text(metadata.get("title")) or output_id,
         "status": status,
         "stage": stage,
+        "transcript_source_label": transcript_source_label(transcript),
         "generated_at": generated_at,
         "artifacts": _artifact_links(
             f"{output_id}/runs/{run_id}",

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +10,8 @@ from uuid import uuid4
 
 from bilifan.diagnostics import redact_text
 from bilifan.pipeline import PipelineResult, PipelineRunError
+
+from .run_info import read_metadata_title, read_transcript_source_label
 
 STAGES = [
     "preflight",
@@ -34,6 +35,7 @@ class JobState:
     stage: str = "preflight"
     message: str = ""
     title: str | None = None
+    transcript_source_label: str | None = None
     request: dict[str, object] = field(default_factory=dict)
     progress: list[dict[str, str]] = field(
         default_factory=lambda: [{"stage": stage, "status": "pending"} for stage in STAGES]
@@ -58,6 +60,7 @@ class JobState:
             "stage": self.stage,
             "message": self.message,
             "title": self.title,
+            "transcript_source_label": self.transcript_source_label,
             "request": dict(self.request),
             "progress": [dict(item) for item in self.progress],
             "run_key": self.run_key,
@@ -172,7 +175,10 @@ class JobManager:
                 self._current.run_key = exc.run_key
                 self._current.artifacts = _artifact_links(exc.run_key, exc.artifact_paths)
                 self._current.warnings = list(exc.warnings)
-                self._current.title = _read_metadata_title(exc.diagnostics_path.parent)
+                self._current.title = read_metadata_title(exc.diagnostics_path.parent)
+                self._current.transcript_source_label = read_transcript_source_label(
+                    exc.diagnostics_path.parent
+                )
                 self._current.friendly_error = explain_failure(
                     stage=failed_stage,
                     message=self._current.message,
@@ -225,7 +231,8 @@ class JobManager:
             self._current.run_key = result.run_key
             self._current.artifacts = artifacts
             self._current.warnings = list(result.warnings)
-            self._current.title = _read_metadata_title(result.run_dir)
+            self._current.title = read_metadata_title(result.run_dir)
+            self._current.transcript_source_label = read_transcript_source_label(result.run_dir)
             self._current.friendly_error = None
             self._current.retry_actions = []
             for item in self._current.progress:
@@ -269,6 +276,7 @@ class JobManager:
             stage=self._current.stage,
             message=self._current.message,
             title=self._current.title,
+            transcript_source_label=self._current.transcript_source_label,
             request=dict(self._current.request),
             progress=[dict(item) for item in self._current.progress],
             run_key=self._current.run_key,
@@ -338,17 +346,6 @@ def _request_payload(request: Any) -> dict[str, object]:
     if hasattr(request, "out"):
         payload["out"] = str(getattr(request, "out"))
     return payload
-
-
-def _read_metadata_title(run_dir: Path) -> str | None:
-    try:
-        data = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    title = data.get("title") or data.get("part_title")
-    return redact_text(title) if isinstance(title, str) and title.strip() else None
 
 
 def explain_failure(
