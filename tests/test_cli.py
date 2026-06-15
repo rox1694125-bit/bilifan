@@ -141,6 +141,8 @@ def _install_fake_transcript_build(monkeypatch):
                 "transcriber": transcriber,
             }
         )
+        if not media.get("audio_path"):
+            raise TranscriptError("Audio file for Whisper is missing.")
         return {
             "source": "whisper",
             "language": "zh",
@@ -797,6 +799,8 @@ def test_summarize_incomplete_transcript_writes_file_with_warning(
         language="auto",
         transcriber="auto",
     ):
+        if not media.get("audio_path"):
+            raise TranscriptError("Audio file for Whisper is missing.")
         return {
             "source": "whisper",
             "language": "zh",

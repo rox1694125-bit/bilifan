@@ -200,7 +200,7 @@ When listing runs in `src/bilifan/web/files.py`, read `transcript.json` and expo
 
 In `src/bilifan/web/ui.py`, show `逐字稿：...` in history and task cards. Keep raw JSON links under "更多".
 
-- [ ] **Step 4: Run focused tests and commit**
+- [x] **Step 4: Run focused tests and commit**
 
 Run:
 
@@ -299,7 +299,7 @@ git push
 **Files:**
 - No planned production changes.
 
-- [ ] **Step 1: Run full suite**
+- [x] **Step 1: Run full suite**
 
 Run:
 
