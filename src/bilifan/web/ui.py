@@ -15,31 +15,39 @@ def render_app_html(token: str = "") -> str:
           <style>
             :root {
               color-scheme: light;
-              --bg: #f3f5f7;
-              --panel: #ffffff;
-              --panel-muted: #f7f8fa;
-              --border: #d7dde3;
-              --border-strong: #b9c2cb;
-              --text: #16202a;
-              --muted: #5c6977;
-              --accent: #235ea7;
-              --accent-strong: #18497f;
-              --warn: #a66300;
-              --danger: #b03737;
-              --success: #1e6a45;
-              --shadow: 0 8px 24px rgba(17, 24, 39, 0.06);
-              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+              --bg: #f4f0e8;
+              --bg-grid: rgba(34, 44, 52, 0.055);
+              --panel: #fffdfa;
+              --panel-muted: #f8f6f1;
+              --panel-strong: #f1ebe1;
+              --border: #d7d0c3;
+              --border-strong: #a99d8d;
+              --text: #20252a;
+              --muted: #66717b;
+              --accent: #176b87;
+              --accent-strong: #0f4f65;
+              --accent-soft: #e4f0f3;
+              --paper: #fff8ea;
+              --warn: #9a6400;
+              --danger: #b0443d;
+              --success: #2b7050;
+              --shadow: 0 14px 34px rgba(54, 45, 31, 0.08);
+              font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", sans-serif;
             }
 
             * { box-sizing: border-box; }
             body {
               margin: 0;
-              background: var(--bg);
+              background:
+                linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px),
+                linear-gradient(0deg, var(--bg-grid) 1px, transparent 1px),
+                var(--bg);
+              background-size: 28px 28px;
               color: var(--text);
             }
             .shell {
               min-height: 100vh;
-              padding: 16px;
+              padding: 18px;
             }
             .layout {
               display: grid;
@@ -55,9 +63,11 @@ def render_app_html(token: str = "") -> str:
               margin-bottom: 16px;
             }
             .brandbar h1 {
-              font-size: 20px;
+              font-size: 22px;
+              font-weight: 800;
             }
             .panel {
+              min-width: 0;
               background: var(--panel);
               border: 1px solid var(--border);
               border-radius: 8px;
@@ -107,24 +117,31 @@ def render_app_html(token: str = "") -> str:
             input[type="text"],
             input[type="url"],
             select,
+            textarea,
             button {
               font: inherit;
             }
             input[type="text"],
             input[type="url"],
-            select {
+            select,
+            textarea {
               width: 100%;
               border: 1px solid var(--border);
               border-radius: 6px;
-              background: #fff;
+              background: #fffefa;
               color: var(--text);
               padding: 10px 12px;
+            }
+            textarea {
+              min-height: 100px;
+              resize: vertical;
             }
             input[type="text"]:focus,
             input[type="url"]:focus,
             select:focus,
+            textarea:focus,
             button:focus {
-              outline: 2px solid rgba(35, 94, 167, 0.18);
+              outline: 2px solid rgba(23, 107, 135, 0.18);
               outline-offset: 1px;
               border-color: var(--accent);
             }
@@ -163,6 +180,53 @@ def render_app_html(token: str = "") -> str:
               color: var(--muted);
               font-size: 11px;
             }
+            .options-summary {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 8px;
+              align-items: center;
+              min-height: 40px;
+              padding: 10px 12px;
+              border: 1px solid var(--border);
+              border-radius: 6px;
+              background: var(--accent-soft);
+              color: var(--accent-strong);
+              font-size: 13px;
+              font-weight: 700;
+            }
+            .advanced-settings {
+              border: 1px solid var(--border);
+              border-radius: 6px;
+              background: var(--panel-muted);
+              padding: 0;
+            }
+            .advanced-settings summary {
+              cursor: pointer;
+              display: flex;
+              justify-content: space-between;
+              gap: 12px;
+              padding: 10px 12px;
+              color: var(--text);
+              font-weight: 700;
+              list-style: none;
+            }
+            .advanced-settings summary::-webkit-details-marker {
+              display: none;
+            }
+            .advanced-settings summary::after {
+              content: "展开";
+              color: var(--accent);
+              font-size: 12px;
+              font-weight: 700;
+            }
+            .advanced-settings[open] summary::after {
+              content: "收起";
+            }
+            .advanced-settings-body {
+              display: grid;
+              gap: 12px;
+              padding: 0 12px 12px;
+            }
             .actions {
               display: flex;
               align-items: center;
@@ -173,7 +237,7 @@ def render_app_html(token: str = "") -> str:
               border: 1px solid var(--border-strong);
               border-radius: 6px;
               padding: 10px 14px;
-              background: #fff;
+              background: #fffefa;
               color: var(--text);
               cursor: pointer;
             }
@@ -236,15 +300,22 @@ def render_app_html(token: str = "") -> str:
             }
             .history-item,
             .stage-item {
+              min-width: 0;
               border: 1px solid var(--border);
               border-radius: 6px;
               background: var(--panel-muted);
-              padding: 10px 12px;
+              padding: 12px;
+            }
+            .history-item {
+              display: grid;
+              gap: 8px;
             }
             .history-item-title,
             .stage-name {
               font-size: 13px;
-              font-weight: 600;
+              font-weight: 700;
+              line-height: 1.45;
+              overflow-wrap: anywhere;
             }
             .history-meta,
             .history-links,
@@ -256,23 +327,95 @@ def render_app_html(token: str = "") -> str:
               font-size: 12px;
               color: var(--muted);
             }
-            .history-links a,
-            .link-list a,
-            .link-button {
+            .history-meta span,
+            .stage-meta span {
+              overflow-wrap: anywhere;
+            }
+            .queue-url {
+              font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+              font-size: 11px;
+            }
+            .action-groups {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 8px;
+              align-items: center;
+            }
+            .primary-actions,
+            .secondary-actions {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 8px;
+              align-items: center;
+            }
+            .action-link,
+            .link-button,
+            .action-menu summary {
+              display: inline-flex;
+              align-items: center;
+              min-height: 30px;
+              border: 1px solid var(--border);
+              border-radius: 6px;
+              background: #fffefa;
               color: var(--accent);
+              padding: 6px 10px;
+              font-size: 12px;
+              line-height: 1.2;
               text-decoration: none;
             }
-            .history-links a:hover,
-            .link-list a:hover,
-            .link-button:hover {
-              text-decoration: underline;
+            .action-link.primary-action {
+              border-color: var(--accent);
+              background: var(--accent);
+              color: #fff;
+              font-weight: 700;
+            }
+            .action-link.secondary-action {
+              border-color: #b7d3dc;
+              background: var(--accent-soft);
+              color: var(--accent-strong);
+            }
+            .action-link.warning-action,
+            .link-button.warning-action {
+              border-color: #dfc286;
+              background: var(--paper);
+              color: var(--warn);
+            }
+            .action-link:hover,
+            .link-button:hover,
+            .action-menu summary:hover {
+              border-color: var(--accent);
+              color: var(--accent-strong);
             }
             .link-button {
-              border: 0;
-              background: transparent;
-              padding: 0;
-              font-size: 12px;
               cursor: pointer;
+            }
+            .action-menu {
+              position: relative;
+            }
+            .action-menu summary {
+              cursor: pointer;
+              list-style: none;
+            }
+            .action-menu summary::-webkit-details-marker {
+              display: none;
+            }
+            .action-menu summary::after {
+              content: "⌄";
+              margin-left: 6px;
+              color: var(--muted);
+            }
+            .action-menu[open] summary::after {
+              content: "⌃";
+            }
+            .action-menu-items {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 8px;
+              margin-top: 8px;
+              padding: 8px;
+              border: 1px solid var(--border);
+              border-radius: 6px;
+              background: #fffefa;
             }
             .pill {
               display: inline-flex;
@@ -287,6 +430,8 @@ def render_app_html(token: str = "") -> str:
             .pill.done,
             .pill.succeeded { color: var(--success); border-color: #b7d8c7; }
             .pill.failed { color: var(--danger); border-color: #e2bbbb; }
+            .pill.queued { color: var(--warn); border-color: #dfc286; }
+            .pill.canceled { color: var(--muted); border-color: var(--border); }
             .muted-panel {
               border: 1px dashed var(--border);
               border-radius: 6px;
@@ -306,16 +451,23 @@ def render_app_html(token: str = "") -> str:
             .failure-panel.active { display: block; }
 
             @media (max-width: 900px) {
+              .shell {
+                padding: 10px;
+              }
               .layout,
               .field-grid,
               .checks {
-                grid-template-columns: 1fr;
+                grid-template-columns: minmax(0, 1fr);
               }
               .brandbar,
+              .panel-heading-row,
               .banner-row,
               .actions {
                 align-items: stretch;
                 flex-direction: column;
+              }
+              .action-groups {
+                align-items: flex-start;
               }
             }
           </style>
@@ -361,60 +513,70 @@ def render_app_html(token: str = "") -> str:
                     </div>
 
                     <form id="job-form" class="stack">
-                      <div class="field-grid">
-                        <label for="url-input">
-                          视频 URL
-                          <input id="url-input" name="url" type="url" required autocomplete="off" spellcheck="false">
-                        </label>
-                        <label for="format-select">
-                          输出格式
-                          <select id="format-select" name="format">
-                            <option value="html">html</option>
-                            <option value="html,pdf">html,pdf</option>
-                          </select>
-                        </label>
-                        <label for="summary-template-select">
-                          总结模板
-                          <select id="summary-template-select" name="summary_template">
-                            <option value="学习笔记">学习笔记</option>
-                            <option value="教程步骤">教程步骤</option>
-                            <option value="观点提炼">观点提炼</option>
-                            <option value="会议纪要">会议纪要</option>
-                          </select>
-                        </label>
-                      </div>
+                      <label for="url-input">
+                        视频 URL
+                        <input id="url-input" name="url" type="url" required autocomplete="off" spellcheck="false">
+                      </label>
 
-                      <div class="checks">
-                        <label class="field" for="language-select">
-                          <span>语言</span>
-                          <select id="language-select" name="language">
-                            <option value="auto">auto</option>
-                            <option value="zh">中文</option>
-                            <option value="en">英文</option>
-                          </select>
-                          <span class="hint">只影响 Whisper；已有字幕默认优先使用。</span>
-                        </label>
-                        <label class="check" for="force-whisper">
-                          <input id="force-whisper" name="force_whisper" type="checkbox">
-                          <span>Force Whisper</span>
-                        </label>
-                        <label class="check" for="with-diagrams">
-                          <input id="with-diagrams" name="with_diagrams" type="checkbox">
-                          <span>SVG diagrams</span>
-                        </label>
-                        <label class="check" for="with-frames">
-                          <input id="with-frames" name="with_frames" type="checkbox">
-                          <span>Video frames</span>
-                        </label>
-                        <label class="check" for="require-pdf">
-                          <input id="require-pdf" name="require_pdf" type="checkbox">
-                          <span>Require PDF</span>
-                        </label>
-                        <label class="check" for="allow-long-video">
-                          <input id="allow-long-video" name="allow_long_video" type="checkbox">
-                          <span>Allow long video</span>
-                        </label>
-                      </div>
+                      <div id="current-options-summary" class="options-summary">HTML + PDF · AI 自动判断 · 自动语言</div>
+
+                      <details id="advanced-settings" class="advanced-settings">
+                        <summary>高级设置</summary>
+                        <div class="advanced-settings-body">
+                          <div class="field-grid">
+                            <label for="format-select">
+                              输出格式
+                              <select id="format-select" name="format">
+                                <option value="html">HTML</option>
+                                <option value="html,pdf">HTML + PDF</option>
+                              </select>
+                            </label>
+                            <label for="summary-template-select">
+                              总结模板
+                              <select id="summary-template-select" name="summary_template">
+                                <option value="AI 自动判断">AI 自动判断</option>
+                                <option value="学习笔记">学习笔记</option>
+                                <option value="教程步骤">教程步骤</option>
+                                <option value="观点提炼">观点提炼</option>
+                                <option value="会议纪要">会议纪要</option>
+                              </select>
+                            </label>
+                            <label for="language-select">
+                              语言
+                              <select id="language-select" name="language">
+                                <option value="auto">自动</option>
+                                <option value="zh">中文</option>
+                                <option value="en">英文</option>
+                              </select>
+                              <span class="hint">只影响 Whisper；已有字幕默认优先使用。</span>
+                            </label>
+                          </div>
+
+                          <div class="checks">
+                            <label class="check" for="force-whisper">
+                              <input id="force-whisper" name="force_whisper" type="checkbox">
+                              <span>强制 Whisper</span>
+                            </label>
+                            <label class="check" for="with-diagrams">
+                              <input id="with-diagrams" name="with_diagrams" type="checkbox">
+                              <span>生成图解</span>
+                            </label>
+                            <label class="check" for="with-frames">
+                              <input id="with-frames" name="with_frames" type="checkbox">
+                              <span>抽取截图</span>
+                            </label>
+                            <label class="check" for="require-pdf">
+                              <input id="require-pdf" name="require_pdf" type="checkbox">
+                              <span>PDF 失败时报错</span>
+                            </label>
+                            <label class="check" for="allow-long-video">
+                              <input id="allow-long-video" name="allow_long_video" type="checkbox">
+                              <span>允许长视频</span>
+                            </label>
+                          </div>
+                          <p class="hint">批量队列会使用这里的当前设置；默认设置适合大多数视频。</p>
+                        </div>
+                      </details>
 
                       <div class="actions">
                         <div id="job-message" class="status-line">等待输入。</div>
@@ -442,6 +604,7 @@ def render_app_html(token: str = "") -> str:
                       <div style="display:flex; gap:8px; align-items:center;">
                         <button id="queue-pause-button" type="button">暂停队列</button>
                         <button id="queue-resume-button" type="button">恢复队列</button>
+                        <button id="queue-clear-completed-button" type="button">清除已完成</button>
                         <button id="batch-submit-button" class="primary" type="button">加入队列</button>
                       </div>
                     </div>
@@ -466,6 +629,28 @@ def render_app_html(token: str = "") -> str:
 
           <script>
             const STAGES = ["preflight", "metadata", "audio", "transcript", "chunking", "summarization", "render"];
+            const STAGE_LABELS = {
+              preflight: "准备检查",
+              metadata: "读取视频信息",
+              audio: "下载音频",
+              transcript: "获取逐字稿",
+              chunking: "拆分内容",
+              summarization: "生成总结",
+              render: "生成文件",
+              interrupted: "服务中断",
+              canceled: "已取消",
+            };
+            const STAGE_DESCRIPTIONS = {
+              preflight: "检查参数、本地依赖和运行条件",
+              metadata: "读取标题、作者、时长、分 P 和字幕信息",
+              audio: "下载当前视频音频并校验时长",
+              transcript: "优先使用已有字幕，必要时调用 Whisper",
+              chunking: "按时长和上下文拆成可总结片段",
+              summarization: "调用 Codex 生成学习笔记内容",
+              render: "生成 HTML、PDF 和导出文件",
+              interrupted: "服务重启或任务中断，需要重新排队",
+              canceled: "任务已取消",
+            };
             const embeddedToken = __BILIFAN_EMBEDDED_TOKEN__;
             const token = new URLSearchParams(location.search).get("token") || embeddedToken;
 
@@ -474,6 +659,7 @@ def render_app_html(token: str = "") -> str:
               consentAccepted: false,
               currentStatus: "idle",
               currentRunKey: "",
+              openMenus: new Set(),
               pollingTimer: null,
             };
 
@@ -481,6 +667,7 @@ def render_app_html(token: str = "") -> str:
               historyList: document.getElementById("history-list"),
               jobForm: document.getElementById("job-form"),
               urlInput: document.getElementById("url-input"),
+              currentOptionsSummary: document.getElementById("current-options-summary"),
               formatSelect: document.getElementById("format-select"),
               summaryTemplateSelect: document.getElementById("summary-template-select"),
               languageSelect: document.getElementById("language-select"),
@@ -496,6 +683,7 @@ def render_app_html(token: str = "") -> str:
               batchSubmitButton: document.getElementById("batch-submit-button"),
               queuePauseButton: document.getElementById("queue-pause-button"),
               queueResumeButton: document.getElementById("queue-resume-button"),
+              queueClearCompletedButton: document.getElementById("queue-clear-completed-button"),
               queueSummary: document.getElementById("queue-summary"),
               queueList: document.getElementById("queue-list"),
               jobMessage: document.getElementById("job-message"),
@@ -572,6 +760,7 @@ def render_app_html(token: str = "") -> str:
               elements.batchSubmitButton.disabled = state.authExpired || !state.consentAccepted;
               elements.queuePauseButton.disabled = state.authExpired || !state.consentAccepted;
               elements.queueResumeButton.disabled = state.authExpired || !state.consentAccepted;
+              elements.queueClearCompletedButton.disabled = state.authExpired || !state.consentAccepted;
             }
 
             function renderStageList(progress, activeStage, jobStatus) {
@@ -580,13 +769,15 @@ def render_app_html(token: str = "") -> str:
                 const stage = typeof item.stage === "string" ? item.stage : "";
                 const status = typeof item.status === "string" ? item.status : "pending";
                 const active = stage === activeStage ? " 当前" : "";
-                const statusClass = ["pending", "running", "done", "failed", "succeeded"].includes(status) ? status : "pending";
+                const statusClass = ["pending", "running", "done", "failed", "succeeded", "queued", "canceled"].includes(status) ? status : "pending";
+                const description = stageDescription(stage);
                 return `
                   <li class="stage-item">
-                    <div class="stage-name">${escapeHtml(stage)}</div>
+                    <div class="stage-name">${escapeHtml(stageLabel(stage))}</div>
+                    ${description ? `<div class="history-meta"><span>${escapeHtml(description)}</span></div>` : ""}
                     <div class="stage-meta">
-                      <span class="pill ${statusClass}">${escapeHtml(status)}${escapeHtml(active)}</span>
-                      <span>job: ${escapeHtml(jobStatus || "idle")}</span>
+                      <span class="pill ${statusClass}">${escapeHtml(statusLabel(status))}${escapeHtml(active)}</span>
+                      <span>任务: ${escapeHtml(statusLabel(jobStatus || "idle"))}</span>
                     </div>
                   </li>
                 `;
@@ -594,63 +785,114 @@ def render_app_html(token: str = "") -> str:
             }
 
             function renderLinks(artifacts, runKey, status = "idle") {
-              const links = [];
-              if (artifacts && typeof artifacts === "object") {
-                if (artifacts.html) links.push(linkItem("report.html", artifacts.html));
-                if (artifacts.pdf) links.push(linkItem("report.pdf", artifacts.pdf));
-                if (artifacts.txt) links.push(linkItem("TXT", artifacts.txt));
-                if (artifacts.srt) links.push(linkItem("SRT", artifacts.srt));
-                if (artifacts.md) links.push(linkItem("MD", artifacts.md));
-                if (artifacts.bundle) links.push(linkItem("Bundle", artifacts.bundle));
-                if (artifacts.nabaichuan) links.push(linkItem("Nabaichuan", artifacts.nabaichuan));
-                if (!artifacts.nabaichuan && artifacts.bundle && runKey && status === "succeeded") links.push(nabaichuanButton("导出 Nabaichuan", runKey));
-                if (runKey && status === "succeeded") links.push(resummarizeButton("重总结", runKey));
-                if (artifacts.audio) links.push(linkItem("audio", artifacts.audio));
-                if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
-                if (artifacts.folder) links.push(folderButton("打开本地文件夹", artifacts.folder));
-              }
-              if (runKey) {
-                links.push(linkItem("file list", runFilesUrl(runKey)));
-              }
-              elements.resultLinks.innerHTML = links.length
-                ? links.join("")
+              const markup = artifactActionGroups(artifacts, runKey, status, {
+                menuScope: `current:${runKey || status || "idle"}`,
+              });
+              elements.resultLinks.innerHTML = markup
+                ? markup
                 : '<div class="muted-panel">当前没有可用 artifacts。</div>';
             }
 
-            function linkItem(label, href) {
-              const url = withToken(href);
-              return `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+            function artifactActionGroups(artifacts, runKey, status = "idle", options = {}) {
+              const safeArtifacts = artifacts && typeof artifacts === "object" ? artifacts : {};
+              const primary = [];
+              const exports = [];
+              const advanced = [];
+
+              if (safeArtifacts.html) primary.push(linkItem("打开笔记", safeArtifacts.html, "primary-action"));
+              if (safeArtifacts.pdf) primary.push(linkItem("下载 PDF", safeArtifacts.pdf, "secondary-action"));
+              if (safeArtifacts.md) exports.push(linkItem("Markdown", safeArtifacts.md));
+              if (safeArtifacts.txt) exports.push(linkItem("逐字稿 TXT", safeArtifacts.txt));
+              if (safeArtifacts.srt) exports.push(linkItem("字幕 SRT", safeArtifacts.srt));
+              if (safeArtifacts.bundle) advanced.push(linkItem("结构化数据", safeArtifacts.bundle));
+              if (safeArtifacts.nabaichuan) advanced.push(linkItem("纳百川文件", safeArtifacts.nabaichuan));
+              if (!safeArtifacts.nabaichuan && safeArtifacts.bundle && runKey && status === "succeeded") {
+                advanced.push(nabaichuanButton("导出到纳百川", runKey));
+              }
+              if (runKey && status === "succeeded") {
+                advanced.push(resummarizeButton("重新生成总结", runKey));
+              }
+              if (safeArtifacts.audio) advanced.push(linkItem("音频文件", safeArtifacts.audio));
+              if (safeArtifacts.diagnostics) advanced.push(linkItem("诊断信息", safeArtifacts.diagnostics));
+              if (safeArtifacts.folder) advanced.push(folderButton("打开本地文件夹", safeArtifacts.folder));
+              if (runKey && options.includeFiles !== false) {
+                advanced.push(linkItem("文件列表", runFilesUrl(runKey)));
+              }
+
+              return actionGroups(primary, exports, advanced, options.menuScope || "");
             }
 
-            function folderButton(label, href) {
-              const url = withToken(href);
-              return `<button class="link-button" type="button" data-folder-url="${escapeAttr(url)}">${escapeHtml(label)}</button>`;
+            function actionGroups(primary, exports, advanced, menuScope = "") {
+              const groups = [];
+              if (primary.length) {
+                groups.push(`<div class="primary-actions">${primary.join("")}</div>`);
+              }
+              if (exports.length) {
+                groups.push(actionMenu("导出", exports, menuScope ? `${menuScope}:export` : ""));
+              }
+              if (advanced.length) {
+                groups.push(actionMenu("更多", advanced, menuScope ? `${menuScope}:more` : ""));
+              }
+              return groups.length ? `<div class="action-groups">${groups.join("")}</div>` : "";
             }
 
-            function nabaichuanButton(label, runKey) {
-              return `<button class="link-button" type="button" data-nabaichuan-run-key="${escapeAttr(runKey)}">${escapeHtml(label)}</button>`;
+            function rememberOpenMenu(menuKey, isOpen) {
+              if (!menuKey) return;
+              if (isOpen) {
+                state.openMenus.add(menuKey);
+              } else {
+                state.openMenus.delete(menuKey);
+              }
+            }
+
+            function actionMenu(label, items, menuKey = "") {
+              const keyAttr = menuKey ? ` data-menu-key="${escapeAttr(menuKey)}"` : "";
+              const openAttr = menuKey && state.openMenus.has(menuKey) ? " open" : "";
+              return `
+                <details class="action-menu"${keyAttr}${openAttr}>
+                  <summary>${escapeHtml(label)}</summary>
+                  <div class="action-menu-items">${items.join("")}</div>
+                </details>
+              `;
+            }
+
+            function linkItem(label, href, variant = "") {
+              const url = withToken(href);
+              const classes = ["action-link", variant].filter(Boolean).join(" ");
+              return `<a class="${escapeAttr(classes)}" href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+            }
+
+            function folderButton(label, href, variant = "") {
+              const url = withToken(href);
+              const classes = ["link-button", variant].filter(Boolean).join(" ");
+              return `<button class="${escapeAttr(classes)}" type="button" data-folder-url="${escapeAttr(url)}">${escapeHtml(label)}</button>`;
+            }
+
+            function nabaichuanButton(label, runKey, variant = "") {
+              const classes = ["link-button", variant].filter(Boolean).join(" ");
+              return `<button class="${escapeAttr(classes)}" type="button" data-nabaichuan-run-key="${escapeAttr(runKey)}">${escapeHtml(label)}</button>`;
             }
 
             function renderFailure(stage, message, diagnostics, runKey, friendlyError, retryActions) {
               const links = [];
               if (diagnostics) {
-                links.push(`<a href="${escapeAttr(withToken(diagnostics))}" target="_blank" rel="noopener noreferrer">diagnostics</a>`);
+                links.push(linkItem("诊断信息", diagnostics));
               }
               if (runKey) {
-                links.push(`<a href="${escapeAttr(runFilesUrl(runKey))}" target="_blank" rel="noopener noreferrer">file list</a>`);
+                links.push(linkItem("文件列表", runFilesUrl(runKey)));
               }
-              const linkMarkup = links.length ? `<div class="history-links">${links.join("")}</div>` : "";
+              const linkMarkup = links.length ? `<div class="action-groups">${links.join("")}</div>` : "";
               const friendly = friendlyError && typeof friendlyError === "object" ? friendlyError : null;
               const title = friendly && friendly.title ? friendly.title : "任务失败";
               const cause = friendly && friendly.cause ? friendly.cause : (message || "Unknown error.");
               const nextAction = friendly && friendly.next_action ? `<div>${escapeHtml(friendly.next_action)}</div>` : "";
               const retryButtons = Array.isArray(retryActions) && retryActions.length && runKey
-                ? `<div class="history-links">${retryActions.map((retryStage) => `<button class="link-button" type="button" data-retry-stage="${escapeAttr(retryStage)}" data-retry-run-key="${escapeAttr(runKey)}">${escapeHtml(retryLabel(retryStage))}</button>`).join("")}</div>`
+                ? `<div class="action-groups">${retryActions.map((retryStage) => `<button class="link-button warning-action" type="button" data-retry-stage="${escapeAttr(retryStage)}" data-retry-run-key="${escapeAttr(runKey)}">${escapeHtml(retryLabel(retryStage))}</button>`).join("")}</div>`
                 : "";
               elements.failurePanel.innerHTML = `
                 <div class="stack" style="gap:6px;">
                   <h2>${escapeHtml(title)}</h2>
-                  <div>stage: ${escapeHtml(stage || "preflight")}</div>
+                  <div>阶段: ${escapeHtml(stageLabel(stage || "preflight"))}</div>
                   <div>${escapeHtml(cause)}</div>
                   ${nextAction}
                   ${retryButtons}
@@ -672,46 +914,57 @@ def render_app_html(token: str = "") -> str:
               }
               elements.historyList.innerHTML = items.map((item) => {
                 const artifacts = item && typeof item.artifacts === "object" ? item.artifacts : {};
-                const links = [];
-                if (artifacts.html) links.push(linkItem("HTML", artifacts.html));
-                if (artifacts.pdf) links.push(linkItem("PDF", artifacts.pdf));
-                if (artifacts.txt) links.push(linkItem("TXT", artifacts.txt));
-                if (artifacts.srt) links.push(linkItem("SRT", artifacts.srt));
-                if (artifacts.md) links.push(linkItem("MD", artifacts.md));
-                if (artifacts.bundle) links.push(linkItem("Bundle", artifacts.bundle));
-                if (artifacts.nabaichuan) links.push(linkItem("Nabaichuan", artifacts.nabaichuan));
-                if (!artifacts.nabaichuan && artifacts.bundle && item.run_key && item.status === "succeeded") links.push(nabaichuanButton("导出 Nabaichuan", item.run_key));
-                if (item.run_key && item.status === "succeeded") links.push(resummarizeButton("重总结", item.run_key));
-                if (artifacts.audio) links.push(linkItem("audio", artifacts.audio));
-                if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
-                if (artifacts.folder) links.push(folderButton("打开本地文件夹", artifacts.folder));
-                if (item.run_key) links.push(linkItem("file list", `/api/runs/${item.run_key}/files`));
+                const historyKey = item.run_key || item.output_id || item.title || "history";
+                const actionMarkup = artifactActionGroups(artifacts, item.run_key, item.status, {
+                  menuScope: `history:${historyKey}`,
+                });
                 const friendly = item.friendly_error && typeof item.friendly_error === "object" ? item.friendly_error : null;
                 const retryActions = Array.isArray(item.retry_actions) ? item.retry_actions : [];
                 const retryButtons = retryActions.length && item.run_key
-                  ? retryActions.map((retryStage) => `<button class="link-button" type="button" data-retry-stage="${escapeAttr(retryStage)}" data-retry-run-key="${escapeAttr(item.run_key)}">${escapeHtml(retryLabel(retryStage))}</button>`).join("")
+                  ? `<div class="action-groups">${retryActions.map((retryStage) => `<button class="link-button warning-action" type="button" data-retry-stage="${escapeAttr(retryStage)}" data-retry-run-key="${escapeAttr(item.run_key)}">${escapeHtml(retryLabel(retryStage))}</button>`).join("")}</div>`
                   : "";
                 const failureDetail = friendly
                   ? `<div class="history-meta"><span>${escapeHtml(friendly.title || "任务失败")}</span><span>${escapeHtml(friendly.cause || "")}</span><span>${escapeHtml(friendly.next_action || "")}</span></div>`
                   : "";
+                const stageMeta = item.status === "failed"
+                  ? `<span>失败阶段: ${escapeHtml(stageLabel(item.stage))}</span>`
+                  : (item.status && item.status !== "succeeded" ? `<span>阶段: ${escapeHtml(stageLabel(item.stage))}</span>` : "");
                 return `
                   <li class="history-item">
                     <div class="history-item-title">${escapeHtml(item.title || item.output_id || "-")}</div>
                     <div class="history-meta">
                       <span>${escapeHtml(item.output_id || "-")}</span>
-                      <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(item.status || "-")}</span>
-                      <span>stage: ${escapeHtml(item.stage || "-")}</span>
+                      <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(statusLabel(item.status))}</span>
+                      ${stageMeta}
                     </div>
                     ${failureDetail}
-                    <div class="history-links">${links.join("")}${retryButtons}</div>
+                    ${retryButtons}
+                    ${actionMarkup}
                   </li>
                 `;
               }).join("");
             }
 
             function renderQueue(queue) {
-              const counts = queue && queue.counts ? queue.counts : {};
-              elements.queueSummary.textContent = `queued ${counts.queued || 0} · running ${counts.running || 0} · succeeded ${counts.succeeded || 0} · failed ${counts.failed || 0} · canceled ${counts.canceled || 0}`;
+              const totalCounts = queue && queue.counts ? queue.counts : {};
+              const counts = queue && queue.visible_counts ? queue.visible_counts : totalCounts;
+              const hiddenCompleted = Number.isFinite(Number(queue && queue.hidden_completed)) ? Number(queue.hidden_completed) : 0;
+              const hiddenReplaced = Number.isFinite(Number(queue && queue.hidden_replaced)) ? Number(queue.hidden_replaced) : 0;
+              const summaryParts = [
+                `排队 ${counts.queued || 0}`,
+                `运行 ${counts.running || 0}`,
+                `已生成 ${counts.succeeded || 0}`,
+                `失败 ${counts.failed || 0}`,
+                `已取消 ${counts.canceled || 0}`,
+              ];
+              if (hiddenCompleted > 0) {
+                summaryParts.push(`隐藏 ${hiddenCompleted} 条已完成`);
+              }
+              if (hiddenReplaced > 0) {
+                summaryParts.push(`隐藏 ${hiddenReplaced} 条已重试失败记录`);
+              }
+              elements.queueSummary.textContent = summaryParts.join(" · ");
+              elements.queueClearCompletedButton.disabled = state.authExpired || !state.consentAccepted || !(totalCounts.succeeded || 0);
               const items = queue && Array.isArray(queue.items) ? queue.items : [];
               if (!items.length) {
                 elements.queueList.innerHTML = '<li class="muted-panel">暂无队列任务。</li>';
@@ -719,25 +972,116 @@ def render_app_html(token: str = "") -> str:
               }
               elements.queueList.innerHTML = items.map((item) => {
                 const artifacts = item && typeof item.artifacts === "object" ? item.artifacts : {};
-                const links = [];
-                if (artifacts.html) links.push(linkItem("HTML", artifacts.html));
-                if (artifacts.pdf) links.push(linkItem("PDF", artifacts.pdf));
-                if (artifacts.diagnostics) links.push(linkItem("diagnostics", artifacts.diagnostics));
-                if (item.status === "queued") links.push(`<button class="link-button" type="button" data-queue-cancel="${escapeAttr(item.job_id || "")}">取消排队</button>`);
-                if (["failed", "canceled"].includes(item.status)) links.push(`<button class="link-button" type="button" data-queue-retry="${escapeAttr(item.job_id || "")}">重新排队</button>`);
+                const queueKey = item.job_id || item.run_key || "queue";
+                const actionMarkup = artifactActionGroups(artifacts, item.run_key, item.status, {
+                  menuScope: `queue:${queueKey}`,
+                });
+                const queueControls = [];
+                if (item.status === "queued") queueControls.push(`<button class="link-button warning-action" type="button" data-queue-cancel="${escapeAttr(item.job_id || "")}">取消排队</button>`);
+                if (["failed", "canceled"].includes(item.status)) queueControls.push(`<button class="link-button warning-action" type="button" data-queue-retry="${escapeAttr(item.job_id || "")}">重新排队</button>`);
                 const request = item.request && typeof item.request === "object" ? item.request : {};
+                const requestUrl = typeof request.url === "string" ? request.url : "";
+                const displayTitle = queueDisplayTitle(item, requestUrl);
+                const compactUrl = compactSourceUrl(requestUrl);
                 return `
                   <li class="history-item">
-                    <div class="history-item-title">${escapeHtml(request.url || item.job_id || "-")}</div>
+                    <div class="history-item-title">${escapeHtml(displayTitle)}</div>
                     <div class="history-meta">
-                      <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(item.status || "-")}</span>
-                      <span>stage: ${escapeHtml(item.stage || "-")}</span>
+                      <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(statusLabel(item.status))}</span>
+                      <span>阶段: ${escapeHtml(stageLabel(item.stage))}</span>
+                      ${compactUrl ? `<span class="queue-url">${escapeHtml(compactUrl)}</span>` : ""}
                     </div>
                     <div class="history-meta"><span>${escapeHtml(item.message || "")}</span></div>
-                    <div class="history-links">${links.join("")}</div>
+                    ${queueControls.length ? `<div class="action-groups">${queueControls.join("")}</div>` : ""}
+                    ${actionMarkup}
                   </li>
                 `;
               }).join("");
+            }
+
+            function stageLabel(stage) {
+              return STAGE_LABELS[stage] || stage || "-";
+            }
+
+            function stageDescription(stage) {
+              return STAGE_DESCRIPTIONS[stage] || "";
+            }
+
+            function statusLabel(status) {
+              const labels = {
+                queued: "排队中",
+                running: "运行中",
+                succeeded: "已生成",
+                failed: "失败",
+                canceled: "已取消",
+                canceling: "取消中",
+                idle: "空闲",
+                pending: "待处理",
+                done: "完成",
+              };
+              return labels[status] || status || "-";
+            }
+
+            function queueDisplayTitle(item, requestUrl) {
+              if (item && typeof item.title === "string" && item.title.trim()) {
+                return item.title.trim();
+              }
+              if (item && ["queued", "running"].includes(item.status)) {
+                return "待读取标题";
+              }
+              return compactSourceUrl(requestUrl) || (item && item.job_id) || "-";
+            }
+
+            function compactSourceUrl(url) {
+              if (!url) return "";
+              try {
+                const parsed = new URL(url);
+                const pathParts = parsed.pathname.split("/").filter(Boolean);
+                const lastPath = pathParts[pathParts.length - 1] || parsed.hostname;
+                if (parsed.hostname.includes("bilibili.com")) {
+                  const page = parsed.searchParams.get("p");
+                  return page ? `${lastPath}?p=${page}` : lastPath;
+                }
+                if (parsed.hostname.includes("youtube.com")) {
+                  const videoId = parsed.searchParams.get("v");
+                  return videoId ? `YouTube ${videoId}` : `YouTube ${lastPath}`;
+                }
+                if (parsed.hostname.includes("youtu.be")) {
+                  return `YouTube ${lastPath}`;
+                }
+                return `${parsed.hostname}${parsed.pathname}`;
+              } catch (error) {
+                return url;
+              }
+            }
+
+            function updateOptionsSummary() {
+              const parts = [
+                formatLabel(elements.formatSelect.value),
+                elements.summaryTemplateSelect.value || "AI 自动判断",
+                languageLabel(elements.languageSelect.value),
+              ];
+              if (elements.forceWhisper.checked) parts.push("强制 Whisper");
+              if (elements.withDiagrams.checked) parts.push("图解");
+              if (elements.withFrames.checked) parts.push("截图");
+              if (elements.requirePdf.checked) parts.push("必须 PDF");
+              if (elements.allowLongVideo.checked) parts.push("长视频");
+              elements.currentOptionsSummary.textContent = parts.join(" · ");
+            }
+
+            function formatLabel(value) {
+              if (value === "html") return "HTML";
+              if (value === "html,pdf") return "HTML + PDF";
+              return value || "HTML + PDF";
+            }
+
+            function languageLabel(value) {
+              const labels = {
+                auto: "自动语言",
+                zh: "中文",
+                en: "英文",
+              };
+              return labels[value] || value || "自动语言";
             }
 
             function escapeHtml(value) {
@@ -756,12 +1100,13 @@ def render_app_html(token: str = "") -> str:
             function retryLabel(stage) {
               if (stage === "summarization") return "重试总结";
               if (stage === "render") return "重试渲染";
-              if (stage === "bundle") return "重试 Bundle";
+              if (stage === "bundle") return "重试结构化导出";
               return `重试 ${stage}`;
             }
 
-            function resummarizeButton(label, runKey) {
-              return `<button class="link-button" type="button" data-resummarize-run-key="${escapeAttr(runKey)}">${escapeHtml(label)}</button>`;
+            function resummarizeButton(label, runKey, variant = "") {
+              const classes = ["link-button", variant].filter(Boolean).join(" ");
+              return `<button class="${escapeAttr(classes)}" type="button" data-resummarize-run-key="${escapeAttr(runKey)}">${escapeHtml(label)}</button>`;
             }
 
             async function loadConfig() {
@@ -770,13 +1115,14 @@ def render_app_html(token: str = "") -> str:
               const consent = data.consent || {};
               state.consentAccepted = Boolean(consent.local_processing);
               elements.formatSelect.value = defaults.format || "html,pdf";
-              elements.summaryTemplateSelect.value = defaults.summary_template || "学习笔记";
+              elements.summaryTemplateSelect.value = defaults.summary_template || "AI 自动判断";
               elements.languageSelect.value = defaults.language || "auto";
               elements.forceWhisper.checked = Boolean(defaults.force_whisper);
               elements.withDiagrams.checked = Boolean(defaults.with_diagrams);
               elements.withFrames.checked = Boolean(defaults.with_frames);
               elements.requirePdf.checked = Boolean(defaults.require_pdf);
               elements.allowLongVideo.checked = Boolean(defaults.allow_long_video);
+              updateOptionsSummary();
               elements.consentBanner.classList.toggle("active", !state.consentAccepted);
               updateStartButton();
             }
@@ -943,6 +1289,12 @@ def render_app_html(token: str = "") -> str:
               renderQueue(data);
             }
 
+            async function clearCompletedQueue() {
+              const data = await apiFetch("/api/jobs/queue/clear-completed", { method: "POST" });
+              renderQueue(data);
+              setJobMessage("已清除已完成的队列任务。");
+            }
+
             async function cancelJob() {
               if (state.authExpired) {
                 markAuthExpired();
@@ -1031,6 +1383,16 @@ def render_app_html(token: str = "") -> str:
               elements.consentButton.addEventListener("click", acceptConsent);
               elements.jobForm.addEventListener("submit", startJob);
               elements.cancelButton.addEventListener("click", cancelJob);
+              [
+                elements.formatSelect,
+                elements.summaryTemplateSelect,
+                elements.languageSelect,
+                elements.forceWhisper,
+                elements.withDiagrams,
+                elements.withFrames,
+                elements.requirePdf,
+                elements.allowLongVideo,
+              ].forEach((element) => element.addEventListener("change", updateOptionsSummary));
               elements.batchNabaichuanButton.addEventListener("click", () => {
                 exportNabaichuanBatch().catch((error) => {
                   setJobMessage(error.message || "批量导出失败。", true);
@@ -1051,6 +1413,16 @@ def render_app_html(token: str = "") -> str:
                   setJobMessage(error.message || "恢复队列失败。", true);
                 });
               });
+              elements.queueClearCompletedButton.addEventListener("click", () => {
+                clearCompletedQueue().catch((error) => {
+                  setJobMessage(error.message || "清除已完成失败。", true);
+                });
+              });
+              document.addEventListener("toggle", (event) => {
+                const target = event.target;
+                if (!target || !target.getAttribute || !target.classList || !target.classList.contains("action-menu")) return;
+                rememberOpenMenu(target.getAttribute("data-menu-key"), Boolean(target.open));
+              }, true);
               document.addEventListener("click", (event) => {
                 const queueCancelTarget = event.target && event.target.closest
                   ? event.target.closest("[data-queue-cancel]")

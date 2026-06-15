@@ -13,6 +13,7 @@ from bilifan.pipeline import PipelineRequest, PipelineRunError
 from .jobs import STAGES, _artifact_links, _now_iso, explain_failure
 
 QUEUE_SCHEMA_VERSION = 1
+RECENT_COMPLETED_LIMIT = 3
 
 
 @dataclass
@@ -20,6 +21,7 @@ class QueueJob:
     job_id: str
     status: str
     request: dict[str, Any]
+    title: str | None = None
     stage: str = "preflight"
     message: str = ""
     progress: list[dict[str, str]] = field(default_factory=list)
@@ -122,6 +124,17 @@ class BatchQueueManager:
             self._start_worker()
         return self.state()
 
+    def clear_completed(self) -> dict[str, Any]:
+        with self._lock:
+            replaced_attempt_ids = self._replaced_attempt_ids_locked()
+            self._jobs = [
+                job
+                for job in self._jobs
+                if job.status != "succeeded" and job.job_id not in replaced_attempt_ids
+            ]
+            self._persist_locked()
+            return self._state_locked()
+
     def _start_worker(self) -> None:
         if self._run_jobs_inline:
             self._run_loop()
@@ -182,6 +195,7 @@ class BatchQueueManager:
                 job.message = redact_text(str(exc))
                 job.run_key = exc.run_key
                 job.artifacts = _artifact_links(exc.run_key, exc.artifact_paths)
+                job.title = _read_metadata_title(Path(str(request.out)) / exc.run_key) or job.title
                 job.warnings = list(exc.warnings)
                 job.friendly_error = explain_failure(
                     stage=job.stage,
@@ -218,6 +232,7 @@ class BatchQueueManager:
             job.message = "Report ready."
             job.run_key = result.run_key
             job.artifacts = _artifact_links(result.run_key, result.artifact_paths)
+            job.title = _read_metadata_title(result.run_dir) or job.title
             job.warnings = list(result.warnings)
             job.friendly_error = None
             job.finished_at = _now_iso()
@@ -230,11 +245,44 @@ class BatchQueueManager:
         for job in self._jobs:
             if job.status in counts:
                 counts[job.status] += 1
+        replaced_attempt_ids = self._replaced_attempt_ids_locked()
+        recent_completed = [job for job in self._jobs if job.status == "succeeded"][-RECENT_COMPLETED_LIMIT:]
+        recent_completed_ids = {job.job_id for job in recent_completed}
+        visible_jobs = [
+            job
+            for job in self._jobs
+            if job.job_id not in replaced_attempt_ids
+            and (job.status != "succeeded" or job.job_id in recent_completed_ids)
+        ]
+        visible_counts = {status: 0 for status in counts}
+        for job in visible_jobs:
+            if job.status in visible_counts:
+                visible_counts[job.status] += 1
         return {
             "paused": self._paused,
             "counts": counts,
-            "items": [job.as_dict() for job in self._jobs],
+            "visible_counts": visible_counts,
+            "total_items": len(self._jobs),
+            "hidden_completed": max(0, counts["succeeded"] - RECENT_COMPLETED_LIMIT),
+            "hidden_replaced": len(replaced_attempt_ids),
+            "items": [job.as_dict() for job in visible_jobs],
         }
+
+    def _replaced_attempt_ids_locked(self) -> set[str]:
+        last_succeeded_index_by_request: dict[str, int] = {}
+        for index, job in enumerate(self._jobs):
+            if job.status == "succeeded":
+                request_key = _queue_request_key(job)
+                if request_key:
+                    last_succeeded_index_by_request[request_key] = index
+        replaced_ids: set[str] = set()
+        for index, job in enumerate(self._jobs):
+            if job.status not in {"failed", "canceled"}:
+                continue
+            request_key = _queue_request_key(job)
+            if request_key and last_succeeded_index_by_request.get(request_key, -1) > index:
+                replaced_ids.add(job.job_id)
+        return replaced_ids
 
     def _find_locked(self, job_id: str) -> QueueJob | None:
         for job in self._jobs:
@@ -267,17 +315,20 @@ class BatchQueueManager:
         if not isinstance(raw_jobs, list):
             return
         jobs: list[QueueJob] = []
+        outputs_root = self._storage_path.parent.parent
         for raw_job in raw_jobs:
             if not isinstance(raw_job, dict):
                 continue
+            run_key = raw_job.get("run_key") if isinstance(raw_job.get("run_key"), str) else None
             job = QueueJob(
                 job_id=str(raw_job.get("job_id") or uuid4().hex),
                 status=str(raw_job.get("status") or "queued"),
                 request=raw_job.get("request") if isinstance(raw_job.get("request"), dict) else {},
+                title=_optional_text(raw_job.get("title")),
                 stage=str(raw_job.get("stage") or "preflight"),
                 message=str(raw_job.get("message") or ""),
                 progress=raw_job.get("progress") if isinstance(raw_job.get("progress"), list) else _initial_progress(),
-                run_key=raw_job.get("run_key") if isinstance(raw_job.get("run_key"), str) else None,
+                run_key=run_key,
                 artifacts=raw_job.get("artifacts") if isinstance(raw_job.get("artifacts"), dict) else {},
                 warnings=raw_job.get("warnings") if isinstance(raw_job.get("warnings"), list) else [],
                 friendly_error=raw_job.get("friendly_error") if isinstance(raw_job.get("friendly_error"), dict) else None,
@@ -285,6 +336,8 @@ class BatchQueueManager:
                 started_at=raw_job.get("started_at") if isinstance(raw_job.get("started_at"), str) else None,
                 finished_at=raw_job.get("finished_at") if isinstance(raw_job.get("finished_at"), str) else None,
             )
+            if job.title is None and run_key:
+                job.title = _read_metadata_title(outputs_root / run_key)
             if job.status in {"running", "canceling"}:
                 job.status = "failed"
                 job.stage = "interrupted"
@@ -331,6 +384,23 @@ def _request_to_payload(request: PipelineRequest) -> dict[str, Any]:
         "yes_i_understand": request.yes_i_understand,
         "overwrite": request.overwrite,
     }
+
+
+def _read_metadata_title(run_dir: Path) -> str | None:
+    try:
+        data = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    title = _optional_text(data.get("title")) or _optional_text(data.get("part_title"))
+    return redact_text(title) if title else None
+
+
+def _queue_request_key(job: QueueJob) -> str:
+    request = job.request if isinstance(job.request, dict) else {}
+    url = request.get("url")
+    return str(url).strip() if url is not None else ""
 
 
 def _payload_to_request(payload: dict[str, Any]) -> PipelineRequest:

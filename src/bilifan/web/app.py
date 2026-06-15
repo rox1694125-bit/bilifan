@@ -38,7 +38,7 @@ WEB_DEFAULTS = {
     "format": "html,pdf",
     "force_whisper": False,
     "language": "auto",
-    "summary_template": "学习笔记",
+    "summary_template": "AI 自动判断",
     "with_frames": False,
     "with_diagrams": False,
     "require_pdf": False,
@@ -226,6 +226,10 @@ def create_app(
     @app.post("/api/jobs/queue/resume")
     def resume_queue(_: None = Depends(require_token)) -> dict[str, object]:
         return queue.resume()
+
+    @app.post("/api/jobs/queue/clear-completed")
+    def clear_completed_queue(_: None = Depends(require_token)) -> dict[str, object]:
+        return queue.clear_completed()
 
     @app.post("/api/jobs/queue/{job_id}/cancel")
     def cancel_queued_job(

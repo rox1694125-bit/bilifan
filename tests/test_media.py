@@ -14,6 +14,7 @@ from bilifan.media import (
     check_duration_match,
     download_bilibili_audio_stream,
     download_current_part_audio,
+    fetch_bilibili_playurl_audio_urls,
     ffprobe_duration_seconds,
 )
 
@@ -203,6 +204,65 @@ def test_download_current_part_audio_falls_back_to_playurl_api_on_bilibili_412(
     assert not (tmp_path / ".bilifan" / "cache" / f"{ref.output_id}.source.m4s").exists()
 
 
+def test_download_current_part_audio_tries_playurl_backup_after_stream_failure(
+    tmp_path,
+):
+    ref = parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=1")
+    metadata = {"duration": 100, "cid": "123456"}
+    stream_calls = []
+
+    def fake_download(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            "",
+            "ERROR: [BiliBili] abc: HTTP Error 412: Precondition Failed",
+        )
+
+    def fake_playurl_fetcher(received_ref, received_metadata):
+        assert received_ref == ref
+        assert received_metadata == metadata
+        return [
+            "https://upos-primary.example.test/audio.m4s",
+            "https://upos-backup.example.test/audio.m4s",
+        ]
+
+    def fake_stream_downloader(url, received_ref, raw_path):
+        stream_calls.append(url)
+        if "primary" in url:
+            raise MediaDownloadError("primary CDN timed out")
+        raw_path.write_bytes(b"raw-audio")
+
+    def fake_ffmpeg(cmd, **kwargs):
+        Path(cmd[-1]).write_bytes(b"mp3-audio")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    def fake_ffprobe(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            json.dumps({"format": {"duration": "100"}}),
+            "",
+        )
+
+    result = download_current_part_audio(
+        ref,
+        metadata,
+        tmp_path,
+        downloader=fake_download,
+        probe_runner=fake_ffprobe,
+        playurl_fetcher=fake_playurl_fetcher,
+        stream_downloader=fake_stream_downloader,
+        ffmpeg_runner=fake_ffmpeg,
+    )
+
+    assert result["audio_source"] == "bilibili-playurl-api"
+    assert stream_calls == [
+        "https://upos-primary.example.test/audio.m4s",
+        "https://upos-backup.example.test/audio.m4s",
+    ]
+
+
 def test_download_bilibili_audio_stream_uses_short_read_timeout(monkeypatch, tmp_path):
     ref = parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=1")
     timeouts = []
@@ -222,6 +282,29 @@ def test_download_bilibili_audio_stream_uses_short_read_timeout(monkeypatch, tmp
 
     assert timeouts == [media_module.STREAM_READ_TIMEOUT_SECONDS]
     assert media_module.STREAM_READ_TIMEOUT_SECONDS < media_module.DOWNLOAD_TIMEOUT_SECONDS
+
+
+def test_download_bilibili_audio_stream_error_includes_underlying_reason(
+    monkeypatch, tmp_path
+):
+    ref = parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=1")
+
+    def fake_urlopen(request, *, timeout):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(media_module, "urlopen", fake_urlopen)
+
+    with pytest.raises(MediaDownloadError) as excinfo:
+        download_bilibili_audio_stream(
+            "https://upos.example.test/audio.m4s",
+            ref,
+            tmp_path / "audio.source.m4s",
+        )
+
+    message = str(excinfo.value)
+    assert "Bilibili audio stream download failed" in message
+    assert "TimeoutError" in message
+    assert "timed out" in message
 
 
 def test_download_current_part_audio_falls_back_to_playurl_after_duration_mismatch(
@@ -408,3 +491,50 @@ def test_fetch_bilibili_playurl_audio_url_selects_highest_bandwidth(monkeypatch)
     assert "cid=123456" in opened[0][1]
     assert opened[0][2] == media_module.DOWNLOAD_TIMEOUT_SECONDS
     assert opened[1] == ("read_size", media_module.MAX_BILIBILI_API_BYTES + 1)
+
+
+def test_fetch_bilibili_playurl_audio_urls_includes_base_and_backups(monkeypatch):
+    ref = parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=1")
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self, size):
+            return json.dumps(
+                {
+                    "code": 0,
+                    "data": {
+                        "dash": {
+                            "audio": [
+                                {
+                                    "baseUrl": "https://low.test/audio.m4s",
+                                    "bandwidth": 1,
+                                },
+                                {
+                                    "base_url": "https://high.test/audio.m4s",
+                                    "backupUrl": [
+                                        "https://backup-a.test/audio.m4s",
+                                        "https://backup-b.test/audio.m4s",
+                                    ],
+                                    "bandwidth": 9,
+                                },
+                            ]
+                        }
+                    },
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, *, timeout):
+        return FakeResponse()
+
+    monkeypatch.setattr(media_module, "urlopen", fake_urlopen)
+
+    assert fetch_bilibili_playurl_audio_urls(ref, {"cid": "123456"}) == [
+        "https://high.test/audio.m4s",
+        "https://backup-a.test/audio.m4s",
+        "https://backup-b.test/audio.m4s",
+    ]

@@ -61,6 +61,8 @@ def test_render_app_html_contains_workbench_contract():
         "require-pdf",
         "allow-long-video",
         "start-button",
+        "advanced-settings",
+        "current-options-summary",
         "stage-list",
         "result-links",
         "failure-panel",
@@ -80,23 +82,32 @@ def test_render_app_html_contains_workbench_contract():
         "/api/jobs",
         "/api/jobs/current",
         "setInterval",
-        "TXT",
-        "SRT",
-        "MD",
-        "Bundle",
-        "Nabaichuan",
+        "打开笔记",
+        "下载 PDF",
+        "导出",
+        "AI 自动判断",
+        "逐字稿 TXT",
+        "字幕 SRT",
+        "Markdown",
+        "更多",
+        "结构化数据",
+        "纳百川",
+        "诊断信息",
+        "文件列表",
         "batch-nabaichuan-button",
         "batch-urls",
         "batch-submit-button",
+        "queue-clear-completed-button",
         "queue-list",
         "/api/jobs/batch",
         "/api/jobs/queue",
+        "/api/jobs/queue/clear-completed",
         "exportNabaichuan",
-        "audio",
+        "音频文件",
         "data-folder-url",
         "openFolder",
         "retryAction",
-        "重总结",
+        "重新生成总结",
         "教程步骤",
         "观点提炼",
         "会议纪要",
@@ -163,6 +174,17 @@ def test_render_app_html_contains_frontend_state_guards():
     assert "if (!payload.url)" in html
     assert "await loadConfig();" in html
     assert 'input[type="url"]' in html
+
+
+def test_current_task_advanced_options_are_collapsed_by_default():
+    html = render_app_html()
+
+    advanced_start = html.index('<details id="advanced-settings"')
+    advanced_tag = html[advanced_start : html.index(">", advanced_start)]
+
+    assert "open" not in advanced_tag
+    assert "高级设置" in html
+    assert "current-options-summary" in html
 
 
 def test_render_app_script_disables_start_without_consent_or_while_running():
@@ -263,6 +285,37 @@ def test_render_app_script_blocks_empty_url_before_posting_job():
     )
 
 
+def test_render_app_script_defaults_summary_template_to_auto_when_config_omits_it():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert.equal(elements["summary-template-select"].value, "AI 自动判断");
+        """,
+    )
+
+
 def test_render_app_script_submits_language_and_renders_export_actions():
     script = _extract_inline_script(render_app_html())
 
@@ -283,6 +336,8 @@ def test_render_app_script_submits_language_and_renders_export_actions():
                 status: "succeeded",
                 stage: "render",
                 artifacts: {
+                  html: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html?token=test-token",
+                  pdf: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf?token=test-token",
                   txt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt?token=test-token",
                   srt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt?token=test-token",
                   md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md?token=test-token",
@@ -301,6 +356,8 @@ def test_render_app_script_submits_language_and_renders_export_actions():
               message: "",
               progress: [],
               artifacts: {
+                html: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
+                pdf: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf",
                 txt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
                 srt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
                 md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
@@ -325,19 +382,24 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         assertions="""
         assert.equal(elements["language-select"].value, "en");
         assert.equal(elements["summary-template-select"].value, "教程步骤");
-        assert(elements["history-list"].innerHTML.includes("TXT"));
-        assert(elements["history-list"].innerHTML.includes("SRT"));
-        assert(elements["history-list"].innerHTML.includes("MD"));
-        assert(elements["history-list"].innerHTML.includes("Bundle"));
-        assert(elements["history-list"].innerHTML.includes("Nabaichuan"));
-        assert(elements["history-list"].innerHTML.includes("audio"));
+        assert(elements["history-list"].innerHTML.includes("打开笔记"));
+        assert(elements["history-list"].innerHTML.includes("下载 PDF"));
+        assert(elements["history-list"].innerHTML.includes("逐字稿 TXT"));
+        assert(elements["history-list"].innerHTML.includes("字幕 SRT"));
+        assert(elements["history-list"].innerHTML.includes("Markdown"));
+        assert(elements["history-list"].innerHTML.includes("结构化数据"));
+        assert(elements["history-list"].innerHTML.includes("纳百川"));
+        assert(elements["history-list"].innerHTML.includes("音频文件"));
         assert(elements["history-list"].innerHTML.includes("打开本地文件夹"));
-        assert(elements["result-links"].innerHTML.includes("TXT"));
-        assert(elements["result-links"].innerHTML.includes("SRT"));
-        assert(elements["result-links"].innerHTML.includes("MD"));
-        assert(elements["result-links"].innerHTML.includes("Bundle"));
-        assert(elements["result-links"].innerHTML.includes("Nabaichuan"));
-        assert(elements["result-links"].innerHTML.includes("audio"));
+        assert(elements["result-links"].innerHTML.includes("逐字稿 TXT"));
+        assert(elements["result-links"].innerHTML.includes("字幕 SRT"));
+        assert(elements["result-links"].innerHTML.includes("Markdown"));
+        assert(elements["result-links"].innerHTML.includes("结构化数据"));
+        assert(elements["result-links"].innerHTML.includes("纳百川"));
+        assert(elements["result-links"].innerHTML.includes("音频文件"));
+        assert(!elements["history-list"].innerHTML.includes(">HTML<"));
+        assert(!elements["history-list"].innerHTML.includes(">diagnostics<"));
+        assert(!elements["history-list"].innerHTML.includes(">file list<"));
 
         elements["url-input"].value = "https://www.bilibili.com/video/BV1abcDEF12G";
         elements["language-select"].value = "en";
@@ -376,6 +438,323 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         await document.listeners.click({ target: clickTarget });
         await flush();
         assert(fetchCalls.some((call) => call.method === "POST" && call.path.includes("/open-folder")));
+        """,
+    )
+
+
+def test_render_app_script_updates_current_options_summary_and_keeps_advanced_options_active():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({
+              consent: { local_processing: true },
+              defaults: {
+                format: "html,pdf",
+                language: "auto",
+                summary_template: "AI 自动判断",
+                with_diagrams: false,
+                with_frames: false,
+                require_pdf: false
+              }
+            });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          if (path === "/api/jobs") return jsonResponse({ job_id: "job-1", status: "running" });
+          if (path === "/api/jobs/batch") return jsonResponse({ counts: {}, items: [] });
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["current-options-summary"].textContent.includes("HTML + PDF"));
+        assert(elements["current-options-summary"].textContent.includes("AI 自动判断"));
+        assert(elements["current-options-summary"].textContent.includes("自动语言"));
+
+        elements["summary-template-select"].value = "观点提炼";
+        elements["language-select"].value = "en";
+        elements["with-diagrams"].checked = true;
+        elements["require-pdf"].checked = true;
+        elements["summary-template-select"].listeners.change();
+        elements["language-select"].listeners.change();
+        elements["with-diagrams"].listeners.change();
+        elements["require-pdf"].listeners.change();
+
+        assert(elements["current-options-summary"].textContent.includes("观点提炼"));
+        assert(elements["current-options-summary"].textContent.includes("英文"));
+        assert(elements["current-options-summary"].textContent.includes("图解"));
+        assert(elements["current-options-summary"].textContent.includes("必须 PDF"));
+
+        elements["url-input"].value = "https://www.bilibili.com/video/BV1abcDEF12G";
+        await elements["job-form"].listeners.submit({ preventDefault() {} });
+        await flush();
+        const jobCall = fetchCalls.find((call) => call.path === "/api/jobs");
+        const jobBody = JSON.parse(jobCall.body);
+        assert.equal(jobBody.summary_template, "观点提炼");
+        assert.equal(jobBody.language, "en");
+        assert.equal(jobBody.with_diagrams, true);
+        assert.equal(jobBody.require_pdf, true);
+
+        elements["batch-urls"].value = "https://www.bilibili.com/video/BV1queueTEST";
+        await elements["batch-submit-button"].listeners.click();
+        await flush();
+        const batchCall = fetchCalls.find((call) => call.path === "/api/jobs/batch");
+        const batchBody = JSON.parse(batchCall.body);
+        assert.equal(batchBody.summary_template, "观点提炼");
+        assert.equal(batchBody.language, "en");
+        assert.equal(batchBody.with_diagrams, true);
+        assert.equal(batchBody.require_pdf, true);
+        """,
+    )
+
+
+def test_render_app_script_preserves_open_action_menu_after_refresh():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "学习笔记" } });
+          }
+          if (path === "/api/history") {
+            return jsonResponse({
+              items: [{
+                title: "历史",
+                output_id: "BV1abcDEF12G_p1",
+                run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
+                status: "succeeded",
+                stage: "render",
+                artifacts: {
+                  md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
+                  txt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt"
+                }
+              }]
+            });
+          }
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        const menuKey = "history:BV1abcDEF12G_p1/runs/2026-06-08_120000:export";
+        assert(elements["history-list"].innerHTML.includes(`data-menu-key="${menuKey}"`));
+        assert(!elements["history-list"].innerHTML.includes(`data-menu-key="${menuKey}" open`));
+
+        rememberOpenMenu(menuKey, true);
+        await loadHistory();
+        await flush();
+
+        assert(elements["history-list"].innerHTML.includes(`data-menu-key="${menuKey}" open`));
+        """,
+    )
+
+
+def test_render_app_script_queue_can_clear_completed_jobs():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "学习笔记" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 0, running: 0, succeeded: 5, failed: 0, canceled: 0 },
+              total_items: 5,
+              hidden_completed: 2,
+              items: [{
+                job_id: "job-5",
+                status: "succeeded",
+                stage: "render",
+                message: "Report ready.",
+                request: { url: "https://www.bilibili.com/video/BV1abcDEF12G?p=5" },
+                run_key: "BV1abcDEF12G_p5/runs/2026-06-08_120000",
+                artifacts: {}
+              }]
+            });
+          }
+          if (path === "/api/jobs/queue/clear-completed") {
+            return jsonResponse({
+              counts: { queued: 0, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+              total_items: 0,
+              hidden_completed: 0,
+              items: []
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["queue-summary"].textContent.includes("隐藏 2"));
+        assert.equal(elements["queue-clear-completed-button"].disabled, false);
+
+        await elements["queue-clear-completed-button"].listeners.click();
+        await flush();
+
+        assert(fetchCalls.some((call) => call.method === "POST" && call.path === "/api/jobs/queue/clear-completed"));
+        assert(elements["queue-list"].innerHTML.includes("暂无队列任务"));
+        """,
+    )
+
+
+def test_render_app_script_queue_item_uses_video_title_as_primary_label():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "AI 自动判断" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 0, running: 0, succeeded: 1, failed: 0, canceled: 0 },
+              visible_counts: { queued: 0, running: 0, succeeded: 1, failed: 0, canceled: 0 },
+              total_items: 1,
+              hidden_completed: 0,
+              hidden_replaced: 0,
+              items: [{
+                job_id: "job-1",
+                title: "真正的视频标题",
+                status: "succeeded",
+                stage: "render",
+                message: "Report ready.",
+                request: { url: "https://www.bilibili.com/video/BV1abcDEF12G?p=1" },
+                run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
+                artifacts: {}
+              }]
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["queue-list"].innerHTML.includes("真正的视频标题"));
+        assert(elements["queue-list"].innerHTML.includes("BV1abcDEF12G?p=1"));
+        assert(!elements["queue-list"].innerHTML.includes("<div class=\\"history-item-title\\">https://www.bilibili.com"));
+        """,
+    )
+
+
+def test_render_app_script_renders_stage_names_in_chinese():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "学习笔记" } });
+          }
+          if (path === "/api/history") {
+            return jsonResponse({
+              items: [{
+                title: "失败历史",
+                output_id: "BV1abcDEF12G_p1",
+                run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
+                status: "failed",
+                stage: "summarization",
+                artifacts: {}
+              }]
+            });
+          }
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "running",
+              stage: "audio",
+              message: "Downloading audio.",
+              progress: [
+                { stage: "metadata", status: "done" },
+                { stage: "audio", status: "running" },
+                { stage: "transcript", status: "pending" }
+              ],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 0, running: 1, succeeded: 0, failed: 1, canceled: 0 },
+              visible_counts: { queued: 0, running: 1, succeeded: 0, failed: 1, canceled: 0 },
+              total_items: 2,
+              hidden_completed: 0,
+              hidden_replaced: 0,
+              items: [{
+                job_id: "job-1",
+                status: "failed",
+                stage: "interrupted",
+                message: "Service restarted before this queue job finished.",
+                request: { url: "https://www.bilibili.com/video/BV1abcDEF12G" },
+                artifacts: {}
+              }]
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["stage-list"].innerHTML.includes("读取视频信息"));
+        assert(elements["stage-list"].innerHTML.includes("下载音频"));
+        assert(elements["stage-list"].innerHTML.includes("获取逐字稿"));
+        assert(elements["stage-list"].innerHTML.includes("运行中 当前"));
+        assert(elements["stage-list"].innerHTML.includes("待处理"));
+        assert(elements["stage-list"].innerHTML.includes("任务: 运行中"));
+        assert(!elements["stage-list"].innerHTML.includes(">audio<"));
+        assert(elements["queue-list"].innerHTML.includes("服务中断"));
+        assert(elements["history-list"].innerHTML.includes("失败阶段: 生成总结"));
         """,
     )
 
@@ -430,10 +809,10 @@ def test_render_app_script_exports_nabaichuan_from_history_and_batch_button():
         }
         """,
         assertions="""
-        assert(elements["history-list"].innerHTML.includes("导出 Nabaichuan"));
-        assert(elements["result-links"].innerHTML.includes("导出 Nabaichuan"));
-        assert(elements["history-list"].innerHTML.includes("重总结"));
-        assert(elements["result-links"].innerHTML.includes("重总结"));
+        assert(elements["history-list"].innerHTML.includes("导出到纳百川"));
+        assert(elements["result-links"].innerHTML.includes("导出到纳百川"));
+        assert(elements["history-list"].innerHTML.includes("重新生成总结"));
+        assert(elements["result-links"].innerHTML.includes("重新生成总结"));
 
         const nabaichuanTarget = {
           closest(selector) {

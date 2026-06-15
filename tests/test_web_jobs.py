@@ -86,7 +86,7 @@ def test_config_and_consent_endpoints(tmp_path, monkeypatch):
         "format": "html,pdf",
         "force_whisper": False,
         "language": "auto",
-        "summary_template": "学习笔记",
+        "summary_template": "AI 自动判断",
         "with_frames": False,
         "with_diagrams": False,
         "require_pdf": False,
@@ -288,7 +288,7 @@ def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
     assert response.json()["status"] == "running"
     assert calls[0].output_format == "html,pdf"
     assert calls[0].language == "auto"
-    assert calls[0].summary_template == "学习笔记"
+    assert calls[0].summary_template == "AI 自动判断"
     assert calls[0].with_frames is False
     assert calls[0].with_diagrams is False
     assert calls[0].force_whisper is False
@@ -389,8 +389,45 @@ def test_batch_queue_pause_cancel_and_resume_endpoints(tmp_path, monkeypatch):
     assert paused.status_code == 200
     assert canceled["items"][0]["status"] == "canceled"
     assert retry_state["items"][1]["status"] == "queued"
-    assert resumed["items"][1]["status"] == "succeeded"
+    assert resumed["items"][0]["status"] == "succeeded"
+    assert resumed["visible_counts"]["canceled"] == 0
+    assert resumed["hidden_replaced"] == 1
     assert calls == ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"]
+
+
+def test_batch_queue_clear_completed_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+
+    def fake_pipeline(request, *, progress_callback):
+        return PipelineResult(
+            run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
+            run_dir=request.out / "BV1abcDEF12G_p1/runs/2026-06-08_120000",
+            diagnostics_path=request.out
+            / "BV1abcDEF12G_p1/runs/2026-06-08_120000/diagnostics.json",
+            artifact_paths=[],
+            warnings=[],
+        )
+
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+    client.post(
+        "/api/jobs/batch",
+        headers=_headers(),
+        json={"urls": ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"]},
+    )
+
+    cleared = client.post("/api/jobs/queue/clear-completed", headers=_headers())
+
+    assert cleared.status_code == 200
+    assert cleared.json()["counts"]["succeeded"] == 0
+    assert cleared.json()["items"] == []
 
 
 def test_job_requires_local_processing_consent(tmp_path, monkeypatch):

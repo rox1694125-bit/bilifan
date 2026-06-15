@@ -80,7 +80,8 @@ def test_build_chunk_prompt_contains_schema_and_learning_note_style():
 
 
 def test_summary_templates_are_explicitly_supported():
-    assert list(SUMMARY_TEMPLATES) == ["学习笔记", "教程步骤", "观点提炼", "会议纪要"]
+    assert list(SUMMARY_TEMPLATES) == ["AI 自动判断", "学习笔记", "教程步骤", "观点提炼", "会议纪要"]
+    assert validate_summary_style("AI 自动判断") == "AI 自动判断"
     assert validate_summary_style("教程步骤") == "教程步骤"
 
     with pytest.raises(SummarizationError, match="Unsupported summary template"):
@@ -92,6 +93,13 @@ def test_build_chunk_prompt_includes_template_specific_instruction():
 
     assert "教程步骤" in prompt
     assert "按可执行步骤组织" in prompt
+
+
+def test_build_chunk_prompt_supports_auto_summary_template():
+    prompt = build_chunk_prompt(metadata=_metadata(), chunk=_chunks()["chunks"][0], style="AI 自动判断")
+
+    assert "AI 自动判断" in prompt
+    assert "根据视频内容自动选择" in prompt
 
 
 def test_run_codex_chunk_summary_invokes_codex_exec_and_reads_output(tmp_path):

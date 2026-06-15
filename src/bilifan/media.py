@@ -16,7 +16,7 @@ from .diagnostics import redact_text
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
-PlayurlFetcher = Callable[[BilibiliPartRef, dict[str, Any]], str]
+PlayurlFetcher = Callable[[BilibiliPartRef, dict[str, Any]], str | list[str]]
 StreamDownloader = Callable[[str, BilibiliPartRef, Path], None]
 DOWNLOAD_TIMEOUT_SECONDS = 60 * 60
 FFPROBE_TIMEOUT_SECONDS = 60
@@ -196,7 +196,7 @@ def download_current_part_audio(
             cookies_from_browser=cookies_from_browser,
             cookies_file=cookies_file,
             downloader=downloader,
-            playurl_fetcher=playurl_fetcher or fetch_bilibili_playurl_audio_url,
+            playurl_fetcher=playurl_fetcher or fetch_bilibili_playurl_audio_urls,
             stream_downloader=stream_downloader or download_bilibili_audio_stream,
             ffmpeg_runner=ffmpeg_runner,
         )
@@ -230,7 +230,7 @@ def download_current_part_audio(
                 metadata_duration=metadata_duration,
                 attempts=3,
                 probe_runner=probe_runner,
-                playurl_fetcher=playurl_fetcher or fetch_bilibili_playurl_audio_url,
+                playurl_fetcher=playurl_fetcher or fetch_bilibili_playurl_audio_urls,
                 stream_downloader=stream_downloader or download_bilibili_audio_stream,
                 ffmpeg_runner=ffmpeg_runner,
             )
@@ -305,6 +305,13 @@ def fetch_bilibili_playurl_audio_url(
     ref: BilibiliPartRef,
     metadata: dict[str, Any],
 ) -> str:
+    return fetch_bilibili_playurl_audio_urls(ref, metadata)[0]
+
+
+def fetch_bilibili_playurl_audio_urls(
+    ref: BilibiliPartRef,
+    metadata: dict[str, Any],
+) -> list[str]:
     cid = _metadata_cid(metadata)
     if not cid:
         raise MediaDownloadError("Bilibili playurl fallback requires current-P cid.")
@@ -344,10 +351,10 @@ def fetch_bilibili_playurl_audio_url(
     if not audio_entries:
         raise MediaDownloadError("Bilibili playurl API returned no audio streams.")
     selected = max(audio_entries, key=lambda entry: _numeric_value(entry.get("bandwidth")))
-    audio_url = _first_text(selected.get("baseUrl"), selected.get("base_url"))
-    if not _is_https_url(audio_url):
+    audio_urls = _playurl_audio_candidate_urls(selected)
+    if not audio_urls:
         raise MediaDownloadError("Bilibili playurl API returned an invalid audio URL.")
-    return audio_url
+    return audio_urls
 
 
 def download_bilibili_audio_stream(
@@ -380,7 +387,10 @@ def download_bilibili_audio_stream(
     except MediaDownloadError:
         raise
     except (OSError, URLError, ValueError) as exc:
-        raise MediaDownloadError("Bilibili audio stream download failed.") from exc
+        raise MediaDownloadError(
+            "Bilibili audio stream download failed: "
+            f"{exc.__class__.__name__}: {exc}"
+        ) from exc
 
     if total <= 0:
         raise MediaDownloadError("Bilibili audio stream was empty.")
@@ -460,16 +470,29 @@ def _run_playurl_audio_download(
     stream_downloader: StreamDownloader,
     ffmpeg_runner: Runner,
 ) -> str:
-    audio_url = playurl_fetcher(ref, metadata)
     raw_audio_path = cache_dir / f"{ref.output_id}.source.m4s"
     mp3_path = cache_dir / f"{ref.output_id}.mp3"
-    try:
-        stream_downloader(audio_url, ref, raw_audio_path)
-        convert_audio_to_mp3(raw_audio_path, mp3_path, runner=ffmpeg_runner)
-    finally:
-        if raw_audio_path.exists():
-            raw_audio_path.unlink()
-    return "bilibili-playurl-api"
+    audio_urls = _normalize_audio_urls(playurl_fetcher(ref, metadata))
+    last_error: MediaDownloadError | None = None
+    for audio_url in audio_urls:
+        try:
+            stream_downloader(audio_url, ref, raw_audio_path)
+            convert_audio_to_mp3(raw_audio_path, mp3_path, runner=ffmpeg_runner)
+            last_error = None
+            return "bilibili-playurl-api"
+        except MediaDownloadError as exc:
+            last_error = exc
+        finally:
+            if raw_audio_path.exists():
+                raw_audio_path.unlink()
+            if last_error is not None and mp3_path.exists():
+                mp3_path.unlink()
+    if last_error is not None:
+        raise MediaDownloadError(
+            "Bilibili audio stream download failed for all playurl candidates: "
+            f"{last_error}"
+        ) from last_error
+    raise MediaDownloadError("Bilibili playurl API returned no usable audio URLs.")
 
 
 def _run_playurl_audio_download_with_duration_check(
@@ -560,6 +583,48 @@ def _playurl_audio_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(audio_entries, list):
         return []
     return [entry for entry in audio_entries if isinstance(entry, dict)]
+
+
+def _playurl_audio_candidate_urls(entry: dict[str, Any]) -> list[str]:
+    raw_candidates: list[Any] = [
+        entry.get("baseUrl"),
+        entry.get("base_url"),
+    ]
+    for key in ("backupUrl", "backup_url"):
+        backup = entry.get(key)
+        if isinstance(backup, list):
+            raw_candidates.extend(backup)
+        else:
+            raw_candidates.append(backup)
+
+    urls: list[str] = []
+    seen: set[str] = set()
+    for raw_url in raw_candidates:
+        url = _first_text(raw_url)
+        if not _is_https_url(url) or url in seen:
+            continue
+        urls.append(url)
+        seen.add(url)
+    return urls
+
+
+def _normalize_audio_urls(value: str | list[str]) -> list[str]:
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list):
+        values = value
+    else:
+        values = []
+
+    urls: list[str] = []
+    seen: set[str] = set()
+    for raw_url in values:
+        url = _first_text(raw_url)
+        if not _is_https_url(url) or url in seen:
+            continue
+        urls.append(url)
+        seen.add(url)
+    return urls
 
 
 def _numeric_value(value: Any) -> float:
