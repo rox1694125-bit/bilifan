@@ -183,7 +183,10 @@ def create_app(
 
     @app.get("/api/jobs/queue")
     def queue_state(_: None = Depends(require_token)) -> dict[str, object]:
-        return queue.state()
+        return _task_center_state(
+            current_job=jobs.current().as_dict(),
+            queue_state=queue.state(),
+        )
 
     @app.post("/api/jobs/batch")
     def create_batch_jobs(
@@ -526,3 +529,74 @@ def _add_token_to_artifact_links(
             }
         linked_items.append(linked_item)
     return linked_items
+
+
+def _task_center_state(
+    *,
+    current_job: dict[str, object],
+    queue_state: dict[str, object],
+) -> dict[str, object]:
+    state = dict(queue_state)
+    raw_items = queue_state.get("items")
+    queue_items = [
+        {**item, "source": "queue"}
+        for item in raw_items
+        if isinstance(item, dict)
+    ] if isinstance(raw_items, list) else []
+    current_item = _current_task_item(current_job)
+    items = [current_item, *queue_items] if current_item is not None else queue_items
+    state["items"] = items
+    state["queue_counts"] = dict(queue_state.get("counts")) if isinstance(queue_state.get("counts"), dict) else {}
+    state["counts"] = _combined_counts(queue_state.get("counts"), current_item)
+    state["visible_counts"] = _combined_counts(
+        queue_state.get("visible_counts") or queue_state.get("counts"),
+        current_item,
+    )
+    state["total_items"] = int(queue_state.get("total_items") or 0) + (
+        1 if current_item is not None else 0
+    )
+    return state
+
+
+def _current_task_item(current_job: dict[str, object]) -> dict[str, object] | None:
+    status = current_job.get("status")
+    if status in {None, "", "idle"}:
+        return None
+    request = current_job.get("request") if isinstance(current_job.get("request"), dict) else {}
+    title = current_job.get("title")
+    return {
+        "source": "current",
+        "job_id": current_job.get("job_id") or "current",
+        "status": status,
+        "stage": current_job.get("stage") or "preflight",
+        "message": current_job.get("message") or "",
+        "title": title if isinstance(title, str) and title.strip() else "当前任务",
+        "request": dict(request),
+        "progress": current_job.get("progress") if isinstance(current_job.get("progress"), list) else [],
+        "run_key": current_job.get("run_key"),
+        "artifacts": current_job.get("artifacts") if isinstance(current_job.get("artifacts"), dict) else {},
+        "warnings": current_job.get("warnings") if isinstance(current_job.get("warnings"), list) else [],
+        "friendly_error": current_job.get("friendly_error")
+        if isinstance(current_job.get("friendly_error"), dict)
+        else None,
+        "retry_actions": current_job.get("retry_actions")
+        if isinstance(current_job.get("retry_actions"), list)
+        else [],
+    }
+
+
+def _combined_counts(
+    raw_counts: object,
+    current_item: dict[str, object] | None,
+) -> dict[str, int]:
+    counts = {status: 0 for status in ["queued", "running", "succeeded", "failed", "canceled"]}
+    if isinstance(raw_counts, dict):
+        for status in counts:
+            counts[status] = int(raw_counts.get(status) or 0)
+    if current_item is not None:
+        status = current_item.get("status")
+        if status == "canceling":
+            status = "running"
+        if isinstance(status, str) and status in counts:
+            counts[status] += 1
+    return counts

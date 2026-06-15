@@ -253,6 +253,48 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
     assert calls[0].with_diagrams is True
 
 
+def test_single_job_is_visible_in_task_center_queue_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+
+    def fake_pipeline(request, *, progress_callback):
+        run_dir = request.out / "BV1abcDEF12G_p1" / "runs" / "2026-06-08_120000"
+        run_dir.mkdir(parents=True)
+        (run_dir / "metadata.json").write_text(
+            json.dumps({"title": "单个入口视频标题"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return PipelineResult(
+            run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
+            run_dir=run_dir,
+            diagnostics_path=run_dir / "diagnostics.json",
+            artifact_paths=["metadata.json", "report.html"],
+            warnings=[],
+        )
+
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    start_response = client.post(
+        "/api/jobs",
+        headers=_headers(),
+        json={"url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1"},
+    )
+    task_center = client.get("/api/jobs/queue", headers=_headers()).json()
+
+    assert start_response.status_code == 200
+    assert task_center["visible_counts"]["succeeded"] == 1
+    assert task_center["items"][0]["source"] == "current"
+    assert task_center["items"][0]["title"] == "单个入口视频标题"
+    assert task_center["items"][0]["request"]["url"] == "https://www.bilibili.com/video/BV1abcDEF12G?p=1"
+
+
 def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
     calls = []

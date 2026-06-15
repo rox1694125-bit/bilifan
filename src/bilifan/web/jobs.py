@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import Lock, Thread
 from time import monotonic
 from typing import Any
@@ -31,6 +33,8 @@ class JobState:
     status: str = "idle"
     stage: str = "preflight"
     message: str = ""
+    title: str | None = None
+    request: dict[str, object] = field(default_factory=dict)
     progress: list[dict[str, str]] = field(
         default_factory=lambda: [{"stage": stage, "status": "pending"} for stage in STAGES]
     )
@@ -53,6 +57,8 @@ class JobState:
             "status": self.status,
             "stage": self.stage,
             "message": self.message,
+            "title": self.title,
+            "request": dict(self.request),
             "progress": [dict(item) for item in self.progress],
             "run_key": self.run_key,
             "artifacts": dict(self.artifacts),
@@ -82,6 +88,7 @@ class JobManager:
             job_id=uuid4().hex,
             status="running",
             stage=initial_stage,
+            request=_request_payload(request),
             progress=_initial_progress(initial_stage),
             job_started_at=now_iso,
             stage_started_at=now_iso,
@@ -165,6 +172,7 @@ class JobManager:
                 self._current.run_key = exc.run_key
                 self._current.artifacts = _artifact_links(exc.run_key, exc.artifact_paths)
                 self._current.warnings = list(exc.warnings)
+                self._current.title = _read_metadata_title(exc.diagnostics_path.parent)
                 self._current.friendly_error = explain_failure(
                     stage=failed_stage,
                     message=self._current.message,
@@ -217,6 +225,7 @@ class JobManager:
             self._current.run_key = result.run_key
             self._current.artifacts = artifacts
             self._current.warnings = list(result.warnings)
+            self._current.title = _read_metadata_title(result.run_dir)
             self._current.friendly_error = None
             self._current.retry_actions = []
             for item in self._current.progress:
@@ -259,6 +268,8 @@ class JobManager:
             status=self._current.status,
             stage=self._current.stage,
             message=self._current.message,
+            title=self._current.title,
+            request=dict(self._current.request),
             progress=[dict(item) for item in self._current.progress],
             run_key=self._current.run_key,
             artifacts=dict(self._current.artifacts),
@@ -303,6 +314,41 @@ def _artifact_links(run_key: str, artifact_paths: list[str]) -> dict[str, str]:
     if artifact_paths:
         artifacts["folder"] = f"/api/runs/{run_key}/open-folder"
     return artifacts
+
+
+def _request_payload(request: Any) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    for name in [
+        "url",
+        "output_format",
+        "transcriber",
+        "language",
+        "force_whisper",
+        "summary_template",
+        "with_frames",
+        "with_diagrams",
+        "require_pdf",
+        "allow_long_video",
+    ]:
+        if hasattr(request, name):
+            value = getattr(request, name)
+            if isinstance(value, Path):
+                value = str(value)
+            payload[name] = value
+    if hasattr(request, "out"):
+        payload["out"] = str(getattr(request, "out"))
+    return payload
+
+
+def _read_metadata_title(run_dir: Path) -> str | None:
+    try:
+        data = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    title = data.get("title") or data.get("part_title")
+    return redact_text(title) if isinstance(title, str) and title.strip() else None
 
 
 def explain_failure(

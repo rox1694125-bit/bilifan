@@ -120,7 +120,7 @@ Run:
 
 Expected: all focused tests pass.
 
-- [ ] **Step 6: Commit and push**
+- [x] **Step 6: Commit and push**
 
 Run:
 
@@ -141,7 +141,7 @@ git push
 - Test: `tests/test_queue.py`
 - Test: `tests/test_web_ui.py`
 
-- [ ] **Step 1: Add failing Web API/UI tests**
+- [x] **Step 1: Add failing Web API/UI tests**
 
 Add tests proving that a single URL submission is represented in the same visible task center as queue jobs, that finished queue items keep the latest 3 completed items, and that replaced failed attempts are hidden once the same URL succeeds later.
 
@@ -153,11 +153,11 @@ Run:
 
 Expected before implementation: at least one new test fails.
 
-- [ ] **Step 2: Implement minimal unified representation**
+- [x] **Step 2: Implement minimal unified representation**
 
 Keep existing `/api/jobs/current` for compatibility. Add a combined task view from the Web UI by rendering current job and queue jobs under one "任务中心" section, using the same Chinese stage labels and artifact action groups. Do not remove persistent queue storage.
 
-- [ ] **Step 3: Improve queue cleanup semantics**
+- [x] **Step 3: Improve queue cleanup semantics**
 
 Keep `RECENT_COMPLETED_LIMIT = 3`. Hide failed/canceled jobs when a later successful job with the same normalized URL exists. Keep `clear_completed` for manual cleanup.
 

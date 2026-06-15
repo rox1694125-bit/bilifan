@@ -574,7 +574,7 @@ def render_app_html(token: str = "") -> str:
                               <span>允许长视频</span>
                             </label>
                           </div>
-                          <p class="hint">批量队列会使用这里的当前设置；默认设置适合大多数视频。</p>
+                          <p class="hint">任务中心里的批量任务会使用这里的当前设置；默认设置适合大多数视频。</p>
                         </div>
                       </details>
 
@@ -591,8 +591,8 @@ def render_app_html(token: str = "") -> str:
 
                 <section class="panel">
                   <div class="panel-header">
-                    <h1>批量队列</h1>
-                    <p class="subtle">sequential local jobs</p>
+                    <h1>任务中心</h1>
+                    <p class="subtle">单个任务和批量任务</p>
                   </div>
                   <div class="panel-body stack">
                     <label for="batch-urls">
@@ -946,7 +946,7 @@ def render_app_html(token: str = "") -> str:
             }
 
             function renderQueue(queue) {
-              const totalCounts = queue && queue.counts ? queue.counts : {};
+              const totalCounts = queue && queue.queue_counts ? queue.queue_counts : (queue && queue.counts ? queue.counts : {});
               const counts = queue && queue.visible_counts ? queue.visible_counts : totalCounts;
               const hiddenCompleted = Number.isFinite(Number(queue && queue.hidden_completed)) ? Number(queue.hidden_completed) : 0;
               const hiddenReplaced = Number.isFinite(Number(queue && queue.hidden_replaced)) ? Number(queue.hidden_replaced) : 0;
@@ -977,16 +977,19 @@ def render_app_html(token: str = "") -> str:
                   menuScope: `queue:${queueKey}`,
                 });
                 const queueControls = [];
-                if (item.status === "queued") queueControls.push(`<button class="link-button warning-action" type="button" data-queue-cancel="${escapeAttr(item.job_id || "")}">取消排队</button>`);
-                if (["failed", "canceled"].includes(item.status)) queueControls.push(`<button class="link-button warning-action" type="button" data-queue-retry="${escapeAttr(item.job_id || "")}">重新排队</button>`);
+                const isQueueItem = item.source !== "current";
+                if (isQueueItem && item.status === "queued") queueControls.push(`<button class="link-button warning-action" type="button" data-queue-cancel="${escapeAttr(item.job_id || "")}">取消排队</button>`);
+                if (isQueueItem && ["failed", "canceled"].includes(item.status)) queueControls.push(`<button class="link-button warning-action" type="button" data-queue-retry="${escapeAttr(item.job_id || "")}">重新排队</button>`);
                 const request = item.request && typeof item.request === "object" ? item.request : {};
                 const requestUrl = typeof request.url === "string" ? request.url : "";
                 const displayTitle = queueDisplayTitle(item, requestUrl);
                 const compactUrl = compactSourceUrl(requestUrl);
+                const sourceLabel = item.source === "current" ? "当前任务" : "队列任务";
                 return `
                   <li class="history-item">
                     <div class="history-item-title">${escapeHtml(displayTitle)}</div>
                     <div class="history-meta">
+                      <span>${escapeHtml(sourceLabel)}</span>
                       <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(statusLabel(item.status))}</span>
                       <span>阶段: ${escapeHtml(stageLabel(item.stage))}</span>
                       ${compactUrl ? `<span class="queue-url">${escapeHtml(compactUrl)}</span>` : ""}

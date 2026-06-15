@@ -99,6 +99,7 @@ def test_render_app_html_contains_workbench_contract():
         "batch-submit-button",
         "queue-clear-completed-button",
         "queue-list",
+        "任务中心",
         "/api/jobs/batch",
         "/api/jobs/queue",
         "/api/jobs/queue/clear-completed",
@@ -684,6 +685,65 @@ def test_render_app_script_queue_item_uses_video_title_as_primary_label():
         assert(elements["queue-list"].innerHTML.includes("真正的视频标题"));
         assert(elements["queue-list"].innerHTML.includes("BV1abcDEF12G?p=1"));
         assert(!elements["queue-list"].innerHTML.includes("<div class=\\"history-item-title\\">https://www.bilibili.com"));
+        """,
+    )
+
+
+def test_render_app_script_task_center_shows_current_job_item():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "AI 自动判断" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              job_id: "current-1",
+              status: "succeeded",
+              stage: "render",
+              message: "Report ready.",
+              title: "单个入口视频标题",
+              request: { url: "https://www.bilibili.com/video/BV1abcDEF12G?p=1" },
+              progress: [],
+              artifacts: {},
+              run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000"
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 0, running: 0, succeeded: 1, failed: 0, canceled: 0 },
+              visible_counts: { queued: 0, running: 0, succeeded: 1, failed: 0, canceled: 0 },
+              queue_counts: { queued: 0, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+              total_items: 1,
+              hidden_completed: 0,
+              hidden_replaced: 0,
+              items: [{
+                source: "current",
+                job_id: "current-1",
+                title: "单个入口视频标题",
+                status: "succeeded",
+                stage: "render",
+                message: "Report ready.",
+                request: { url: "https://www.bilibili.com/video/BV1abcDEF12G?p=1" },
+                run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
+                artifacts: {}
+              }]
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["queue-list"].innerHTML.includes("当前任务"));
+        assert(elements["queue-list"].innerHTML.includes("单个入口视频标题"));
+        assert(elements["queue-list"].innerHTML.includes("BV1abcDEF12G?p=1"));
+        assert(!elements["queue-list"].innerHTML.includes("重新排队"));
+        assert.equal(elements["queue-clear-completed-button"].disabled, true);
         """,
     )
 
