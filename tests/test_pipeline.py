@@ -169,6 +169,8 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
         language="auto",
         transcriber="auto",
     ):
+        if not media.get("audio_path"):
+            raise pipeline.TranscriptError("Audio file for Whisper is missing.")
         return {
             "source": "whisper",
             "language": "zh",
@@ -332,12 +334,315 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
     ] == [
         ("preflight", "running"),
         ("metadata", "running"),
+        ("transcript", "running"),
         ("audio", "running"),
         ("transcript", "running"),
         ("chunking", "running"),
         ("summarization", "running"),
         ("render", "running"),
     ]
+
+
+def test_run_summarize_pipeline_uses_subtitles_without_downloading_audio(
+    tmp_path, monkeypatch
+):
+    progress_events: list[tuple[str, str, str]] = []
+
+    def record_progress(stage: str, status: str, message: str) -> None:
+        progress_events.append((stage, status, message))
+
+    def fake_fetch_current_part_metadata(
+        ref,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        return {
+            "bilifan_version": "0.1.0",
+            "generated_at": "2026-06-16T00:00:00+00:00",
+            "input_url_sanitized": ref.sanitized_url,
+            "video_id": ref.bvid,
+            "part_index": ref.part_index,
+            "cid": "123456",
+            "title": "Subtitle video",
+            "part_title": "Subtitle video",
+            "owner_name": "Mock Owner",
+            "description": "",
+            "tags": [],
+            "cover_url": "",
+            "cover_path": "",
+            "duration": 120,
+            "parts": [],
+            "subtitles": [
+                {
+                    "language": "zh-Hans",
+                    "url": "https://example.test/subtitle.json",
+                    "ext": "json",
+                }
+            ],
+            "yt_dlp_version": "mock",
+            "ffmpeg_version": "",
+        }
+
+    def forbidden_download_current_part_audio(*args, **kwargs):
+        raise AssertionError("audio should not be downloaded when subtitles are usable")
+
+    def fake_build_transcript(
+        metadata,
+        media,
+        run_dir,
+        *,
+        force_whisper=False,
+        language="auto",
+        transcriber="auto",
+    ):
+        assert force_whisper is False
+        assert transcriber == "auto"
+        assert media["duration_seconds"] == metadata["duration"]
+        assert not media.get("audio_path")
+        return {
+            "source": "bilibili-subtitle",
+            "language": "zh-Hans",
+            "model": None,
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 120.0,
+                    "text": "字幕内容",
+                    "language": "zh-Hans",
+                    "source": "bilibili-subtitle",
+                }
+            ],
+            "transcript_check": {
+                "status": "ok",
+                "audio_seconds": 120,
+                "last_segment_end": 120,
+                "difference_seconds": 0,
+                "tolerance_seconds": 10,
+                "segment_count": 1,
+            },
+        }
+
+    def fake_build_chunks(
+        transcript,
+        media,
+        *,
+        allow_long_video=False,
+        long_video_confirmed=False,
+    ):
+        assert media["duration_seconds"] == 120
+        return {
+            "chunks": [
+                {
+                    "chunk_index": 1,
+                    "start": 0,
+                    "end": 120,
+                    "text": "字幕内容",
+                    "segments": [
+                        {"source_index": 0, "start": 0, "end": 120, "text": "字幕内容"}
+                    ],
+                }
+            ]
+        }
+
+    def fake_summarize_chunks(
+        *,
+        ref,
+        metadata,
+        chunks,
+        run_dir,
+        provider="codex-exec",
+        model="gpt-5.5",
+        style="学习笔记",
+    ):
+        return {
+            "style": style,
+            "chapters": [
+                {
+                    "chapter_index": 1,
+                    "title": "字幕章节",
+                    "start": 0,
+                    "end": 120,
+                    "timestamp_url": ref.timestamp_url(0),
+                    "summary": "摘要",
+                    "key_points": ["要点"],
+                    "quotes": [],
+                    "visual_anchors": [],
+                }
+            ],
+        }
+
+    def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
+        html_path = run_dir / "report.html"
+        html_path.write_text("<html><body>report</body></html>", encoding="utf-8")
+        return html_path
+
+    monkeypatch.setattr(pipeline, "fetch_current_part_metadata", fake_fetch_current_part_metadata)
+    monkeypatch.setattr(
+        pipeline,
+        "download_current_part_audio",
+        forbidden_download_current_part_audio,
+    )
+    monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
+    monkeypatch.setattr(pipeline, "build_chunks", fake_build_chunks)
+    monkeypatch.setattr(pipeline, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(pipeline, "render_report_html", fake_render_report_html)
+
+    result = pipeline.run_summarize_pipeline(
+        PipelineRequest(
+            url="https://www.bilibili.com/video/BV1abcDEF12G",
+            out=tmp_path,
+            output_format="html",
+            yes_i_understand=True,
+        ),
+        progress_callback=record_progress,
+    )
+
+    assert "report.html" in result.artifact_paths
+    assert "transcript.txt" in result.artifact_paths
+    assert "content_bundle.json" in result.artifact_paths
+    assert "media/audio.mp3" not in result.artifact_paths
+    assert not any(path.endswith(".mp3") for path in result.artifact_paths)
+    assert not (result.run_dir / "media" / "audio.mp3").exists()
+
+    diagnostics = json.loads((result.run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+    bundle = json.loads((result.run_dir / "content_bundle.json").read_text(encoding="utf-8"))
+    assert diagnostics["duration_check"]["status"] == "metadata_only"
+    assert "audio_mp3" not in bundle["artifacts"]
+    assert ("audio", "running") not in [
+        (stage, status) for stage, status, _message in progress_events
+    ]
+
+
+def test_run_summarize_pipeline_force_whisper_downloads_audio_before_transcript(
+    tmp_path, monkeypatch
+):
+    call_order: list[str] = []
+
+    def fake_fetch_current_part_metadata(
+        ref,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        return {
+            "input_url_sanitized": ref.sanitized_url,
+            "video_id": ref.bvid,
+            "part_index": ref.part_index,
+            "title": "Subtitle video",
+            "part_title": "Subtitle video",
+            "owner_name": "Mock Owner",
+            "duration": 120,
+            "subtitles": [
+                {
+                    "language": "zh-Hans",
+                    "url": "https://example.test/subtitle.json",
+                    "ext": "json",
+                }
+            ],
+        }
+
+    def fake_download_current_part_audio(
+        ref,
+        metadata,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        call_order.append("audio")
+        audio_path = f".bilifan/cache/{ref.output_id}.mp3"
+        (run_dir / audio_path).parent.mkdir(parents=True, exist_ok=True)
+        (run_dir / audio_path).write_bytes(b"audio")
+        return {
+            "audio_path": audio_path,
+            "duration_seconds": 120,
+            "duration_check": {"status": "ok"},
+        }
+
+    def fake_build_transcript(
+        metadata,
+        media,
+        run_dir,
+        *,
+        force_whisper=False,
+        language="auto",
+        transcriber="auto",
+    ):
+        call_order.append("transcript")
+        assert force_whisper is True
+        assert media["audio_path"].endswith(".mp3")
+        return {
+            "source": "whisper",
+            "language": "zh",
+            "model": "turbo",
+            "segments": [{"start": 0.0, "end": 120.0, "text": "转写"}],
+            "transcript_check": {"status": "ok"},
+        }
+
+    def fake_build_chunks(
+        transcript,
+        media,
+        *,
+        allow_long_video=False,
+        long_video_confirmed=False,
+    ):
+        return {
+            "chunks": [
+                {
+                    "chunk_index": 1,
+                    "start": 0,
+                    "end": 120,
+                    "text": "转写",
+                    "segments": [],
+                }
+            ]
+        }
+
+    def fake_summarize_chunks(**kwargs):
+        return {
+            "style": "学习笔记",
+            "chapters": [
+                {
+                    "chapter_index": 1,
+                    "title": "开场",
+                    "start": 0,
+                    "end": 120,
+                    "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?t=0",
+                    "summary": "摘要",
+                    "key_points": ["要点"],
+                    "quotes": [],
+                    "visual_anchors": [],
+                }
+            ],
+        }
+
+    def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
+        html_path = run_dir / "report.html"
+        html_path.write_text("<html><body>report</body></html>", encoding="utf-8")
+        return html_path
+
+    monkeypatch.setattr(pipeline, "fetch_current_part_metadata", fake_fetch_current_part_metadata)
+    monkeypatch.setattr(pipeline, "download_current_part_audio", fake_download_current_part_audio)
+    monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
+    monkeypatch.setattr(pipeline, "build_chunks", fake_build_chunks)
+    monkeypatch.setattr(pipeline, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(pipeline, "render_report_html", fake_render_report_html)
+
+    result = pipeline.run_summarize_pipeline(
+        PipelineRequest(
+            url="https://www.bilibili.com/video/BV1abcDEF12G",
+            out=tmp_path,
+            output_format="html",
+            force_whisper=True,
+            yes_i_understand=True,
+        )
+    )
+
+    assert call_order[:2] == ["audio", "transcript"]
+    assert "media/audio.mp3" in result.artifact_paths
 
 
 def test_summarization_failure_keeps_transcript_exports_in_artifacts(
@@ -387,6 +692,8 @@ def test_summarization_failure_keeps_transcript_exports_in_artifacts(
         language="auto",
         transcriber="auto",
     ):
+        if not media.get("audio_path"):
+            raise pipeline.TranscriptError("Audio file for Whisper is missing.")
         return {
             "source": "whisper",
             "language": "zh",
@@ -485,6 +792,8 @@ def test_render_failure_keeps_completed_exports_in_artifacts(tmp_path, monkeypat
         language="auto",
         transcriber="auto",
     ):
+        if not media.get("audio_path"):
+            raise pipeline.TranscriptError("Audio file for Whisper is missing.")
         return {
             "source": "whisper",
             "language": "zh",
@@ -635,6 +944,8 @@ def test_run_summarize_pipeline_without_long_video_callback_does_not_write_failu
         language="auto",
         transcriber="auto",
     ):
+        if not media.get("audio_path"):
+            raise pipeline.TranscriptError("Audio file for Whisper is missing.")
         return {
             "source": "whisper",
             "language": "zh",

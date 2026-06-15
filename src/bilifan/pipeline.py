@@ -217,42 +217,18 @@ def run_summarize_pipeline(
         _metadata_done_message(metadata),
     )
 
-    _progress(progress_callback, PipelineStage.AUDIO, "running", "Downloading audio.")
-    try:
-        media = _download_source_audio(
+    media = _metadata_media(metadata)
+    transcript: dict[str, Any] | None = None
+    if _requires_audio_before_transcript(request):
+        media = _download_audio_or_fail(
             adapter,
             source_ref,
             ref,
             metadata,
-            run.run_dir,
-            source_options,
-        )
-    except MediaDownloadError as exc:
-        sanitized_message = redact_text(str(exc))
-        artifact_paths = ["diagnostics.json", "metadata.json"]
-        write_diagnostics(
-            run.run_dir / "diagnostics.json",
-            Diagnostics(
-                error_type="MediaDownloadError",
-                exit_code=1,
-                stage="media",
-                video_id=ref.bvid,
-                part_index=ref.part_index,
-                duration_check=exc.duration_check,
-                transcript_check=None,
-                artifact_paths=artifact_paths,
-                sanitized_message=sanitized_message,
-                warnings=["media_failed"],
-            ),
-        )
-        _progress(progress_callback, PipelineStage.AUDIO, "failed", sanitized_message)
-        raise _pipeline_run_error(
             run,
-            sanitized_message,
-            artifact_paths=artifact_paths,
-            warnings=["media_failed"],
-        ) from exc
-    _progress(progress_callback, PipelineStage.AUDIO, "done", "Audio ready.")
+            source_options,
+            progress_callback,
+        )
 
     _progress(progress_callback, PipelineStage.TRANSCRIPT, "running", "Building transcript.")
     try:
@@ -265,34 +241,48 @@ def run_summarize_pipeline(
             transcriber=request.transcriber,
         )
     except TranscriptError as exc:
-        sanitized_message = redact_text(str(exc))
-        artifact_paths = [
-            "diagnostics.json",
-            "metadata.json",
-            media["audio_path"],
-        ]
-        write_diagnostics(
-            run.run_dir / "diagnostics.json",
-            Diagnostics(
-                error_type="TranscriptError",
-                exit_code=1,
-                stage=PipelineStage.TRANSCRIPT.value,
-                video_id=ref.bvid,
-                part_index=ref.part_index,
-                duration_check=media["duration_check"],
-                transcript_check=exc.transcript_check,
-                artifact_paths=artifact_paths,
-                sanitized_message=sanitized_message,
-                warnings=["transcript_failed"],
-            ),
-        )
-        _progress(progress_callback, PipelineStage.TRANSCRIPT, "failed", sanitized_message)
-        raise _pipeline_run_error(
-            run,
-            sanitized_message,
-            artifact_paths=artifact_paths,
-            warnings=["transcript_failed"],
-        ) from exc
+        if request.transcriber == "auto" and not request.force_whisper and not _has_audio(media):
+            media = _download_audio_or_fail(
+                adapter,
+                source_ref,
+                ref,
+                metadata,
+                run,
+                source_options,
+                progress_callback,
+            )
+            _progress(
+                progress_callback,
+                PipelineStage.TRANSCRIPT,
+                "running",
+                "Building transcript with Whisper.",
+            )
+            try:
+                transcript = build_transcript(
+                    metadata,
+                    media,
+                    run.run_dir,
+                    force_whisper=request.force_whisper,
+                    language=request.language,
+                    transcriber=request.transcriber,
+                )
+            except TranscriptError as retry_exc:
+                _raise_transcript_failure(
+                    retry_exc,
+                    run=run,
+                    ref=ref,
+                    media=media,
+                    progress_callback=progress_callback,
+                )
+        else:
+            _raise_transcript_failure(
+                exc,
+                run=run,
+                ref=ref,
+                media=media,
+                progress_callback=progress_callback,
+            )
+    assert transcript is not None
 
     _write_json(run.run_dir / "transcript.json", transcript)
     transcript_export_artifacts: list[str] = []
@@ -427,7 +417,7 @@ def run_summarize_pipeline(
         artifact_paths = [
             "diagnostics.json",
             "metadata.json",
-            media["audio_path"],
+            *_media_artifact_paths(media),
             "transcript.json",
             *transcript_export_artifacts,
             "chunks.json",
@@ -492,7 +482,7 @@ def run_summarize_pipeline(
     render_base_artifacts = [
         "diagnostics.json",
         "metadata.json",
-        media["audio_path"],
+        *_media_artifact_paths(media),
         "transcript.json",
         *transcript_export_artifacts,
         "chunks.json",
@@ -573,14 +563,15 @@ def run_summarize_pipeline(
     if transcript["transcript_check"]["status"] == "transcript_incomplete":
         render_warnings.append("transcript_incomplete")
 
-    try:
-        audio_artifact_path = publish_audio_artifact(run.run_dir, media)
-        render_artifacts = [
-            audio_artifact_path if path == media["audio_path"] else path
-            for path in render_artifacts
-        ]
-    except MediaDownloadError:
-        render_warnings.append("audio_publish_failed")
+    if _has_audio(media):
+        try:
+            audio_artifact_path = publish_audio_artifact(run.run_dir, media)
+            render_artifacts = [
+                audio_artifact_path if path == media["audio_path"] else path
+                for path in render_artifacts
+            ]
+        except MediaDownloadError:
+            render_warnings.append("audio_publish_failed")
 
     bundle_path = write_content_bundle(
         run_dir=run.run_dir,
@@ -718,6 +709,136 @@ def _download_source_audio(
     return adapter.download_audio(source_ref, metadata, run_dir, source_options)
 
 
+def _download_audio_or_fail(
+    adapter: Any,
+    source_ref: Any,
+    ref: Any,
+    metadata: dict[str, Any],
+    run: RunPaths,
+    source_options: SourceOptions,
+    progress_callback: ProgressCallback,
+) -> dict[str, Any]:
+    _progress(progress_callback, PipelineStage.AUDIO, "running", "Downloading audio.")
+    try:
+        media = _download_source_audio(
+            adapter,
+            source_ref,
+            ref,
+            metadata,
+            run.run_dir,
+            source_options,
+        )
+    except MediaDownloadError as exc:
+        sanitized_message = redact_text(str(exc))
+        artifact_paths = ["diagnostics.json", "metadata.json"]
+        write_diagnostics(
+            run.run_dir / "diagnostics.json",
+            Diagnostics(
+                error_type="MediaDownloadError",
+                exit_code=1,
+                stage="media",
+                video_id=ref.bvid,
+                part_index=ref.part_index,
+                duration_check=exc.duration_check,
+                transcript_check=None,
+                artifact_paths=artifact_paths,
+                sanitized_message=sanitized_message,
+                warnings=["media_failed"],
+            ),
+        )
+        _progress(progress_callback, PipelineStage.AUDIO, "failed", sanitized_message)
+        raise _pipeline_run_error(
+            run,
+            sanitized_message,
+            artifact_paths=artifact_paths,
+            warnings=["media_failed"],
+        ) from exc
+    _progress(progress_callback, PipelineStage.AUDIO, "done", "Audio ready.")
+    return media
+
+
+def _raise_transcript_failure(
+    exc: TranscriptError,
+    *,
+    run: RunPaths,
+    ref: Any,
+    media: dict[str, Any],
+    progress_callback: ProgressCallback,
+) -> None:
+    sanitized_message = redact_text(str(exc))
+    artifact_paths = [
+        "diagnostics.json",
+        "metadata.json",
+        *_media_artifact_paths(media),
+    ]
+    write_diagnostics(
+        run.run_dir / "diagnostics.json",
+        Diagnostics(
+            error_type="TranscriptError",
+            exit_code=1,
+            stage=PipelineStage.TRANSCRIPT.value,
+            video_id=ref.bvid,
+            part_index=ref.part_index,
+            duration_check=media["duration_check"],
+            transcript_check=exc.transcript_check,
+            artifact_paths=artifact_paths,
+            sanitized_message=sanitized_message,
+            warnings=["transcript_failed"],
+        ),
+    )
+    _progress(progress_callback, PipelineStage.TRANSCRIPT, "failed", sanitized_message)
+    raise _pipeline_run_error(
+        run,
+        sanitized_message,
+        artifact_paths=artifact_paths,
+        warnings=["transcript_failed"],
+    ) from exc
+
+
+def _metadata_media(metadata: dict[str, Any]) -> dict[str, Any]:
+    duration = _metadata_duration(metadata)
+    return {
+        "audio_path": "",
+        "audio_source": "not-downloaded",
+        "duration_seconds": duration,
+        "duration_check": {
+            "status": "metadata_only",
+            "metadata_seconds": duration,
+            "audio_seconds": None,
+            "difference_ratio": None,
+            "tolerance_ratio": 0.05,
+            "attempts": 0,
+        },
+    }
+
+
+def _metadata_duration(metadata: dict[str, Any]) -> int | float | None:
+    duration = metadata.get("duration")
+    if isinstance(duration, bool) or duration is None:
+        return None
+    if isinstance(duration, int | float):
+        return duration
+    if isinstance(duration, str):
+        try:
+            parsed = float(duration)
+        except ValueError:
+            return None
+        return int(parsed) if parsed.is_integer() else parsed
+    return None
+
+
+def _requires_audio_before_transcript(request: PipelineRequest) -> bool:
+    return request.force_whisper or request.transcriber == "whisper"
+
+
+def _has_audio(media: dict[str, Any]) -> bool:
+    return isinstance(media.get("audio_path"), str) and bool(media.get("audio_path"))
+
+
+def _media_artifact_paths(media: dict[str, Any]) -> list[str]:
+    return [media["audio_path"]] if _has_audio(media) else []
+
+
 def _metadata_done_message(metadata: dict[str, Any]) -> str:
     estimate = estimate_chunk_plan(metadata.get("duration"))
     if estimate["mode"] == "single_pass":
@@ -782,7 +903,7 @@ def _chunking_failure_artifacts(
     return [
         "diagnostics.json",
         "metadata.json",
-        media["audio_path"],
+        *_media_artifact_paths(media),
         "transcript.json",
         *transcript_export_artifacts,
     ]
