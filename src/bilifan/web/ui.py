@@ -287,6 +287,21 @@ def render_app_html(token: str = "") -> str:
               background: #fff3f3;
               color: var(--danger);
             }
+            .task-liveness {
+              display: grid;
+              gap: 6px;
+              padding: 12px;
+              border: 1px solid var(--border);
+              border-radius: 6px;
+              background: var(--panel-muted);
+              color: var(--text);
+              font-size: 12px;
+            }
+            .task-liveness.warning {
+              border-color: #dfc286;
+              background: var(--paper);
+              color: var(--warn);
+            }
             .service-status {
               display: grid;
               gap: 6px;
@@ -651,6 +666,9 @@ def render_app_html(token: str = "") -> str:
                     <p class="subtle">/api/jobs/current</p>
                   </div>
                   <div class="panel-body stack">
+                    <div id="task-liveness" class="task-liveness">
+                      <div>当前没有运行中的任务。</div>
+                    </div>
                     <ul id="stage-list" class="stage-list"></ul>
                     <div id="result-links" class="link-list"></div>
                     <div id="failure-panel" class="failure-panel"></div>
@@ -724,6 +742,7 @@ def render_app_html(token: str = "") -> str:
               consentBanner: document.getElementById("consent-banner"),
               consentButton: document.getElementById("consent-button"),
               stageList: document.getElementById("stage-list"),
+              taskLiveness: document.getElementById("task-liveness"),
               resultLinks: document.getElementById("result-links"),
               failurePanel: document.getElementById("failure-panel"),
             };
@@ -830,14 +849,16 @@ def render_app_html(token: str = "") -> str:
               elements.queueClearCompletedButton.disabled = state.authExpired || !state.consentAccepted;
             }
 
-            function renderStageList(progress, activeStage, jobStatus) {
+            function renderStageList(progress, activeStage, jobStatus, timing = {}) {
               const items = Array.isArray(progress) && progress.length ? progress : STAGES.map((stage) => ({ stage, status: "pending" }));
+              const activeStageElapsed = readableDuration(timing.stage_elapsed_seconds);
               elements.stageList.innerHTML = items.map((item) => {
                 const stage = typeof item.stage === "string" ? item.stage : "";
                 const status = typeof item.status === "string" ? item.status : "pending";
                 const active = stage === activeStage ? " 当前" : "";
                 const statusClass = ["pending", "running", "done", "failed", "succeeded", "queued", "canceled"].includes(status) ? status : "pending";
                 const description = stageDescription(stage);
+                const stageTime = active && activeStageElapsed ? `<span>当前步骤 ${escapeHtml(activeStageElapsed)}</span>` : "";
                 return `
                   <li class="stage-item">
                     <div class="stage-name">${escapeHtml(stageLabel(stage))}</div>
@@ -845,10 +866,33 @@ def render_app_html(token: str = "") -> str:
                     <div class="stage-meta">
                       <span class="pill ${statusClass}">${escapeHtml(statusLabel(status))}${escapeHtml(active)}</span>
                       <span>任务: ${escapeHtml(statusLabel(jobStatus || "idle"))}</span>
+                      ${stageTime}
                     </div>
                   </li>
                 `;
               }).join("");
+            }
+
+            function renderTaskLiveness(data) {
+              const status = data && typeof data.status === "string" ? data.status : "idle";
+              if (!["running", "canceling"].includes(status)) {
+                elements.taskLiveness.className = "task-liveness";
+                elements.taskLiveness.innerHTML = "<div>当前没有运行中的任务。</div>";
+                return;
+              }
+              const stage = data && typeof data.stage === "string" ? data.stage : "preflight";
+              const elapsed = readableDuration(data.elapsed_seconds);
+              const stageElapsed = readableDuration(data.stage_elapsed_seconds);
+              const hint = slowStageHint(stage, data.stage_elapsed_seconds);
+              elements.taskLiveness.className = hint ? "task-liveness warning" : "task-liveness";
+              elements.taskLiveness.innerHTML = `
+                <div><strong>${escapeHtml(stageLabel(stage))}</strong> 正在处理，页面会自动刷新。</div>
+                <div class="service-status-meta">
+                  ${elapsed ? `<span>已运行 ${escapeHtml(elapsed)}</span>` : ""}
+                  ${stageElapsed ? `<span>当前步骤 ${escapeHtml(stageElapsed)}</span>` : ""}
+                </div>
+                ${hint ? `<div>${escapeHtml(hint)}</div>` : ""}
+              `;
             }
 
             function renderLinks(artifacts, runKey, status = "idle") {
@@ -954,7 +998,7 @@ def render_app_html(token: str = "") -> str:
               const cause = friendly && friendly.cause ? friendly.cause : (message || "Unknown error.");
               const nextAction = friendly && friendly.next_action ? `<div>${escapeHtml(friendly.next_action)}</div>` : "";
               const retryButtons = Array.isArray(retryActions) && retryActions.length && runKey
-                ? `<div class="action-groups">${retryActions.map((retryStage) => `<button class="link-button warning-action" type="button" data-retry-stage="${escapeAttr(retryStage)}" data-retry-run-key="${escapeAttr(runKey)}">${escapeHtml(retryLabel(retryStage))}</button>`).join("")}</div>`
+                ? `<div class="stack" style="gap:6px;"><h2>下一步</h2><div>优先尝试重试当前可恢复步骤。</div><div class="action-groups">${retryActions.map((retryStage) => `<button class="link-button warning-action" type="button" data-retry-stage="${escapeAttr(retryStage)}" data-retry-run-key="${escapeAttr(runKey)}">${escapeHtml(retryLabel(retryStage))}</button>`).join("")}</div></div>`
                 : "";
               elements.failurePanel.innerHTML = `
                 <div class="stack" style="gap:6px;">
@@ -1055,6 +1099,7 @@ def render_app_html(token: str = "") -> str:
                 const compactUrl = compactSourceUrl(requestUrl);
                 const sourceLabel = item.source === "current" ? "当前任务" : "队列任务";
                 const transcriptMeta = transcriptSourceMeta(item);
+                const timingMeta = taskTimingMeta(item);
                 return `
                   <li class="history-item">
                     <div class="history-item-title">${escapeHtml(displayTitle)}</div>
@@ -1063,6 +1108,7 @@ def render_app_html(token: str = "") -> str:
                       <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(statusLabel(item.status))}</span>
                       <span>阶段: ${escapeHtml(stageLabel(item.stage))}</span>
                       ${transcriptMeta}
+                      ${timingMeta}
                       ${compactUrl ? `<span class="queue-url">${escapeHtml(compactUrl)}</span>` : ""}
                     </div>
                     <div class="history-meta"><span>${escapeHtml(item.message || "")}</span></div>
@@ -1084,6 +1130,17 @@ def render_app_html(token: str = "") -> str:
               return label ? `<span>逐字稿：${escapeHtml(label)}</span>` : "";
             }
 
+            function taskTimingMeta(item) {
+              const elapsed = readableDuration(item && item.elapsed_seconds);
+              const stageElapsed = readableDuration(item && item.stage_elapsed_seconds);
+              const parts = [];
+              if (elapsed) parts.push(`已运行 ${elapsed}`);
+              if (stageElapsed && ["running", "canceling"].includes(item && item.status)) {
+                parts.push(`当前步骤 ${stageElapsed}`);
+              }
+              return parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("");
+            }
+
             function stageDescription(stage) {
               return STAGE_DESCRIPTIONS[stage] || "";
             }
@@ -1101,6 +1158,38 @@ def render_app_html(token: str = "") -> str:
                 done: "完成",
               };
               return labels[status] || status || "-";
+            }
+
+            function readableDuration(seconds) {
+              const total = Number(seconds);
+              if (!Number.isFinite(total) || total <= 0) return "";
+              const rounded = Math.max(0, Math.round(total));
+              const hours = Math.floor(rounded / 3600);
+              const minutes = Math.floor((rounded % 3600) / 60);
+              const remainingSeconds = rounded % 60;
+              const parts = [];
+              if (hours) parts.push(`${hours} 小时`);
+              if (minutes) parts.push(`${minutes} 分`);
+              if (!hours && remainingSeconds) parts.push(`${remainingSeconds} 秒`);
+              return parts.join(" ") || "0 秒";
+            }
+
+            function slowStageHint(stage, seconds) {
+              const elapsed = Number(seconds);
+              if (!Number.isFinite(elapsed)) return "";
+              if (stage === "audio" && elapsed >= 180) {
+                return "下载音频耗时较久，可能是网络、B 站限速或视频访问限制，可以继续等待。";
+              }
+              if (stage === "transcript" && elapsed >= 300) {
+                return "本地 Whisper 转写可能需要较长时间，视频越长等待越久，可以继续等待。";
+              }
+              if (stage === "summarization" && elapsed >= 180) {
+                return "Codex 正在整理长视频内容，长视频总结会更久，可以继续等待。";
+              }
+              if (stage === "render" && elapsed >= 90) {
+                return "正在生成文件；PDF 可能较慢，HTML 成功后通常已经可用。";
+              }
+              return "";
             }
 
             function queueDisplayTitle(item, requestUrl) {
@@ -1250,7 +1339,8 @@ def render_app_html(token: str = "") -> str:
                 state.currentStatus = typeof data.status === "string" ? data.status : "idle";
                 state.currentRunKey = typeof data.run_key === "string" ? data.run_key : "";
                 updateStartButton();
-                renderStageList(data.progress, data.stage, data.status);
+                renderTaskLiveness(data);
+                renderStageList(data.progress, data.stage, data.status, data);
                 renderLinks(data.artifacts, data.run_key, data.status);
                 if (data.status === "failed") {
                   renderFailure(data.stage, data.message, data.artifacts && data.artifacts.diagnostics, data.run_key, data.friendly_error, data.retry_actions);

@@ -956,6 +956,67 @@ def test_render_app_script_renders_stage_names_in_chinese():
     )
 
 
+def test_render_app_script_shows_long_running_task_guidance():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/status") {
+            return jsonResponse({
+              ok: true,
+              service: "bilifan-web-ui",
+              started_at: "2026-06-16T04:30:00+00:00",
+              access: { token: "valid" },
+              entrypoint: { mode: "remote", public_url: "https://bilifan.buyaoting.top" },
+              current_job: { status: "running", stage: "audio", message: "Downloading audio." }
+            });
+          }
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "学习笔记" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "running",
+              stage: "audio",
+              message: "Downloading audio.",
+              elapsed_seconds: 3720,
+              stage_elapsed_seconds: 260,
+              progress: [
+                { stage: "metadata", status: "done" },
+                { stage: "audio", status: "running" },
+                { stage: "transcript", status: "pending" }
+              ],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 0, running: 1, succeeded: 0, failed: 0, canceled: 0 },
+              visible_counts: { queued: 0, running: 1, succeeded: 0, failed: 0, canceled: 0 },
+              total_items: 1,
+              hidden_completed: 0,
+              hidden_replaced: 0,
+              items: []
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["task-liveness"].innerHTML.includes("已运行 1 小时 2 分"));
+        assert(elements["task-liveness"].innerHTML.includes("当前步骤 4 分 20 秒"));
+        assert(elements["task-liveness"].innerHTML.includes("下载音频耗时较久"));
+        assert(elements["task-liveness"].innerHTML.includes("可以继续等待"));
+        assert(elements["stage-list"].innerHTML.includes("当前步骤 4 分 20 秒"));
+        """,
+    )
+
+
 def test_render_app_script_exports_nabaichuan_from_history_and_batch_button():
     script = _extract_inline_script(render_app_html())
 
@@ -1108,6 +1169,9 @@ def test_render_app_script_cancels_running_job_and_retries_failed_run():
         await loadCurrentJob();
         await flush();
         assert(elements["failure-panel"].innerHTML.includes("Codex CLI 未找到"));
+        assert(elements["failure-panel"].innerHTML.includes("下一步"));
+        assert(elements["failure-panel"].innerHTML.includes("优先尝试"));
+        assert(elements["failure-panel"].innerHTML.indexOf("重试总结") < elements["failure-panel"].innerHTML.indexOf("诊断信息"));
 
         const retryTarget = {
           closest(selector) {

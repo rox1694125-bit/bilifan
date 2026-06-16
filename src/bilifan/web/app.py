@@ -665,6 +665,8 @@ def _current_task_item(current_job: dict[str, object]) -> dict[str, object] | No
         else "",
         "request": dict(request),
         "progress": current_job.get("progress") if isinstance(current_job.get("progress"), list) else [],
+        "elapsed_seconds": float(current_job.get("elapsed_seconds") or 0),
+        "stage_elapsed_seconds": float(current_job.get("stage_elapsed_seconds") or 0),
         "run_key": current_job.get("run_key"),
         "artifacts": current_job.get("artifacts") if isinstance(current_job.get("artifacts"), dict) else {},
         "warnings": current_job.get("warnings") if isinstance(current_job.get("warnings"), list) else [],

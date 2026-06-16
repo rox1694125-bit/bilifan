@@ -321,6 +321,8 @@ def test_single_job_is_visible_in_task_center_queue_endpoint(tmp_path, monkeypat
     assert task_center["items"][0]["source"] == "current"
     assert task_center["items"][0]["title"] == "单个入口视频标题"
     assert task_center["items"][0]["request"]["url"] == "https://www.bilibili.com/video/BV1abcDEF12G?p=1"
+    assert isinstance(task_center["items"][0]["elapsed_seconds"], float)
+    assert isinstance(task_center["items"][0]["stage_elapsed_seconds"], float)
 
 
 def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
