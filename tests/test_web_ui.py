@@ -46,10 +46,10 @@ def test_render_app_html_contains_workbench_contract():
     parser = _TitleAndHeadingParser()
     parser.feed(html)
 
-    assert parser.title == "Bilifan Web UI"
-    assert parser.h1_texts[0] == "Bilifan Web UI"
+    assert parser.title == "Bilifan 视频笔记"
+    assert parser.h1_texts[0] == "Bilifan 视频笔记"
     required_strings = [
-        "Bilifan Web UI",
+        "Bilifan 视频笔记",
         "history-list",
         "url-input",
         "format-select",
@@ -60,7 +60,7 @@ def test_render_app_html_contains_workbench_contract():
         "with-frames",
         "实验性图解",
         "实验性截图",
-        "辅助理解",
+        "实验功能仅作为辅助理解",
         "require-pdf",
         "allow-long-video",
         "start-button",
@@ -164,9 +164,12 @@ def test_render_app_html_can_embed_token_for_fixed_entrypoint():
 def test_render_app_html_contains_frontend_state_guards():
     html = render_app_html()
 
-    assert "downloads current-P audio for local processing" in html
-    assert "Codex CLI to summarize transcript chunks" in html
-    assert "send transcript text to the model service" in html
+    assert "必要时下载当前 P 音频" in html
+    assert "默认会调用你配置的 Codex CLI 总结逐字稿" in html
+    assert "逐字稿文本可能发送到该 Codex 账号背后的模型服务" in html
+    assert "local summary workbench" not in html
+    assert "latest run / artifacts" not in html
+    assert "/api/jobs/current</p>" not in html
     assert 'type="url"' in html
     assert "required" in html
     assert "state.currentStatus" in html
@@ -175,9 +178,9 @@ def test_render_app_html_contains_frontend_state_guards():
         in html
     )
     assert "markAuthExpired" in html
-    assert "token 已失效" in html
-    assert "旧页面 token" in html
-    assert "服务可能重启过" in html
+    assert "当前页面访问已过期" in html
+    assert "服务重启后旧页面仍在刷新" in html
+    assert "重新打开服务启动时显示的新地址" in html
     assert "请输入 B 站 URL。" in html
     assert "if (!payload.url)" in html
     assert "await loadConfig();" in html
@@ -239,9 +242,9 @@ def test_render_app_script_displays_remote_service_status():
         """,
         assertions="""
         assert(fetchCalls.some((call) => call.path === "/api/status"));
-        assert(elements["service-status"].innerHTML.includes("远程入口"));
-        assert(elements["service-status"].innerHTML.includes("https://bilifan.buyaoting.top"));
-        assert(elements["service-status"].innerHTML.includes("token 正常"));
+        assert(elements["service-status"].innerHTML.includes("远程访问正常"));
+        assert(!elements["service-status"].innerHTML.includes("https://bilifan.buyaoting.top"));
+        assert(!elements["service-status"].innerHTML.includes("token 正常"));
         assert(elements["service-status"].innerHTML.includes("当前任务：运行中"));
         assert(elements["service-status"].innerHTML.includes("下载音频"));
         """,
@@ -287,6 +290,8 @@ def test_render_app_script_disables_start_without_consent_or_while_running():
         assertions="""
         assert.equal(elements["start-button"].disabled, true);
         assert.equal(elements["consent-banner"].classList.contains("active"), true);
+        assert.equal(elements["stage-list"].innerHTML, "");
+        assert(elements["task-liveness"].innerHTML.includes("提交视频后"));
         """,
     )
 
@@ -696,7 +701,9 @@ def test_render_app_script_queue_can_clear_completed_jobs():
         }
         """,
         assertions="""
-        assert(elements["queue-summary"].textContent.includes("隐藏 2"));
+        assert.equal(elements["queue-summary"].textContent, "队列空闲");
+        assert(!elements["queue-summary"].textContent.includes("隐藏"));
+        assert(!elements["queue-summary"].textContent.includes("已生成 0"));
         assert.equal(elements["queue-clear-completed-button"].disabled, false);
 
         await elements["queue-clear-completed-button"].listeners.click();
@@ -704,6 +711,52 @@ def test_render_app_script_queue_can_clear_completed_jobs():
 
         assert(fetchCalls.some((call) => call.method === "POST" && call.path === "/api/jobs/queue/clear-completed"));
         assert(elements["queue-list"].innerHTML.includes("暂无队列任务"));
+        """,
+    )
+
+
+def test_render_app_script_queue_pause_state_shows_single_resume_action():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "学习笔记" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              paused: true,
+              counts: { queued: 2, running: 0, succeeded: 4, failed: 0, canceled: 0 },
+              visible_counts: { queued: 2, running: 0, succeeded: 3, failed: 0, canceled: 0 },
+              total_items: 6,
+              hidden_completed: 1,
+              hidden_replaced: 0,
+              items: []
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert.equal(elements["queue-summary"].textContent, "队列已暂停 · 排队 2 个");
+        assert(!elements["queue-summary"].textContent.includes("隐藏"));
+        assert.equal(elements["queue-pause-button"].hidden, true);
+        assert.equal(elements["queue-resume-button"].hidden, false);
+        assert.equal(elements["queue-resume-button"].disabled, false);
         """,
     )
 
@@ -1342,7 +1395,7 @@ def test_render_app_script_stops_polling_when_token_is_invalid():
         assert.equal(global.__clearedInterval, 1);
         assert.equal(elements["start-button"].disabled, true);
         assert(elements["job-message"].className.includes("error"));
-        assert(elements["job-message"].textContent.includes("token 已失效"));
+        assert(elements["job-message"].textContent.includes("页面访问已过期"));
 
         await global.__poll.callback();
         await flush();

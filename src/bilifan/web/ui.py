@@ -11,7 +11,7 @@ def render_app_html(token: str = "") -> str:
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Bilifan Web UI</title>
+          <title>Bilifan 视频笔记</title>
           <style>
             :root {
               color-scheme: light;
@@ -250,6 +250,11 @@ def render_app_html(token: str = "") -> str:
               padding: 6px 9px;
               font-size: 12px;
             }
+            button.secondary {
+              border-color: var(--border);
+              background: var(--panel-muted);
+              color: var(--muted);
+            }
             button.primary:hover { background: var(--accent-strong); }
             button.danger {
               border-color: #c77f7f;
@@ -286,6 +291,10 @@ def render_app_html(token: str = "") -> str:
               border-color: #e4b0b0;
               background: #fff3f3;
               color: var(--danger);
+            }
+            .queue-summary {
+              color: var(--text);
+              font-weight: 700;
             }
             .task-liveness {
               display: grid;
@@ -519,8 +528,8 @@ def render_app_html(token: str = "") -> str:
         <body>
           <main class="shell">
             <header class="brandbar">
-              <h1>Bilifan Web UI</h1>
-              <p class="subtle">local summary workbench</p>
+              <h1>Bilifan 视频笔记</h1>
+              <p class="subtle">本地处理，远程访问</p>
             </header>
             <div class="layout">
               <aside class="panel">
@@ -528,9 +537,9 @@ def render_app_html(token: str = "") -> str:
                   <div class="panel-heading-row">
                     <div>
                       <h1>历史记录</h1>
-                      <p class="subtle">latest run / artifacts</p>
+                      <p class="subtle">最近生成</p>
                     </div>
-                    <button id="batch-nabaichuan-button" class="compact" type="button">批量导出 Nabaichuan</button>
+                    <button id="batch-nabaichuan-button" class="compact secondary" type="button">批量导出纳百川</button>
                   </div>
                 </div>
                 <div class="panel-body">
@@ -542,18 +551,18 @@ def render_app_html(token: str = "") -> str:
                 <section class="panel">
                   <div class="panel-header">
                     <h1>当前任务</h1>
-                    <p class="subtle">本地工作台</p>
+                    <p class="subtle">单个视频</p>
                   </div>
                   <div class="panel-body stack">
                     <div id="service-status" class="service-status">
-                      <div class="service-status-title">正在检查远程访问状态...</div>
+                      <div class="service-status-title">正在检查访问状态...</div>
                     </div>
 
                     <div id="consent-banner" class="banner" role="status" aria-live="polite">
                       <div class="banner-row">
                         <div class="stack" style="gap:4px;">
                           <h2>需要先确认本地处理告知</h2>
-                          <p class="subtle">Bilifan prepares runs locally on this machine, downloads current-P audio for local processing, and writes output files under ./outputs. By default it calls your configured Codex CLI to summarize transcript chunks, which may send transcript text to the model service behind that Codex account.</p>
+                          <p class="subtle">Bilifan 会在这台电脑本地处理任务，必要时下载当前 P 音频，并把输出文件保存到 ./outputs。默认会调用你配置的 Codex CLI 总结逐字稿，逐字稿文本可能发送到该 Codex 账号背后的模型服务。</p>
                           <p class="subtle">未接受前不会启动新任务。</p>
                         </div>
                         <button id="consent-button" type="button">接受并继续</button>
@@ -603,7 +612,7 @@ def render_app_html(token: str = "") -> str:
                           <div class="checks">
                             <label class="check" for="force-whisper">
                               <input id="force-whisper" name="force_whisper" type="checkbox">
-                              <span>强制 Whisper</span>
+                              <span>强制重新转写</span>
                             </label>
                             <label class="check" for="with-diagrams">
                               <input id="with-diagrams" name="with_diagrams" type="checkbox">
@@ -615,14 +624,14 @@ def render_app_html(token: str = "") -> str:
                             </label>
                             <label class="check" for="require-pdf">
                               <input id="require-pdf" name="require_pdf" type="checkbox">
-                              <span>PDF 失败时报错</span>
+                              <span>必须生成 PDF</span>
                             </label>
                             <label class="check" for="allow-long-video">
                               <input id="allow-long-video" name="allow_long_video" type="checkbox">
                               <span>允许长视频</span>
                             </label>
                           </div>
-                          <p class="hint">任务中心里的批量任务会使用这里的当前设置；图解和截图目前只作为辅助理解，不作为稳定证据链。</p>
+                          <p class="hint">批量任务会使用这里的当前设置；实验功能仅作为辅助理解。</p>
                         </div>
                       </details>
 
@@ -640,19 +649,19 @@ def render_app_html(token: str = "") -> str:
                 <section class="panel">
                   <div class="panel-header">
                     <h1>任务中心</h1>
-                    <p class="subtle">单个任务和批量任务</p>
+                    <p class="subtle">批量处理</p>
                   </div>
                   <div class="panel-body stack">
                     <label for="batch-urls">
                       批量 URL
-                      <textarea id="batch-urls" rows="4" placeholder="每行一个 B 站或 YouTube URL"></textarea>
+                      <textarea id="batch-urls" name="batch_urls" rows="4" autocomplete="off" spellcheck="false" placeholder="每行一个 B 站或 YouTube URL…"></textarea>
                     </label>
                     <div class="actions">
-                      <div id="queue-summary" class="status-line">队列空闲。</div>
+                      <div id="queue-summary" class="status-line queue-summary">队列空闲。</div>
                       <div style="display:flex; gap:8px; align-items:center;">
-                        <button id="queue-pause-button" type="button">暂停队列</button>
-                        <button id="queue-resume-button" type="button">恢复队列</button>
-                        <button id="queue-clear-completed-button" type="button">清除已完成</button>
+                        <button id="queue-pause-button" class="compact secondary" type="button">暂停队列</button>
+                        <button id="queue-resume-button" class="compact secondary" type="button">恢复队列</button>
+                        <button id="queue-clear-completed-button" class="compact secondary" type="button">清除已完成</button>
                         <button id="batch-submit-button" class="primary" type="button">加入队列</button>
                       </div>
                     </div>
@@ -663,11 +672,10 @@ def render_app_html(token: str = "") -> str:
                 <section class="panel">
                   <div class="panel-header">
                     <h1>进度</h1>
-                    <p class="subtle">/api/jobs/current</p>
                   </div>
                   <div class="panel-body stack">
                     <div id="task-liveness" class="task-liveness">
-                      <div>当前没有运行中的任务。</div>
+                      <div>提交视频后，会在这里显示处理进度。</div>
                     </div>
                     <ul id="stage-list" class="stage-list"></ul>
                     <div id="result-links" class="link-list"></div>
@@ -792,7 +800,7 @@ def render_app_html(token: str = "") -> str:
             }
 
             function markAuthExpired() {
-              const message = "当前 Web UI token 已失效：这通常是旧页面 token 或服务可能重启过，请刷新远程入口，或使用 Terminal 最新打印的地址重新打开页面。";
+              const message = "当前页面访问已过期：通常是服务重启后旧页面仍在刷新，请重新打开服务启动时显示的新地址。";
               state.authExpired = true;
               state.currentStatus = "idle";
               stopPolling();
@@ -810,20 +818,17 @@ def render_app_html(token: str = "") -> str:
               const entrypoint = data && typeof data.entrypoint === "object" ? data.entrypoint : {};
               const currentJob = data && typeof data.current_job === "object" ? data.current_job : {};
               const isRemote = entrypoint.mode === "remote";
-              const publicUrl = typeof entrypoint.public_url === "string" && entrypoint.public_url
-                ? entrypoint.public_url
-                : location.origin;
-              const tokenLabel = data && data.access && data.access.token === "valid" ? "token 正常" : "token 未确认";
               const jobStatus = statusLabel(currentJob.status || "idle");
               const stage = stageLabel(currentJob.stage || "preflight");
+              const activeJob = currentJob.status && currentJob.status !== "idle";
+              const activity = activeJob
+                ? `当前任务：${jobStatus} · ${stage}`
+                : "当前没有运行中的任务";
               elements.serviceStatus.className = "service-status";
               elements.serviceStatus.innerHTML = `
-                <div class="service-status-title">${escapeHtml(isRemote ? "远程入口已连接" : "本机入口已连接")}</div>
+                <div class="service-status-title">${escapeHtml(isRemote ? "远程访问正常" : "本机访问正常")}</div>
                 <div class="service-status-meta">
-                  <span>${escapeHtml(isRemote ? "远程入口" : "本机入口")}：${escapeHtml(publicUrl)}</span>
-                  <span>${escapeHtml(tokenLabel)}</span>
-                  <span>当前任务：${escapeHtml(jobStatus)}</span>
-                  <span>阶段：${escapeHtml(stage)}</span>
+                  <span>${escapeHtml(activity)}</span>
                 </div>
               `;
             }
@@ -831,10 +836,10 @@ def render_app_html(token: str = "") -> str:
             function renderServiceStatusWarning(message) {
               elements.serviceStatus.className = state.authExpired ? "service-status error" : "service-status warning";
               elements.serviceStatus.innerHTML = `
-                <div class="service-status-title">远程访问状态需要刷新</div>
+                <div class="service-status-title">访问状态需要刷新</div>
                 <div class="service-status-meta">
                   <span>${escapeHtml(message)}</span>
-                  <span>旧页面 token 或服务重启后，远程 tab 可能继续请求旧接口。</span>
+                  <span>如果服务刚重启，请重新打开最新地址。</span>
                 </div>
               `;
             }
@@ -850,7 +855,12 @@ def render_app_html(token: str = "") -> str:
             }
 
             function renderStageList(progress, activeStage, jobStatus, timing = {}) {
-              const items = Array.isArray(progress) && progress.length ? progress : STAGES.map((stage) => ({ stage, status: "pending" }));
+              const hasProgress = Array.isArray(progress) && progress.length;
+              if (!hasProgress && !["running", "failed", "canceling"].includes(jobStatus || "idle")) {
+                elements.stageList.innerHTML = "";
+                return;
+              }
+              const items = hasProgress ? progress : STAGES.map((stage) => ({ stage, status: "pending" }));
               const activeStageElapsed = readableDuration(timing.stage_elapsed_seconds);
               elements.stageList.innerHTML = items.map((item) => {
                 const stage = typeof item.stage === "string" ? item.stage : "";
@@ -877,7 +887,7 @@ def render_app_html(token: str = "") -> str:
               const status = data && typeof data.status === "string" ? data.status : "idle";
               if (!["running", "canceling"].includes(status)) {
                 elements.taskLiveness.className = "task-liveness";
-                elements.taskLiveness.innerHTML = "<div>当前没有运行中的任务。</div>";
+                elements.taskLiveness.innerHTML = "<div>提交视频后，会在这里显示处理进度。</div>";
                 return;
               }
               const stage = data && typeof data.stage === "string" ? data.stage : "preflight";
@@ -901,7 +911,7 @@ def render_app_html(token: str = "") -> str:
               });
               elements.resultLinks.innerHTML = markup
                 ? markup
-                : '<div class="muted-panel">当前没有可用 artifacts。</div>';
+                : '<div class="muted-panel">生成完成后，会在这里显示笔记和导出文件。</div>';
             }
 
             function artifactActionGroups(artifacts, runKey, status = "idle", options = {}) {
@@ -1020,7 +1030,7 @@ def render_app_html(token: str = "") -> str:
 
             function renderHistory(items) {
               if (!Array.isArray(items) || items.length === 0) {
-                elements.historyList.innerHTML = '<li class="muted-panel">暂无 latest run。</li>';
+                elements.historyList.innerHTML = '<li class="muted-panel">暂无历史记录。</li>';
                 return;
               }
               elements.historyList.innerHTML = items.map((item) => {
@@ -1061,23 +1071,9 @@ def render_app_html(token: str = "") -> str:
             function renderQueue(queue) {
               const totalCounts = queue && queue.queue_counts ? queue.queue_counts : (queue && queue.counts ? queue.counts : {});
               const counts = queue && queue.visible_counts ? queue.visible_counts : totalCounts;
-              const hiddenCompleted = Number.isFinite(Number(queue && queue.hidden_completed)) ? Number(queue.hidden_completed) : 0;
-              const hiddenReplaced = Number.isFinite(Number(queue && queue.hidden_replaced)) ? Number(queue.hidden_replaced) : 0;
-              const summaryParts = [
-                `排队 ${counts.queued || 0}`,
-                `运行 ${counts.running || 0}`,
-                `已生成 ${counts.succeeded || 0}`,
-                `失败 ${counts.failed || 0}`,
-                `已取消 ${counts.canceled || 0}`,
-              ];
-              if (hiddenCompleted > 0) {
-                summaryParts.push(`隐藏 ${hiddenCompleted} 条已完成`);
-              }
-              if (hiddenReplaced > 0) {
-                summaryParts.push(`隐藏 ${hiddenReplaced} 条已重试失败记录`);
-              }
-              elements.queueSummary.textContent = summaryParts.join(" · ");
+              elements.queueSummary.textContent = queueSummaryText(queue, counts);
               elements.queueClearCompletedButton.disabled = state.authExpired || !state.consentAccepted || !(totalCounts.succeeded || 0);
+              updateQueueControls(queue, totalCounts);
               const items = queue && Array.isArray(queue.items) ? queue.items : [];
               if (!items.length) {
                 elements.queueList.innerHTML = '<li class="muted-panel">暂无队列任务。</li>';
@@ -1117,6 +1113,29 @@ def render_app_html(token: str = "") -> str:
                   </li>
                 `;
               }).join("");
+            }
+
+            function queueSummaryText(queue, counts) {
+              const safeCounts = counts && typeof counts === "object" ? counts : {};
+              const queued = Number(safeCounts.queued || 0);
+              const running = Number(safeCounts.running || 0);
+              const failed = Number(safeCounts.failed || 0);
+              const paused = Boolean(queue && queue.paused);
+              const parts = [];
+              if (paused) parts.push("队列已暂停");
+              if (running > 0) parts.push(`正在处理 ${running} 个`);
+              if (queued > 0) parts.push(`排队 ${queued} 个`);
+              if (failed > 0) parts.push(`${failed} 个失败需要处理`);
+              return parts.length ? parts.join(" · ") : "队列空闲";
+            }
+
+            function updateQueueControls(queue, totalCounts) {
+              const paused = Boolean(queue && queue.paused);
+              const hasQueued = Boolean(totalCounts && Number(totalCounts.queued || 0) > 0);
+              elements.queuePauseButton.hidden = paused;
+              elements.queueResumeButton.hidden = !paused;
+              elements.queuePauseButton.disabled = state.authExpired || !state.consentAccepted || !hasQueued;
+              elements.queueResumeButton.disabled = state.authExpired || !state.consentAccepted;
             }
 
             function stageLabel(stage) {
@@ -1231,7 +1250,7 @@ def render_app_html(token: str = "") -> str:
                 elements.summaryTemplateSelect.value || "AI 自动判断",
                 languageLabel(elements.languageSelect.value),
               ];
-              if (elements.forceWhisper.checked) parts.push("强制 Whisper");
+              if (elements.forceWhisper.checked) parts.push("强制重新转写");
               if (elements.withDiagrams.checked) parts.push("实验性图解");
               if (elements.withFrames.checked) parts.push("实验性截图");
               if (elements.requirePdf.checked) parts.push("必须 PDF");
@@ -1326,7 +1345,7 @@ def render_app_html(token: str = "") -> str:
                 renderServiceStatus(data);
               } catch (error) {
                 const message = state.authExpired
-                  ? "旧页面 token 已失效，请刷新远程入口。"
+                  ? "当前页面访问已过期，请重新打开最新地址。"
                   : (error.message || "服务状态读取失败。");
                 renderServiceStatusWarning(message);
               }
