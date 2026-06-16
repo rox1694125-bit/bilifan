@@ -46,6 +46,19 @@ def _transcript():
     }
 
 
+def _article():
+    return {
+        "sections": [
+            {
+                "title": "人工智能工作流",
+                "start": 0,
+                "end": 3.2,
+                "paragraphs": ["清洗后的正文。"],
+            }
+        ],
+    }
+
+
 def _chapters():
     return {
         "style": "学习笔记",
@@ -131,6 +144,30 @@ def test_build_content_bundle_writes_source_summary_and_transcript():
     assert bundle["artifacts"]["content_bundle_json"] == "content_bundle.json"
     assert bundle["artifacts"]["nabaichuan_jsonl"] == "nabaichuan.jsonl"
     assert "content_bundle.json" in bundle["artifacts"]["all"]
+
+
+def test_content_bundle_includes_transcript_article_and_new_artifacts():
+    bundle = build_content_bundle(
+        metadata=_metadata(),
+        transcript=_transcript(),
+        transcript_article=_article(),
+        chapters=_chapters(),
+        artifact_paths=[
+            "transcript.html",
+            "report.html",
+            "transcript.pdf",
+            "report.pdf",
+        ],
+        platform="bilibili",
+        source_id="BV1abcDEF12G",
+        part_id="p1",
+    )
+
+    assert bundle["transcript_article"]["sections"][0]["title"] == "人工智能工作流"
+    assert bundle["artifacts"]["transcript_html"] == "transcript.html"
+    assert bundle["artifacts"]["transcript_pdf"] == "transcript.pdf"
+    assert bundle["artifacts"]["report_html"] == "report.html"
+    assert bundle["artifacts"]["report_pdf"] == "report.pdf"
 
 
 def test_write_content_bundle_rejects_absolute_artifact_paths(tmp_path):

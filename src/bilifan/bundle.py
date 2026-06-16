@@ -19,6 +19,7 @@ def build_content_bundle(
     *,
     metadata: dict[str, Any],
     transcript: dict[str, Any],
+    transcript_article: dict[str, Any] | None = None,
     chapters: dict[str, Any],
     artifact_paths: list[str],
     platform: str,
@@ -27,57 +28,60 @@ def build_content_bundle(
     llm_provider: str | None = None,
     llm_model: str | None = None,
 ) -> dict[str, Any]:
-    return _sanitize_json_value(
-        {
+    bundle: dict[str, Any] = {
+        "schema_version": BUNDLE_SCHEMA_VERSION,
+        "contract": {
+            "name": "bilifan.content_bundle",
             "schema_version": BUNDLE_SCHEMA_VERSION,
-            "contract": {
-                "name": "bilifan.content_bundle",
-                "schema_version": BUNDLE_SCHEMA_VERSION,
-                "compatibility": "additive",
-            },
-            "bundle_id": f"{platform}:{source_id}:{part_id}",
-            "source": {
-                "platform": platform,
-                "id": source_id,
-                "part_id": part_id,
-                "canonical_url": _nullable_text(metadata.get("input_url_sanitized")),
-                "title": _first_text(metadata.get("title"), metadata.get("part_title")),
-                "author": _nullable_text(metadata.get("owner_name"), metadata.get("uploader")),
-                "published_at": _nullable_text(
-                    metadata.get("published_at"),
-                    metadata.get("upload_date"),
-                ),
-                "duration_seconds": _float_or_none(metadata.get("duration")),
-                "language": _first_text(transcript.get("language")) or "unknown",
-            },
-            "artifacts": _artifact_map(artifact_paths),
-            "summary": {
-                "style": _first_text(chapters.get("style")) or "学习笔记",
-                "summary_validation": _summary_validation(chapters.get("summary_validation")),
-                "chapters": _chapter_items(chapters),
-            },
-            "transcript": {
-                "source": _nullable_text(transcript.get("source")),
-                "language": _nullable_text(transcript.get("language")),
-                "segments": _segment_items(transcript),
-            },
-            "provenance": {
-                "bilifan_version": _nullable_text(metadata.get("bilifan_version")),
-                "generated_at": _nullable_text(metadata.get("generated_at")),
-                "llm_provider": _nullable_text(
-                    llm_provider,
-                    chapters.get("llm_provider"),
-                    metadata.get("llm_provider"),
-                ),
-                "llm_model": _nullable_text(
-                    llm_model,
-                    chapters.get("llm_model"),
-                    metadata.get("llm_model"),
-                ),
-                "transcript_source": _nullable_text(transcript.get("source")),
-                "metadata_source": _nullable_text(metadata.get("metadata_source")),
-            },
-        }
+            "compatibility": "additive",
+        },
+        "bundle_id": f"{platform}:{source_id}:{part_id}",
+        "source": {
+            "platform": platform,
+            "id": source_id,
+            "part_id": part_id,
+            "canonical_url": _nullable_text(metadata.get("input_url_sanitized")),
+            "title": _first_text(metadata.get("title"), metadata.get("part_title")),
+            "author": _nullable_text(metadata.get("owner_name"), metadata.get("uploader")),
+            "published_at": _nullable_text(
+                metadata.get("published_at"),
+                metadata.get("upload_date"),
+            ),
+            "duration_seconds": _float_or_none(metadata.get("duration")),
+            "language": _first_text(transcript.get("language")) or "unknown",
+        },
+        "artifacts": _artifact_map(artifact_paths),
+        "summary": {
+            "style": _first_text(chapters.get("style")) or "学习笔记",
+            "summary_validation": _summary_validation(chapters.get("summary_validation")),
+            "chapters": _chapter_items(chapters),
+        },
+        "transcript": {
+            "source": _nullable_text(transcript.get("source")),
+            "language": _nullable_text(transcript.get("language")),
+            "segments": _segment_items(transcript),
+        },
+        "provenance": {
+            "bilifan_version": _nullable_text(metadata.get("bilifan_version")),
+            "generated_at": _nullable_text(metadata.get("generated_at")),
+            "llm_provider": _nullable_text(
+                llm_provider,
+                chapters.get("llm_provider"),
+                metadata.get("llm_provider"),
+            ),
+            "llm_model": _nullable_text(
+                llm_model,
+                chapters.get("llm_model"),
+                metadata.get("llm_model"),
+            ),
+            "transcript_source": _nullable_text(transcript.get("source")),
+            "metadata_source": _nullable_text(metadata.get("metadata_source")),
+        },
+    }
+    if transcript_article is not None:
+        bundle["transcript_article"] = transcript_article
+    return _sanitize_json_value(
+        bundle
     )
 
 
@@ -86,6 +90,7 @@ def write_content_bundle(
     run_dir: Path,
     metadata: dict[str, Any],
     transcript: dict[str, Any],
+    transcript_article: dict[str, Any] | None = None,
     chapters: dict[str, Any],
     artifact_paths: list[str],
     platform: str,
@@ -97,6 +102,7 @@ def write_content_bundle(
     bundle = build_content_bundle(
         metadata=metadata,
         transcript=transcript,
+        transcript_article=transcript_article,
         chapters=chapters,
         artifact_paths=artifact_paths,
         platform=platform,
@@ -126,11 +132,14 @@ def _artifact_map(artifact_paths: list[str]) -> dict[str, Any]:
         "report.html": "report_html",
         "report.pdf": "report_pdf",
         "notes.md": "notes_markdown",
+        "transcript.html": "transcript_html",
+        "transcript.pdf": "transcript_pdf",
         "transcript.txt": "transcript_text",
         "transcript.srt": "transcript_srt",
         "media/audio.mp3": "audio_mp3",
         "metadata.json": "metadata_json",
         "transcript.json": "transcript_json",
+        "transcript_article.json": "transcript_article_json",
         "chunks.json": "chunks_json",
         "chapters.json": "chapters_json",
         "diagnostics.json": "diagnostics_json",

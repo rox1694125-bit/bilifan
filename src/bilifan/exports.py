@@ -153,7 +153,7 @@ def build_nabaichuan_records(
 
     if include_transcript:
         for index, segment in enumerate(
-            _merged_transcript_segments(bundle),
+            _article_transcript_segments(bundle) or _merged_transcript_segments(bundle),
             start=1,
         ):
             start = _float_value(segment.get("start")) or 0.0
@@ -381,6 +381,52 @@ def _sanitize_nabaichuan_record(value: Any, *, key: str = "") -> Any:
     if isinstance(value, list):
         return [_sanitize_nabaichuan_record(item, key=key) for item in value]
     return value
+
+
+def _article_transcript_segments(bundle: dict[str, Any]) -> list[dict[str, Any]]:
+    transcript_article = (
+        bundle.get("transcript_article")
+        if isinstance(bundle.get("transcript_article"), dict)
+        else {}
+    )
+    raw_sections = (
+        transcript_article.get("sections")
+        if isinstance(transcript_article.get("sections"), list)
+        else []
+    )
+    segments: list[dict[str, Any]] = []
+    for raw_section in raw_sections:
+        if not isinstance(raw_section, dict):
+            continue
+        text = _paragraph_text(raw_section.get("paragraphs"))
+        if not text:
+            continue
+        start = max(0.0, _float_value(raw_section.get("start")) or 0.0)
+        end = _float_value(raw_section.get("end"))
+        segments.append(
+            {
+                "start": start,
+                "end": max(start, end if end is not None else start),
+                "text": text,
+            }
+        )
+    return segments
+
+
+def _paragraph_text(value: Any) -> str:
+    if not isinstance(value, list):
+        return ""
+    paragraphs: list[str] = []
+    for paragraph in value:
+        text = ""
+        if isinstance(paragraph, dict):
+            text = _first_text(paragraph.get("text"))
+        else:
+            text = _first_text(paragraph)
+        text = text.strip()
+        if text:
+            paragraphs.append(text)
+    return "\n".join(paragraphs)
 
 
 def _merged_transcript_segments(bundle: dict[str, Any]) -> list[dict[str, Any]]:

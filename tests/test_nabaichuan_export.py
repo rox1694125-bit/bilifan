@@ -86,6 +86,27 @@ def test_build_nabaichuan_records_outputs_video_chapter_and_transcript_records()
     assert records[3]["timestamp_url"].endswith("t=0")
 
 
+def test_nabaichuan_records_prefer_article_sections_when_present():
+    bundle = _bundle()
+    bundle["transcript_article"] = {
+        "sections": [
+            {
+                "title": "人工智能工作流",
+                "start": 0,
+                "end": 60,
+                "paragraphs": ["清洗后的正文。"],
+            }
+        ]
+    }
+
+    records = build_nabaichuan_records(bundle)
+    transcript_records = [
+        record for record in records if record["type"] == "transcript_segment"
+    ]
+
+    assert transcript_records[0]["text"] == "清洗后的正文。"
+
+
 def test_nabaichuan_records_include_stable_export_contract_metadata():
     records = build_nabaichuan_records(
         _bundle(),
