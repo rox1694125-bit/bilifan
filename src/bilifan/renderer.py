@@ -218,7 +218,7 @@ def _chapters_view(chapters: dict[str, Any]) -> list[dict[str, Any]]:
                 "title": _first_text(raw_chapter.get("title")),
                 "start_label": _format_time(start),
                 "end_label": _format_time(end),
-                "timestamp_url": _first_text(raw_chapter.get("timestamp_url")),
+                "timestamp_url": _safe_href(raw_chapter.get("timestamp_url")),
                 "summary": _first_text(raw_chapter.get("summary")),
                 "key_points": _string_list(raw_chapter.get("key_points")),
                 "quotes": _string_list(raw_chapter.get("quotes")),
@@ -252,7 +252,7 @@ def _article_section_view(section: dict[str, Any]) -> dict[str, Any]:
     return {
         "section_index": section.get("section_index"),
         "title": _first_text(section.get("title")),
-        "timestamp_url": _first_text(section.get("timestamp_url")),
+        "timestamp_url": _safe_href(section.get("timestamp_url")),
         "paragraphs": [
             _article_paragraph_view(paragraph)
             for paragraph in paragraphs
@@ -322,7 +322,7 @@ def _evidence_view(value: Any) -> list[dict[str, Any]]:
             {
                 "start_label": _format_time(start),
                 "end_label": _format_time(end),
-                "timestamp_url": _first_text(raw_item.get("timestamp_url")),
+                "timestamp_url": _safe_href(raw_item.get("timestamp_url")),
                 "text_preview": _first_text(raw_item.get("text_preview")),
             }
         )
@@ -352,7 +352,7 @@ def _frame_view(value: Any) -> dict[str, Any] | None:
     return {
         "path": path,
         "timestamp_label": _format_time(timestamp),
-        "timestamp_url": _first_text(value.get("timestamp_url")),
+        "timestamp_url": _safe_href(value.get("timestamp_url")),
         "caption": _first_text(value.get("caption")) or f"视频时间戳：{_format_time(timestamp)}",
     }
 
@@ -486,7 +486,11 @@ def _template():
   <section class="chapter">
     <div class="chapter-head">
       <h2>{{ chapter.chapter_index }}. {{ chapter.title }}</h2>
+      {% if chapter.timestamp_url %}
       <a class="time" href="{{ chapter.timestamp_url }}">{{ chapter.start_label }}</a>
+      {% else %}
+      <span class="time">{{ chapter.start_label }}</span>
+      {% endif %}
     </div>
     <p class="summary">{{ chapter.summary }}</p>
     {% if chapter.key_points %}
@@ -506,7 +510,11 @@ def _template():
     <ul class="evidence">
       {% for evidence in chapter.evidence %}
       <li>
+        {% if evidence.timestamp_url %}
         <a href="{{ evidence.timestamp_url }}">{{ evidence.start_label }}-{{ evidence.end_label }}</a>
+        {% else %}
+        <span>{{ evidence.start_label }}-{{ evidence.end_label }}</span>
+        {% endif %}
         {% if evidence.text_preview %}<span>{{ evidence.text_preview }}</span>{% endif %}
       </li>
       {% endfor %}
@@ -522,7 +530,11 @@ def _template():
     {% if chapter.frame %}
     <h3>真实截图</h3>
     <figure class="frame">
+      {% if chapter.frame.timestamp_url %}
       <a href="{{ chapter.frame.timestamp_url }}"><img src="{{ chapter.frame.path }}" alt="{{ chapter.frame.caption }}"></a>
+      {% else %}
+      <img src="{{ chapter.frame.path }}" alt="{{ chapter.frame.caption }}">
+      {% endif %}
       <figcaption>{{ chapter.frame.caption }}</figcaption>
     </figure>
     {% endif %}
@@ -654,6 +666,14 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [_first_text(item) for item in value if _first_text(item)]
+
+
+def _safe_href(value: Any) -> str:
+    href = _first_text(value).strip()
+    if not href:
+        return ""
+    lowered = href.lower()
+    return href if lowered.startswith(("http://", "https://")) else ""
 
 
 def _format_time(seconds: float) -> str:

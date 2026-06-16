@@ -225,3 +225,132 @@ def test_export_html_pdf_can_write_transcript_pdf(tmp_path):
     )
 
     assert result == pdf_path
+
+
+def test_render_transcript_html_escapes_malicious_article_and_drops_unsafe_link(
+    tmp_path,
+):
+    metadata = _metadata()
+    metadata["title"] = "<script>alert(1)</script>"
+    metadata["cover_path"] = ""
+    article = {
+        "schema_version": 1,
+        "source": "whisper",
+        "cleaning_level": "strong",
+        "sections": [
+            {
+                "section_index": 1,
+                "title": '<img src=x onerror="alert(1)">',
+                "timestamp_url": "javascript:alert(1)",
+                "paragraphs": [
+                    {
+                        "text": (
+                            "正文 <script>alert(1)</script> "
+                            '<img src=x onerror="alert(1)">'
+                        ),
+                        "emphasis": [
+                            {"text": "<script>alert(1)</script>", "kind": "strong"}
+                        ],
+                    }
+                ],
+                "key_terms": [
+                    "<script>alert(1)</script>",
+                    '<img src=x onerror="alert(1)">',
+                ],
+                "warnings": ['<img src=x onerror="alert(1)">'],
+            },
+            {
+                "section_index": 2,
+                "title": "非标准 URL",
+                "timestamp_url": "https:alert(2)",
+                "paragraphs": [{"text": "这一节不应该出现回链", "emphasis": []}],
+                "key_terms": [],
+                "warnings": [],
+            }
+        ],
+        "warnings": ["<script>alert(1)</script>"],
+    }
+
+    html_path = renderer.render_transcript_html(
+        ref=REF,
+        metadata=metadata,
+        article=article,
+        run_dir=tmp_path,
+    )
+
+    html = html_path.read_text(encoding="utf-8")
+    assert "javascript:alert(1)" not in html
+    assert "https:alert(2)" not in html
+    assert "回到视频" not in html
+    assert "<script>" not in html
+    assert "</script>" not in html
+    assert "<img" not in html
+    assert 'onerror="alert(1)"' not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "&lt;img src=x onerror=&#34;alert(1)&#34;&gt;" in html
+    assert "<strong>&lt;script&gt;alert(1)&lt;/script&gt;</strong>" in html
+
+
+def test_render_transcript_html_keeps_ambiguous_emphasis_plain_and_escaped(tmp_path):
+    article = {
+        "schema_version": 1,
+        "source": "whisper",
+        "cleaning_level": "strong",
+        "sections": [
+            {
+                "section_index": 1,
+                "title": "强调边界",
+                "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?p=2&t=0",
+                "paragraphs": [
+                    {
+                        "text": "AI AI <script>alert(1)</script>",
+                        "emphasis": [{"text": "AI", "kind": "strong"}],
+                    },
+                    {
+                        "text": "abcdef <img src=x onerror=\"alert(1)\">",
+                        "emphasis": [
+                            {"text": "abc", "kind": "strong"},
+                            {"text": "bcd", "kind": "mark"},
+                        ],
+                    },
+                ],
+                "key_terms": [],
+                "warnings": [],
+            }
+        ],
+        "warnings": [],
+    }
+
+    html_path = renderer.render_transcript_html(
+        ref=REF,
+        metadata=_metadata(),
+        article=article,
+        run_dir=tmp_path,
+    )
+
+    html = html_path.read_text(encoding="utf-8")
+    assert "<strong>AI</strong>" not in html
+    assert "<strong>abc</strong>" not in html
+    assert "<mark>bcd</mark>" not in html
+    assert "AI AI &lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "abcdef &lt;img src=x onerror=&#34;alert(1)&#34;&gt;" in html
+
+
+def test_render_report_html_drops_unsafe_timestamp_hrefs(tmp_path):
+    chapters = _chapters()
+    chapter = chapters["chapters"][0]
+    chapter["timestamp_url"] = "javascript:alert(1)"
+    chapter["evidence"][0]["timestamp_url"] = "javascript:alert(2)"
+    chapter["frame"]["timestamp_url"] = "javascript:alert(3)"
+
+    html_path = render_report_html(
+        ref=REF,
+        metadata=_metadata(),
+        transcript=_transcript(),
+        chapters=chapters,
+        run_dir=tmp_path,
+    )
+
+    html = html_path.read_text(encoding="utf-8")
+    assert "javascript:alert" not in html
+    assert 'href=""' not in html
