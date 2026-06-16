@@ -518,9 +518,31 @@ def _article_report_payload():
     }
 
 
+def _two_section_article():
+    article = _article()
+    article["sections"].append(
+        {
+            "section_index": 2,
+            "title": "落地风险",
+            "start": 90,
+            "end": 120,
+            "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?p=2&t=90",
+            "source_segment_start_index": 2,
+            "source_segment_end_index": 3,
+            "paragraphs": [{"text": "落地时要关注成本、数据和评估。", "emphasis": []}],
+            "key_terms": ["评估"],
+            "warnings": [],
+        }
+    )
+    return article
+
+
 def test_build_article_report_prompt_uses_cleaned_article_text():
+    metadata = _metadata()
+    metadata["description"] = "META_ONLY_UNIQUE_DESCRIPTION_SHOULD_NOT_BE_EVIDENCE"
+
     prompt = summarizer.build_article_report_prompt(
-        metadata=_metadata(),
+        metadata=metadata,
         article=_article(),
         style="学习笔记",
     )
@@ -528,6 +550,7 @@ def test_build_article_report_prompt_uses_cleaned_article_text():
     assert "清洗后的逐字稿文章" in prompt
     assert "人工智能和工作流" in prompt
     assert "这是转写内容" not in prompt
+    assert "META_ONLY_UNIQUE_DESCRIPTION_SHOULD_NOT_BE_EVIDENCE" not in prompt
 
 
 def test_summarize_article_sections_returns_existing_chapters_shape(tmp_path):
@@ -553,3 +576,34 @@ def test_summarize_article_sections_returns_existing_chapters_shape(tmp_path):
     assert chapter["summary"] == "讲人工智能工作流的重要性。"
     assert chapter["evidence"][0]["text_preview"].startswith("今天我们讲人工智能")
     assert chapters["summary_validation"]["status"] == "passed"
+
+
+def test_summarize_article_sections_rejects_missing_article_section(tmp_path):
+    def fake_runner(cmd, **kwargs):
+        output_path = tmp_path / cmd[cmd.index("--output-last-message") + 1]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(_article_report_payload(), ensure_ascii=False), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    with pytest.raises(SummarizationError, match="missing article section"):
+        summarizer.summarize_article_sections(
+            ref=REF,
+            metadata=_metadata(),
+            article=_two_section_article(),
+            run_dir=tmp_path,
+            model="gpt-5.5",
+            style="学习笔记",
+            runner=fake_runner,
+        )
+
+
+def test_build_article_report_prompt_rejects_section_without_article_text():
+    article = _article()
+    article["sections"][0]["paragraphs"] = [{"text": "   ", "emphasis": []}]
+
+    with pytest.raises(SummarizationError, match="article section text"):
+        summarizer.build_article_report_prompt(
+            metadata=_metadata(),
+            article=article,
+            style="学习笔记",
+        )

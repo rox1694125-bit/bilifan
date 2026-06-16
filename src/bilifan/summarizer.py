@@ -289,10 +289,6 @@ def build_article_report_prompt(
     safe_metadata = {
         "title": _first_text(metadata.get("title")),
         "part_title": _first_text(metadata.get("part_title")),
-        "owner_name": _first_text(metadata.get("owner_name")),
-        "description": _first_text(metadata.get("description")),
-        "tags": metadata.get("tags") if isinstance(metadata.get("tags"), list) else [],
-        "duration": metadata.get("duration"),
     }
     payload = {
         "style": style,
@@ -311,6 +307,8 @@ def build_article_report_prompt(
         "生成章节摘要，不要使用未清洗的原始转写内容，不要编造文章里没有的信息。"
         "输出必须是严格 JSON，且必须匹配 output_schema。\n"
         f"本次输出模板：{style}。模板要求：{SUMMARY_TEMPLATES[style]}\n"
+        "metadata 只可作为标题展示上下文，不能作为事实依据；所有观点、事实和引用"
+        "必须来自 article.sections.paragraphs 的清洗后正文。\n"
         "chapters 必须通过 section_index 引用输入 article.sections；summary 用白话"
         "概括该 section，key_points 提炼可复习要点，quotes 只能摘自清洗后的逐字稿文章，"
         "visual_anchors 记录画面或操作线索；没有就给空数组。\n"
@@ -731,6 +729,7 @@ def _article_prompt_sections(article: dict[str, Any]) -> list[dict[str, Any]]:
         start, end = _article_section_timestamps(section)
         if section_index is None or start is None or end is None:
             continue
+        paragraph_texts = _require_article_section_paragraph_texts(section)
         sections.append(
             {
                 "section_index": section_index,
@@ -747,10 +746,7 @@ def _article_prompt_sections(article: dict[str, Any]) -> list[dict[str, Any]]:
                 "source_segment_end_index": _int_value(
                     section.get("source_segment_end_index")
                 ),
-                "paragraphs": [
-                    {"text": text}
-                    for text in _article_section_paragraph_texts(section)
-                ],
+                "paragraphs": [{"text": text} for text in paragraph_texts],
                 "key_terms": _string_list(section.get("key_terms")),
                 "warnings": _string_list(section.get("warnings")),
             }
@@ -768,6 +764,7 @@ def _article_report_to_chapters(
     style: str,
 ) -> dict[str, Any]:
     sections_by_index = _article_sections_by_index(article)
+    expected_section_indexes = set(sections_by_index)
     chapters: list[dict[str, Any]] = []
     seen_section_indexes: set[int] = set()
 
@@ -816,6 +813,13 @@ def _article_report_to_chapters(
             }
         )
 
+    missing_section_indexes = sorted(expected_section_indexes - seen_section_indexes)
+    if missing_section_indexes:
+        raise SummarizationError(
+            "article report missing article section(s): "
+            f"{', '.join(str(index) for index in missing_section_indexes)}"
+        )
+
     return {"style": style, "chapters": chapters}
 
 
@@ -825,6 +829,7 @@ def _article_sections_by_index(article: dict[str, Any]) -> dict[int, dict[str, A
         section_index = _article_section_index(section)
         if section_index is None:
             continue
+        _require_article_section_paragraph_texts(section)
         sections[section_index] = section
     if not sections:
         raise SummarizationError("transcript_article.json contains no sections.")
@@ -866,6 +871,16 @@ def _article_section_paragraph_texts(section: dict[str, Any]) -> list[str]:
     return texts
 
 
+def _require_article_section_paragraph_texts(section: dict[str, Any]) -> list[str]:
+    texts = _article_section_paragraph_texts(section)
+    if texts:
+        return texts
+    section_index = _first_text(section.get("section_index")).strip() or "?"
+    raise SummarizationError(
+        f"transcript article section {section_index} missing article section text."
+    )
+
+
 def _article_section_evidence(
     section: dict[str, Any],
     ref: BilibiliPartRef,
@@ -886,8 +901,8 @@ def _article_section_evidence(
     timestamp_url = _first_text(section.get("timestamp_url")).strip() or ref.timestamp_url(
         start
     )
-    paragraph_texts = _article_section_paragraph_texts(section)
-    text_preview = _preview_text(paragraph_texts[0]) if paragraph_texts else ""
+    paragraph_texts = _require_article_section_paragraph_texts(section)
+    text_preview = _preview_text(paragraph_texts[0])
     return [
         {
             "segment_start_index": segment_start_index,
