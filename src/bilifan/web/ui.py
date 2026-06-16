@@ -855,11 +855,12 @@ def render_app_html(token: str = "") -> str:
             }
 
             function renderStageList(progress, activeStage, jobStatus, timing = {}) {
-              const hasProgress = Array.isArray(progress) && progress.length;
-              if (!hasProgress && !["running", "failed", "canceling"].includes(jobStatus || "idle")) {
+              const status = jobStatus || "idle";
+              if (!["running", "failed", "canceling"].includes(status)) {
                 elements.stageList.innerHTML = "";
                 return;
               }
+              const hasProgress = Array.isArray(progress) && progress.length;
               const items = hasProgress ? progress : STAGES.map((stage) => ({ stage, status: "pending" }));
               const activeStageElapsed = readableDuration(timing.stage_elapsed_seconds);
               elements.stageList.innerHTML = items.map((item) => {

@@ -146,7 +146,11 @@ def test_render_app_html_can_embed_token_for_fixed_entrypoint():
               status: "idle",
               stage: "preflight",
               message: "",
-              progress: [],
+              progress: [
+                { stage: "preflight", status: "pending" },
+                { stage: "metadata", status: "pending" },
+                { stage: "audio", status: "pending" }
+              ],
               artifacts: {},
               run_key: null
             });
@@ -292,6 +296,7 @@ def test_render_app_script_disables_start_without_consent_or_while_running():
         assert.equal(elements["consent-banner"].classList.contains("active"), true);
         assert.equal(elements["stage-list"].innerHTML, "");
         assert(elements["task-liveness"].innerHTML.includes("提交视频后"));
+        assert(!elements["stage-list"].innerHTML.includes("准备检查"));
         """,
     )
 
