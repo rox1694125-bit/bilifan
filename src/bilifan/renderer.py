@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, select_autoescape
-from markupsafe import Markup
+from markupsafe import Markup, escape
 
 from .bilibili import BilibiliPartRef
 from .diagnostics import redact_text
@@ -53,7 +53,42 @@ def render_report_html(
     return html_path
 
 
+def render_transcript_html(
+    *,
+    ref: BilibiliPartRef,
+    metadata: dict[str, Any],
+    article: dict[str, Any],
+    run_dir: Path,
+) -> Path:
+    html_path = run_dir / "transcript.html"
+    html_path.write_text(
+        _transcript_template().render(
+            ref=ref,
+            metadata=_metadata_view(metadata),
+            article=_article_view(article),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return html_path
+
+
 def export_report_pdf(
+    *,
+    html_path: Path,
+    pdf_path: Path,
+    runner: Runner = subprocess.run,
+    chrome_path: str | None = None,
+) -> Path:
+    return export_html_pdf(
+        html_path=html_path,
+        pdf_path=pdf_path,
+        runner=runner,
+        chrome_path=chrome_path,
+    )
+
+
+def export_html_pdf(
     *,
     html_path: Path,
     pdf_path: Path,
@@ -94,7 +129,7 @@ def export_report_pdf(
             f"Chrome PDF export failed with exit code {result.returncode}: {detail}"
         )
     if not pdf_path.is_file():
-        raise PdfExportError("Chrome PDF export did not produce report.pdf.")
+        raise PdfExportError(f"Chrome PDF export did not produce {pdf_path.name}.")
     return pdf_path
 
 
@@ -194,6 +229,84 @@ def _chapters_view(chapters: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return view
+
+
+def _article_view(article: dict[str, Any]) -> dict[str, Any]:
+    sections = article.get("sections") if isinstance(article.get("sections"), list) else []
+    return {
+        "source": _first_text(article.get("source")),
+        "cleaning_level": _first_text(article.get("cleaning_level")),
+        "warnings": _string_list(article.get("warnings")),
+        "sections": [
+            _article_section_view(section)
+            for section in sections
+            if isinstance(section, dict)
+        ],
+    }
+
+
+def _article_section_view(section: dict[str, Any]) -> dict[str, Any]:
+    paragraphs = (
+        section.get("paragraphs") if isinstance(section.get("paragraphs"), list) else []
+    )
+    return {
+        "section_index": section.get("section_index"),
+        "title": _first_text(section.get("title")),
+        "timestamp_url": _first_text(section.get("timestamp_url")),
+        "paragraphs": [
+            _article_paragraph_view(paragraph)
+            for paragraph in paragraphs
+            if isinstance(paragraph, dict)
+        ],
+        "key_terms": _string_list(section.get("key_terms")),
+        "warnings": _string_list(section.get("warnings")),
+    }
+
+
+def _article_paragraph_view(paragraph: dict[str, Any]) -> dict[str, Any]:
+    emphasis = (
+        paragraph.get("emphasis") if isinstance(paragraph.get("emphasis"), list) else []
+    )
+    return {
+        "html": _paragraph_html(
+            _first_text(paragraph.get("text")),
+            [item for item in emphasis if isinstance(item, dict)],
+        )
+    }
+
+
+def _paragraph_html(text: str, emphasis: list[dict[str, Any]]) -> Markup:
+    escaped_text = str(escape(text))
+    spans: list[tuple[int, int, str, str]] = []
+
+    for item in emphasis:
+        kind = _first_text(item.get("kind"))
+        if kind not in {"strong", "mark"}:
+            continue
+        target = _first_text(item.get("text"))
+        if not target:
+            continue
+        escaped_target = str(escape(target))
+        if escaped_text.count(escaped_target) != 1:
+            return Markup(escaped_text)
+        start = escaped_text.find(escaped_target)
+        spans.append((start, start + len(escaped_target), kind, escaped_target))
+
+    spans.sort(key=lambda span: span[0])
+    previous_end = -1
+    for start, end, _, _ in spans:
+        if start < previous_end:
+            return Markup(escaped_text)
+        previous_end = end
+
+    rendered = escaped_text
+    for start, end, kind, escaped_target in sorted(spans, reverse=True):
+        rendered = (
+            rendered[:start]
+            + f"<{kind}>{escaped_target}</{kind}>"
+            + rendered[end:]
+        )
+    return Markup(rendered)
 
 
 def _evidence_view(value: Any) -> list[dict[str, Any]]:
@@ -418,6 +531,118 @@ def _template():
 
   <footer>
     <p>本文件可离线打开；时间戳链接会跳回原视频网页。图解来自章节内容；真实截图仅在可抽帧时生成。</p>
+  </footer>
+</main>
+</body>
+</html>"""
+    )
+
+
+def _transcript_template():
+    env = Environment(autoescape=select_autoescape(["html", "xml"]))
+    return env.from_string(
+        """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ metadata.title }} - Bilifan 逐字稿文章</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1f2933;
+      --muted: #667085;
+      --line: #d8dee8;
+      --panel: #f7f9fc;
+      --accent: #0b6bcb;
+      --accent-soft: #e6f0fb;
+      --mark-bg: #fff2b8;
+      --mark-ink: #594100;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #ffffff;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.78;
+    }
+    main { max-width: 840px; margin: 0 auto; padding: 34px 24px 58px; }
+    header { border-bottom: 1px solid var(--line); padding-bottom: 22px; }
+    .kicker { color: var(--accent); font-size: 13px; font-weight: 700; }
+    h1 { font-size: 32px; line-height: 1.24; margin: 8px 0 12px; letter-spacing: 0; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px; color: var(--muted); font-size: 14px; }
+    .cover { width: 100%; max-height: 320px; object-fit: cover; margin-top: 18px; border: 1px solid var(--line); }
+    .notice { border: 1px solid var(--line); background: var(--panel); padding: 10px 12px; margin: 18px 0; color: var(--muted); font-size: 13px; }
+    section.article-section { border-top: 1px solid var(--line); padding: 28px 0; break-inside: avoid; }
+    .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+    h2 { font-size: 22px; line-height: 1.32; margin: 0; letter-spacing: 0; }
+    .back-link {
+      color: var(--accent);
+      background: var(--accent-soft);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 2px 8px;
+      white-space: nowrap;
+    }
+    p { margin: 16px 0 0; font-size: 16px; }
+    strong { font-weight: 800; }
+    mark { background: var(--mark-bg); color: var(--mark-ink); padding: 0 2px; }
+    .terms { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .term { background: var(--panel); border: 1px solid var(--line); padding: 2px 8px; font-size: 13px; color: #344054; }
+    footer { border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; padding-top: 18px; }
+    @media (max-width: 720px) {
+      main { padding: 24px 16px 42px; }
+      h1 { font-size: 26px; }
+      .section-head { display: block; }
+      .back-link { display: inline-block; margin-top: 8px; }
+    }
+    @media print {
+      main { max-width: none; padding: 0; }
+      a { color: inherit; }
+      .back-link { border: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="kicker">Bilifan 逐字稿文章</div>
+    <h1>{{ metadata.title or "逐字稿文章" }}</h1>
+    <div class="meta">
+      {% if metadata.owner_name %}<span>UP：{{ metadata.owner_name }}</span>{% endif %}
+      {% if metadata.part_title %}<span>当前 P：{{ metadata.part_title }}</span>{% endif %}
+      {% if article.source %}<span>来源：{{ article.source }}</span>{% endif %}
+      {% if article.cleaning_level %}<span>清理级别：{{ article.cleaning_level }}</span>{% endif %}
+    </div>
+    {% if metadata.cover_path %}<img class="cover" src="{{ metadata.cover_path }}" alt="视频封面">{% endif %}
+  </header>
+
+  {% if article.warnings %}
+  <div class="notice">warning: {{ article.warnings|join(", ") }}</div>
+  {% endif %}
+
+  {% for section in article.sections %}
+  <section class="article-section">
+    <div class="section-head">
+      <h2>{{ section.section_index }}. {{ section.title }}</h2>
+      {% if section.timestamp_url %}<a class="back-link" href="{{ section.timestamp_url }}">回到视频</a>{% endif %}
+    </div>
+    {% for paragraph in section.paragraphs %}
+    <p>{{ paragraph.html }}</p>
+    {% endfor %}
+    {% if section.key_terms %}
+    <div class="terms">{% for term in section.key_terms %}<span class="term">{{ term }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if section.warnings %}
+    <div class="notice">warning: {{ section.warnings|join(", ") }}</div>
+    {% endif %}
+  </section>
+  {% endfor %}
+
+  <footer>
+    <p>本文件可离线打开；章节链接会跳回原视频网页。</p>
   </footer>
 </main>
 </body>

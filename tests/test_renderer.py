@@ -2,6 +2,7 @@ import subprocess
 
 import pytest
 
+import bilifan.renderer as renderer
 from bilifan.bilibili import BilibiliPartRef
 from bilifan.renderer import PdfExportError, export_report_pdf, render_report_html
 
@@ -159,3 +160,68 @@ def test_export_report_pdf_raises_when_chrome_fails(tmp_path):
 
     assert "Chrome PDF export failed" in str(exc_info.value)
     assert "/Users/jack" not in str(exc_info.value)
+
+
+def _article():
+    return {
+        "schema_version": 1,
+        "source": "whisper",
+        "cleaning_level": "strong",
+        "sections": [
+            {
+                "section_index": 1,
+                "title": "人工智能工作流",
+                "start": 0,
+                "end": 90,
+                "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?p=2&t=0",
+                "source_segment_start_index": 0,
+                "source_segment_end_index": 1,
+                "paragraphs": [
+                    {
+                        "text": "今天我们讲人工智能和工作流。这个地方很重要。",
+                        "emphasis": [{"text": "人工智能", "kind": "strong"}],
+                    }
+                ],
+                "key_terms": ["人工智能", "工作流"],
+                "warnings": [],
+            }
+        ],
+        "warnings": ["部分术语可能未能确认"],
+    }
+
+
+def test_render_transcript_html_writes_readable_article_without_line_timestamps(tmp_path):
+    html_path = renderer.render_transcript_html(
+        ref=REF,
+        metadata=_metadata(),
+        article=_article(),
+        run_dir=tmp_path,
+    )
+
+    html = html_path.read_text(encoding="utf-8")
+    assert html_path.name == "transcript.html"
+    assert "逐字稿文章" in html
+    assert "人工智能工作流" in html
+    assert "<strong>人工智能</strong>" in html
+    assert "[0:00]" not in html
+    assert "回到视频" in html
+    assert "https://www.bilibili.com/video/BV1abcDEF12G?p=2&amp;t=0" in html
+
+
+def test_export_html_pdf_can_write_transcript_pdf(tmp_path):
+    html_path = tmp_path / "transcript.html"
+    pdf_path = tmp_path / "transcript.pdf"
+    html_path.write_text("<html></html>", encoding="utf-8")
+
+    def fake_runner(cmd, **kwargs):
+        pdf_path.write_bytes(b"%PDF")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    result = renderer.export_html_pdf(
+        html_path=html_path,
+        pdf_path=pdf_path,
+        chrome_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        runner=fake_runner,
+    )
+
+    assert result == pdf_path
