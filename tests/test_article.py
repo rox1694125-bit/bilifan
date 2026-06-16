@@ -1,0 +1,193 @@
+import json
+import subprocess
+
+import pytest
+
+from bilifan.article import (
+    ARTICLE_SCHEMA_VERSION,
+    ArticleError,
+    build_article_prompt,
+    generate_transcript_article,
+    normalize_transcript_article,
+    run_codex_article_generation,
+)
+from bilifan.bilibili import BilibiliPartRef
+
+
+REF = BilibiliPartRef(
+    bvid="BV1abcDEF12G",
+    part_index=1,
+    sanitized_url="https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+)
+
+
+def _metadata():
+    return {"title": "测试视频", "part_title": "P1", "owner_name": "UP", "duration": 90}
+
+
+def _transcript(source="whisper"):
+    return {
+        "source": source,
+        "language": "zh",
+        "model": "turbo" if source == "whisper" else "",
+        "segments": [
+            {"start": 0, "end": 30, "text": "今天我们讲人工只能和工作流。"},
+            {"start": 30, "end": 60, "text": "这个地方其实其实很重要。"},
+            {"start": 60, "end": 90, "text": "最后总结一下。"},
+        ],
+        "transcript_check": {"status": "ok"},
+    }
+
+
+def _chunks():
+    return {
+        "chunks": [
+            {
+                "chunk_index": 1,
+                "start": 0,
+                "end": 90,
+                "segment_start_index": 0,
+                "segment_end_index": 2,
+                "segments": [
+                    {
+                        "source_index": 0,
+                        "start": 0,
+                        "end": 30,
+                        "text": "今天我们讲人工只能和工作流。",
+                    },
+                    {
+                        "source_index": 1,
+                        "start": 30,
+                        "end": 60,
+                        "text": "这个地方其实其实很重要。",
+                    },
+                    {"source_index": 2, "start": 60, "end": 90, "text": "最后总结一下。"},
+                ],
+                "text": "今天我们讲人工只能和工作流。\n这个地方其实其实很重要。\n最后总结一下。",
+            }
+        ]
+    }
+
+
+def _article_payload():
+    return {
+        "schema_version": ARTICLE_SCHEMA_VERSION,
+        "source": "whisper",
+        "cleaning_level": "strong",
+        "sections": [
+            {
+                "section_index": 1,
+                "title": "人工智能工作流",
+                "start": 0,
+                "end": 90,
+                "source_segment_start_index": 0,
+                "source_segment_end_index": 2,
+                "paragraphs": [
+                    {
+                        "text": "今天我们讲人工智能和工作流。这个地方很重要。最后总结一下。",
+                        "emphasis": [{"text": "人工智能", "kind": "strong"}],
+                    }
+                ],
+                "key_terms": ["人工智能", "工作流"],
+                "warnings": [],
+            }
+        ],
+        "warnings": [],
+    }
+
+
+def test_build_article_prompt_uses_strong_cleaning_for_whisper():
+    prompt = build_article_prompt(
+        ref=REF,
+        metadata=_metadata(),
+        transcript=_transcript("whisper"),
+        chunk=_chunks()["chunks"][0],
+    )
+
+    assert "强清洗" in prompt
+    assert "错别字" in prompt
+    assert "人工只能" in prompt
+    assert "output_schema" in prompt
+
+
+def test_build_article_prompt_uses_light_cleaning_for_subtitles():
+    prompt = build_article_prompt(
+        ref=REF,
+        metadata=_metadata(),
+        transcript=_transcript("bilibili-subtitle"),
+        chunk=_chunks()["chunks"][0],
+    )
+
+    assert "轻清洗" in prompt
+    assert "少改词" in prompt
+
+
+def test_normalize_transcript_article_adds_timestamp_urls_and_validates_ranges():
+    article = normalize_transcript_article(
+        _article_payload(),
+        ref=REF,
+        transcript=_transcript(),
+        chunks=_chunks(),
+    )
+
+    section = article["sections"][0]
+    assert article["schema_version"] == ARTICLE_SCHEMA_VERSION
+    assert section["timestamp_url"].endswith("&t=0")
+    assert section["cleaning_level"] == "strong"
+    assert section["paragraphs"][0]["emphasis"][0] == {"text": "人工智能", "kind": "strong"}
+
+
+def test_normalize_transcript_article_rejects_unanchored_section():
+    payload = _article_payload()
+    payload["sections"][0]["source_segment_start_index"] = 99
+
+    with pytest.raises(ArticleError, match="source segment"):
+        normalize_transcript_article(payload, ref=REF, transcript=_transcript(), chunks=_chunks())
+
+
+def test_run_codex_article_generation_invokes_codex_exec(tmp_path):
+    calls = []
+
+    def fake_runner(cmd, **kwargs):
+        calls.append({"cmd": cmd, **kwargs})
+        output_path = tmp_path / cmd[cmd.index("--output-last-message") + 1]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(_article_payload(), ensure_ascii=False), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    article = run_codex_article_generation(
+        ref=REF,
+        metadata=_metadata(),
+        transcript=_transcript(),
+        chunk=_chunks()["chunks"][0],
+        run_dir=tmp_path,
+        model="gpt-5.5",
+        runner=fake_runner,
+    )
+
+    assert calls[0]["cmd"][1:3] == ["exec", "--ephemeral"]
+    assert calls[0]["cmd"][calls[0]["cmd"].index("--model") + 1] == "gpt-5.5"
+    assert "强清洗" in calls[0]["input"]
+    assert article["sections"][0]["title"] == "人工智能工作流"
+
+
+def test_generate_transcript_article_writes_stable_artifact(tmp_path):
+    def fake_runner(cmd, **kwargs):
+        output_path = tmp_path / cmd[cmd.index("--output-last-message") + 1]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(_article_payload(), ensure_ascii=False), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    article = generate_transcript_article(
+        ref=REF,
+        metadata=_metadata(),
+        transcript=_transcript(),
+        chunks=_chunks(),
+        run_dir=tmp_path,
+        model="gpt-5.5",
+        runner=fake_runner,
+    )
+
+    written = json.loads((tmp_path / "transcript_article.json").read_text(encoding="utf-8"))
+    assert article == written
+    assert written["sections"][0]["timestamp_url"].endswith("&t=0")
