@@ -84,6 +84,46 @@ CHUNK_SUMMARY_SCHEMA: dict[str, Any] = {
 }
 
 
+ARTICLE_REPORT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["chapters"],
+    "additionalProperties": False,
+    "properties": {
+        "chapters": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "required": [
+                    "section_index",
+                    "summary",
+                    "key_points",
+                    "quotes",
+                    "visual_anchors",
+                ],
+                "additionalProperties": False,
+                "properties": {
+                    "section_index": {"type": "integer", "minimum": 1},
+                    "summary": {"type": "string", "minLength": 1},
+                    "key_points": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "quotes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "visual_anchors": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+            },
+        },
+    },
+}
+
+
 CHAPTERS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["style", "summary_validation", "chapters"],
@@ -235,6 +275,140 @@ def summarize_chunks(
         style=style,
     )
     _add_evidence_and_validation(chapters, chunks, ref)
+    _validate_json(chapters, CHAPTERS_SCHEMA, "chapters")
+    return chapters
+
+
+def build_article_report_prompt(
+    *,
+    metadata: dict[str, Any],
+    article: dict[str, Any],
+    style: str,
+) -> str:
+    style = validate_summary_style(style)
+    safe_metadata = {
+        "title": _first_text(metadata.get("title")),
+        "part_title": _first_text(metadata.get("part_title")),
+        "owner_name": _first_text(metadata.get("owner_name")),
+        "description": _first_text(metadata.get("description")),
+        "tags": metadata.get("tags") if isinstance(metadata.get("tags"), list) else [],
+        "duration": metadata.get("duration"),
+    }
+    payload = {
+        "style": style,
+        "metadata": safe_metadata,
+        "article": {
+            "schema_version": article.get("schema_version"),
+            "source": _first_text(article.get("source")),
+            "cleaning_level": _first_text(article.get("cleaning_level")),
+            "sections": _article_prompt_sections(article),
+            "warnings": _string_list(article.get("warnings")),
+        },
+        "output_schema": ARTICLE_REPORT_SCHEMA,
+    }
+    return (
+        "你是 Bilifan 的视频学习报告摘要器。请只根据输入中的清洗后的逐字稿文章"
+        "生成章节摘要，不要使用未清洗的原始转写内容，不要编造文章里没有的信息。"
+        "输出必须是严格 JSON，且必须匹配 output_schema。\n"
+        f"本次输出模板：{style}。模板要求：{SUMMARY_TEMPLATES[style]}\n"
+        "chapters 必须通过 section_index 引用输入 article.sections；summary 用白话"
+        "概括该 section，key_points 提炼可复习要点，quotes 只能摘自清洗后的逐字稿文章，"
+        "visual_anchors 记录画面或操作线索；没有就给空数组。\n"
+        f"{json.dumps(payload, ensure_ascii=False, allow_nan=False)}"
+    )
+
+
+def run_codex_article_report(
+    *,
+    metadata: dict[str, Any],
+    article: dict[str, Any],
+    run_dir: Path,
+    model: str,
+    style: str,
+    runner: Runner = subprocess.run,
+) -> dict[str, Any]:
+    prompt = build_article_report_prompt(
+        metadata=metadata,
+        article=article,
+        style=style,
+    )
+    with tempfile.TemporaryDirectory(dir=run_dir) as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        schema_path = tmp_path / "article_report.schema.json"
+        output_path = tmp_path / "article_report.json"
+        _write_json(schema_path, ARTICLE_REPORT_SCHEMA)
+        cmd = [
+            resolve_codex_executable(),
+            "exec",
+            "--ephemeral",
+            "--json",
+            "--skip-git-repo-check",
+            "--model",
+            model,
+            "--output-schema",
+            str(schema_path),
+            "--output-last-message",
+            str(output_path),
+            "-",
+        ]
+        try:
+            result = runner(
+                cmd,
+                input=prompt,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=CODEX_EXEC_TIMEOUT_SECONDS,
+                cwd=run_dir,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise SummarizationError(
+                f"codex exec timed out after {CODEX_EXEC_TIMEOUT_SECONDS} seconds."
+            ) from exc
+        except OSError as exc:
+            raise SummarizationError(f"codex exec failed to start: {exc}") from exc
+
+        if result.returncode != 0:
+            detail = result.stderr or result.stdout or "codex exec returned no output."
+            raise SummarizationError(
+                f"codex exec failed with exit code {result.returncode}: {detail}"
+            )
+        if not output_path.is_file():
+            raise SummarizationError("codex exec did not write a final JSON message.")
+        report = _read_json(output_path, "codex exec final message")
+        _validate_json(report, ARTICLE_REPORT_SCHEMA, "article report")
+        return report
+
+
+def summarize_article_sections(
+    *,
+    ref: BilibiliPartRef,
+    metadata: dict[str, Any],
+    article: dict[str, Any],
+    run_dir: Path,
+    provider: str = "codex-exec",
+    model: str = "gpt-5.5",
+    style: str = "学习笔记",
+    runner: Runner = subprocess.run,
+) -> dict[str, Any]:
+    if provider != "codex-exec":
+        raise SummarizationError(f"Unsupported LLM provider: {provider}")
+    style = validate_summary_style(style)
+    report = run_codex_article_report(
+        metadata=metadata,
+        article=article,
+        run_dir=run_dir,
+        model=model,
+        style=style,
+        runner=runner,
+    )
+    chapters = _article_report_to_chapters(
+        ref=ref,
+        article=article,
+        report=report,
+        style=style,
+    )
+    _add_article_summary_validation(chapters)
     _validate_json(chapters, CHAPTERS_SCHEMA, "chapters")
     return chapters
 
@@ -548,6 +722,249 @@ def _prompt_segments(chunk: dict[str, Any]) -> list[dict[str, Any]]:
             segment["source_index"] = source_index
         segments.append(segment)
     return segments
+
+
+def _article_prompt_sections(article: dict[str, Any]) -> list[dict[str, Any]]:
+    sections: list[dict[str, Any]] = []
+    for section in _article_section_items(article):
+        section_index = _article_section_index(section)
+        start, end = _article_section_timestamps(section)
+        if section_index is None or start is None or end is None:
+            continue
+        sections.append(
+            {
+                "section_index": section_index,
+                "title": redact_text(
+                    _first_text(section.get("title")).strip(),
+                    max_length=None,
+                ),
+                "start": start,
+                "end": end,
+                "timestamp_url": _first_text(section.get("timestamp_url")).strip(),
+                "source_segment_start_index": _int_value(
+                    section.get("source_segment_start_index")
+                ),
+                "source_segment_end_index": _int_value(
+                    section.get("source_segment_end_index")
+                ),
+                "paragraphs": [
+                    {"text": text}
+                    for text in _article_section_paragraph_texts(section)
+                ],
+                "key_terms": _string_list(section.get("key_terms")),
+                "warnings": _string_list(section.get("warnings")),
+            }
+        )
+    if not sections:
+        raise SummarizationError("transcript_article.json contains no sections.")
+    return sections
+
+
+def _article_report_to_chapters(
+    *,
+    ref: BilibiliPartRef,
+    article: dict[str, Any],
+    report: dict[str, Any],
+    style: str,
+) -> dict[str, Any]:
+    sections_by_index = _article_sections_by_index(article)
+    chapters: list[dict[str, Any]] = []
+    seen_section_indexes: set[int] = set()
+
+    raw_chapters = report.get("chapters")
+    if not isinstance(raw_chapters, list) or not raw_chapters:
+        raise SummarizationError("article report contained no chapters.")
+
+    for report_chapter in raw_chapters:
+        if not isinstance(report_chapter, dict):
+            raise SummarizationError("article report chapter was not a JSON object.")
+        section_index = _int_value(report_chapter.get("section_index"))
+        if section_index is None:
+            raise SummarizationError("article report chapter omitted section_index.")
+        if section_index in seen_section_indexes:
+            raise SummarizationError("article report referenced duplicate section_index.")
+        seen_section_indexes.add(section_index)
+
+        section = sections_by_index.get(section_index)
+        if section is None:
+            raise SummarizationError("article report referenced unknown section_index.")
+        start, end = _article_section_timestamps(section)
+        if start is None or end is None or end < start:
+            raise SummarizationError("transcript article contained invalid section timestamps.")
+
+        timestamp_url = _first_text(section.get("timestamp_url")).strip() or ref.timestamp_url(
+            start
+        )
+        chapters.append(
+            {
+                "chapter_index": len(chapters) + 1,
+                "title": redact_text(
+                    _first_text(section.get("title")).strip(),
+                    max_length=None,
+                ),
+                "start": start,
+                "end": end,
+                "timestamp_url": timestamp_url,
+                "summary": redact_text(
+                    _first_text(report_chapter.get("summary")).strip(),
+                    max_length=None,
+                ),
+                "key_points": _string_list(report_chapter.get("key_points")),
+                "quotes": _string_list(report_chapter.get("quotes")),
+                "visual_anchors": _string_list(report_chapter.get("visual_anchors")),
+                "evidence": _article_section_evidence(section, ref),
+            }
+        )
+
+    return {"style": style, "chapters": chapters}
+
+
+def _article_sections_by_index(article: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    sections: dict[int, dict[str, Any]] = {}
+    for section in _article_section_items(article):
+        section_index = _article_section_index(section)
+        if section_index is None:
+            continue
+        sections[section_index] = section
+    if not sections:
+        raise SummarizationError("transcript_article.json contains no sections.")
+    return sections
+
+
+def _article_section_items(article: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_sections = article.get("sections")
+    if not isinstance(raw_sections, list) or not raw_sections:
+        raise SummarizationError("transcript_article.json contains no sections.")
+    sections = [section for section in raw_sections if isinstance(section, dict)]
+    if not sections:
+        raise SummarizationError("transcript_article.json contains no sections.")
+    return sections
+
+
+def _article_section_index(section: dict[str, Any]) -> int | None:
+    section_index = _int_value(section.get("section_index"))
+    if section_index is None or section_index < 1:
+        return None
+    return section_index
+
+
+def _article_section_timestamps(section: dict[str, Any]) -> tuple[float | None, float | None]:
+    return _float_value(section.get("start")), _float_value(section.get("end"))
+
+
+def _article_section_paragraph_texts(section: dict[str, Any]) -> list[str]:
+    raw_paragraphs = section.get("paragraphs")
+    if not isinstance(raw_paragraphs, list):
+        return []
+    texts: list[str] = []
+    for paragraph in raw_paragraphs:
+        if not isinstance(paragraph, dict):
+            continue
+        text = redact_text(_first_text(paragraph.get("text")).strip(), max_length=None)
+        if text:
+            texts.append(text)
+    return texts
+
+
+def _article_section_evidence(
+    section: dict[str, Any],
+    ref: BilibiliPartRef,
+) -> list[dict[str, Any]]:
+    start, end = _article_section_timestamps(section)
+    segment_start_index = _int_value(section.get("source_segment_start_index"))
+    segment_end_index = _int_value(section.get("source_segment_end_index"))
+    if (
+        start is None
+        or end is None
+        or end < start
+        or segment_start_index is None
+        or segment_end_index is None
+        or segment_end_index < segment_start_index
+    ):
+        return []
+
+    timestamp_url = _first_text(section.get("timestamp_url")).strip() or ref.timestamp_url(
+        start
+    )
+    paragraph_texts = _article_section_paragraph_texts(section)
+    text_preview = _preview_text(paragraph_texts[0]) if paragraph_texts else ""
+    return [
+        {
+            "segment_start_index": segment_start_index,
+            "segment_end_index": segment_end_index,
+            "start": start,
+            "end": end,
+            "timestamp_url": timestamp_url,
+            "text_preview": text_preview,
+        }
+    ]
+
+
+def _add_article_summary_validation(chapters: dict[str, Any]) -> None:
+    warnings: list[str] = []
+    checks = {
+        "required_fields_present": True,
+        "timestamps_anchored": True,
+        "chapter_timestamps_within_chunk": True,
+        "evidence_anchors_present": True,
+    }
+
+    raw_chapters = chapters.get("chapters")
+    if not isinstance(raw_chapters, list):
+        raw_chapters = []
+
+    for chapter in raw_chapters:
+        if not isinstance(chapter, dict):
+            checks["required_fields_present"] = False
+            continue
+        if not _chapter_required_fields_present(chapter):
+            checks["required_fields_present"] = False
+            warnings.append(f"chapter_{chapter.get('chapter_index', '?')}_missing_required_fields")
+
+        start = _float_value(chapter.get("start"))
+        end = _float_value(chapter.get("end"))
+        if start is None or end is None or end < start:
+            checks["required_fields_present"] = False
+            checks["chapter_timestamps_within_chunk"] = False
+            checks["timestamps_anchored"] = False
+            checks["evidence_anchors_present"] = False
+            chapter["evidence"] = []
+            warnings.append(f"chapter_{chapter.get('chapter_index', '?')}_invalid_timestamps")
+            continue
+
+        evidence = chapter.get("evidence")
+        if not isinstance(evidence, list) or not evidence:
+            checks["evidence_anchors_present"] = False
+            warnings.append(f"chapter_{chapter.get('chapter_index', '?')}_missing_evidence")
+            continue
+        for item in evidence:
+            if not isinstance(item, dict) or not _article_evidence_required_fields_present(item):
+                checks["evidence_anchors_present"] = False
+                warnings.append(f"chapter_{chapter.get('chapter_index', '?')}_missing_evidence")
+                continue
+            evidence_start = _float_value(item.get("start"))
+            evidence_end = _float_value(item.get("end"))
+            if evidence_start is None or evidence_end is None or evidence_end < evidence_start:
+                checks["timestamps_anchored"] = False
+                checks["evidence_anchors_present"] = False
+                warnings.append(f"chapter_{chapter.get('chapter_index', '?')}_invalid_evidence")
+
+    chapters["summary_validation"] = {
+        "status": "passed" if all(checks.values()) else "warning",
+        "checks": checks,
+        "warnings": _unique_strings(warnings),
+    }
+
+
+def _article_evidence_required_fields_present(evidence: dict[str, Any]) -> bool:
+    return bool(
+        _int_value(evidence.get("segment_start_index")) is not None
+        and _int_value(evidence.get("segment_end_index")) is not None
+        and _float_value(evidence.get("start")) is not None
+        and _float_value(evidence.get("end")) is not None
+        and _first_text(evidence.get("timestamp_url")).strip()
+        and "text_preview" in evidence
+    )
 
 
 def _add_evidence_and_validation(

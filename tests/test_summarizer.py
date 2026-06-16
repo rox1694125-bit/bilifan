@@ -479,3 +479,77 @@ def test_merge_partial_summaries_redacts_sensitive_text():
     serialized = json.dumps(chapters, ensure_ascii=False)
     assert "SESSDATA=secret" not in serialized
     assert "/Users/jack" not in serialized
+
+
+def _article():
+    return {
+        "schema_version": 1,
+        "source": "whisper",
+        "cleaning_level": "strong",
+        "sections": [
+            {
+                "section_index": 1,
+                "title": "人工智能工作流",
+                "start": 0,
+                "end": 90,
+                "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?p=2&t=0",
+                "source_segment_start_index": 0,
+                "source_segment_end_index": 1,
+                "paragraphs": [{"text": "今天我们讲人工智能和工作流。这个地方很重要。", "emphasis": []}],
+                "key_terms": ["人工智能"],
+                "warnings": [],
+            }
+        ],
+        "warnings": [],
+    }
+
+
+def _article_report_payload():
+    return {
+        "chapters": [
+            {
+                "section_index": 1,
+                "summary": "讲人工智能工作流的重要性。",
+                "key_points": ["人工智能工作流是核心主题"],
+                "quotes": ["这个地方很重要"],
+                "visual_anchors": [],
+            }
+        ]
+    }
+
+
+def test_build_article_report_prompt_uses_cleaned_article_text():
+    prompt = summarizer.build_article_report_prompt(
+        metadata=_metadata(),
+        article=_article(),
+        style="学习笔记",
+    )
+
+    assert "清洗后的逐字稿文章" in prompt
+    assert "人工智能和工作流" in prompt
+    assert "这是转写内容" not in prompt
+
+
+def test_summarize_article_sections_returns_existing_chapters_shape(tmp_path):
+    def fake_runner(cmd, **kwargs):
+        output_path = tmp_path / cmd[cmd.index("--output-last-message") + 1]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(_article_report_payload(), ensure_ascii=False), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    chapters = summarizer.summarize_article_sections(
+        ref=REF,
+        metadata=_metadata(),
+        article=_article(),
+        run_dir=tmp_path,
+        model="gpt-5.5",
+        style="学习笔记",
+        runner=fake_runner,
+    )
+
+    chapter = chapters["chapters"][0]
+    assert chapter["chapter_index"] == 1
+    assert chapter["title"] == "人工智能工作流"
+    assert chapter["summary"] == "讲人工智能工作流的重要性。"
+    assert chapter["evidence"][0]["text_preview"].startswith("今天我们讲人工智能")
+    assert chapters["summary_validation"]["status"] == "passed"
