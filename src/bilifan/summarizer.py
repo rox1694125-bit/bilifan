@@ -724,8 +724,8 @@ def _prompt_segments(chunk: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _article_prompt_sections(article: dict[str, Any]) -> list[dict[str, Any]]:
     sections: list[dict[str, Any]] = []
-    for section in _article_section_items(article):
-        section_index = _article_section_index(section)
+    for section in _validated_article_sections(article):
+        section_index = section["section_index"]
         start, end = _article_section_timestamps(section)
         if section_index is None or start is None or end is None:
             continue
@@ -824,33 +824,41 @@ def _article_report_to_chapters(
 
 
 def _article_sections_by_index(article: dict[str, Any]) -> dict[int, dict[str, Any]]:
-    sections: dict[int, dict[str, Any]] = {}
-    for section in _article_section_items(article):
-        section_index = _article_section_index(section)
-        if section_index is None:
-            continue
-        _require_article_section_paragraph_texts(section)
-        sections[section_index] = section
-    if not sections:
-        raise SummarizationError("transcript_article.json contains no sections.")
-    return sections
+    return {
+        section["section_index"]: section
+        for section in _validated_article_sections(article)
+    }
 
 
-def _article_section_items(article: dict[str, Any]) -> list[dict[str, Any]]:
+def _validated_article_sections(article: dict[str, Any]) -> list[dict[str, Any]]:
     raw_sections = article.get("sections")
     if not isinstance(raw_sections, list) or not raw_sections:
         raise SummarizationError("transcript_article.json contains no sections.")
-    sections = [section for section in raw_sections if isinstance(section, dict)]
-    if not sections:
-        raise SummarizationError("transcript_article.json contains no sections.")
+
+    sections: list[dict[str, Any]] = []
+    seen_section_indexes: set[int] = set()
+    for position, section in enumerate(raw_sections, start=1):
+        if not isinstance(section, dict):
+            raise SummarizationError(
+                f"transcript article section {position} was not a JSON object."
+            )
+        raw_section_index = section.get("section_index")
+        if (
+            isinstance(raw_section_index, bool)
+            or not isinstance(raw_section_index, int)
+            or raw_section_index < 1
+        ):
+            raise SummarizationError(
+                f"transcript article section {position} contained invalid section_index."
+            )
+        if raw_section_index in seen_section_indexes:
+            raise SummarizationError(
+                f"transcript article contained duplicate section_index: {raw_section_index}."
+            )
+        seen_section_indexes.add(raw_section_index)
+        _require_article_section_paragraph_texts(section)
+        sections.append(section)
     return sections
-
-
-def _article_section_index(section: dict[str, Any]) -> int | None:
-    section_index = _int_value(section.get("section_index"))
-    if section_index is None or section_index < 1:
-        return None
-    return section_index
 
 
 def _article_section_timestamps(section: dict[str, Any]) -> tuple[float | None, float | None]:

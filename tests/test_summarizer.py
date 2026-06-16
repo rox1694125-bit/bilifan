@@ -607,3 +607,47 @@ def test_build_article_report_prompt_rejects_section_without_article_text():
             article=article,
             style="学习笔记",
         )
+
+
+def test_summarize_article_sections_rejects_invalid_article_section_index(tmp_path):
+    article = _two_section_article()
+    article["sections"][1]["section_index"] = "bad"
+
+    def fake_runner(cmd, **kwargs):
+        output_path = tmp_path / cmd[cmd.index("--output-last-message") + 1]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(_article_report_payload(), ensure_ascii=False), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    with pytest.raises(SummarizationError, match="section_index"):
+        summarizer.summarize_article_sections(
+            ref=REF,
+            metadata=_metadata(),
+            article=article,
+            run_dir=tmp_path,
+            model="gpt-5.5",
+            style="学习笔记",
+            runner=fake_runner,
+        )
+
+
+def test_summarize_article_sections_rejects_duplicate_article_section_index(tmp_path):
+    article = _two_section_article()
+    article["sections"][1]["section_index"] = 1
+
+    def fake_runner(cmd, **kwargs):
+        output_path = tmp_path / cmd[cmd.index("--output-last-message") + 1]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(_article_report_payload(), ensure_ascii=False), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    with pytest.raises(SummarizationError, match="duplicate"):
+        summarizer.summarize_article_sections(
+            ref=REF,
+            metadata=_metadata(),
+            article=article,
+            run_dir=tmp_path,
+            model="gpt-5.5",
+            style="学习笔记",
+            runner=fake_runner,
+        )
