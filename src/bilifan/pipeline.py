@@ -18,21 +18,14 @@ from .chunking import (
     estimate_chunk_plan,
 )
 from .diagnostics import Diagnostics, redact_text, write_diagnostics
-from .exports import (
-    ExportError,
-    NABAICHUAN_JSONL,
-    write_nabaichuan_jsonl,
-    write_notes_markdown,
-    write_transcript_exports,
-)
 from .media import MediaDownloadError, download_current_part_audio, publish_audio_artifact
 from .metadata import MetadataIngestError, fetch_current_part_metadata
-from .renderer import PdfExportError, export_report_pdf, render_report_html
+from .renderer import PdfExportError, render_report_html
 from .renderer import export_html_pdf, render_transcript_html
 from .runs import RunPaths, create_error_run, create_run
 from .sources import SourceAdapterError, SourceOptions, resolve_source_adapter
 from .sources.bilibili import BilibiliAdapter
-from .summarizer import SummarizationError, summarize_article_sections, summarize_chunks
+from .summarizer import SummarizationError, summarize_article_sections
 from .transcript import TranscriptError, build_transcript
 from .visuals import enrich_chapters_with_visuals, visual_artifact_paths
 
@@ -581,19 +574,45 @@ def run_summarize_pipeline(
         except MediaDownloadError:
             render_warnings.append("audio_publish_failed")
 
-    bundle_path = write_content_bundle(
-        run_dir=run.run_dir,
-        metadata=metadata,
-        transcript=transcript,
-        transcript_article=article,
-        chapters=chapters,
-        artifact_paths=render_artifacts,
-        platform=adapter.platform,
-        source_id=source_ref.source_id,
-        part_id=source_ref.part_id,
-        llm_provider=request.llm_provider,
-        llm_model=request.llm_model,
-    )
+    try:
+        bundle_path = write_content_bundle(
+            run_dir=run.run_dir,
+            metadata=metadata,
+            transcript=transcript,
+            transcript_article=article,
+            chapters=chapters,
+            artifact_paths=render_artifacts,
+            platform=adapter.platform,
+            source_id=source_ref.source_id,
+            part_id=source_ref.part_id,
+            llm_provider=request.llm_provider,
+            llm_model=request.llm_model,
+        )
+    except Exception as exc:
+        sanitized_message = redact_text(str(exc))
+        artifact_paths = list(render_artifacts)
+        write_diagnostics(
+            run.run_dir / "diagnostics.json",
+            Diagnostics(
+                error_type=exc.__class__.__name__,
+                exit_code=1,
+                stage="bundle",
+                video_id=ref.bvid,
+                part_index=ref.part_index,
+                duration_check=media["duration_check"],
+                transcript_check=transcript["transcript_check"],
+                artifact_paths=artifact_paths,
+                sanitized_message=sanitized_message,
+                warnings=render_warnings,
+            ),
+        )
+        _progress(progress_callback, PipelineStage.RENDER, "failed", sanitized_message)
+        raise _pipeline_run_error(
+            run,
+            sanitized_message,
+            artifact_paths=artifact_paths,
+            warnings=render_warnings,
+        ) from exc
     render_artifacts.append(bundle_path.name)
 
     write_diagnostics(

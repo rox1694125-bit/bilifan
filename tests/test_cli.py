@@ -316,7 +316,6 @@ def _install_fake_report_render(monkeypatch, *, pdf_success=True):
 
     monkeypatch.setattr(pipeline, "render_transcript_html", fake_render_transcript_html, raising=False)
     monkeypatch.setattr(pipeline, "render_report_html", fake_render_report_html)
-    monkeypatch.setattr(pipeline, "export_report_pdf", fake_export_html_pdf)
     monkeypatch.setattr(pipeline, "export_html_pdf", fake_export_html_pdf, raising=False)
     return calls
 

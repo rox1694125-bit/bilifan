@@ -16,17 +16,10 @@ from .diagnostics import (
     validate_artifact_paths,
     write_diagnostics,
 )
-from .exports import (
-    ExportError,
-    NABAICHUAN_JSONL,
-    write_nabaichuan_jsonl,
-    write_notes_markdown,
-)
 from .renderer import (
     PdfExportError,
     RenderError,
     export_html_pdf,
-    export_report_pdf,
     render_report_html,
     render_transcript_html,
 )
@@ -34,7 +27,6 @@ from .runs import RUN_OUTPUT_ID_PATTERN
 from .summarizer import (
     SummarizationError,
     summarize_article_sections,
-    summarize_chunks,
     validate_summary_style,
 )
 from .visuals import enrich_chapters_with_visuals, visual_artifact_paths
@@ -119,6 +111,7 @@ def retry_run(
     ref = _ref_from_metadata(metadata)
 
     if stage == "summarization":
+        _cleanup_downstream_artifacts(run_dir)
         chunks = _read_required_json(run_dir, "chunks.json")
         try:
             transcript_article = generate_transcript_article(
@@ -178,6 +171,7 @@ def retry_run(
     chapters = _read_required_json(run_dir, "chapters.json")
     transcript_article = _read_optional_json(run_dir, "transcript_article.json") or None
     if stage == "render":
+        _cleanup_downstream_artifacts(run_dir)
         visual_warnings = enrich_chapters_with_visuals(
             ref=ref,
             chapters=chapters,
@@ -511,6 +505,20 @@ def _base_artifact_paths(run_dir: Path) -> list[str]:
 
 def _existing_named_artifacts(run_dir: Path, names: list[str]) -> list[str]:
     return [name for name in names if (run_dir / name).is_file()]
+
+
+def _cleanup_downstream_artifacts(run_dir: Path) -> None:
+    for relative_path in (
+        "transcript.html",
+        "transcript.pdf",
+        "report.html",
+        "report.pdf",
+        "content_bundle.json",
+    ):
+        try:
+            (run_dir / relative_path).unlink()
+        except FileNotFoundError:
+            continue
 
 
 def _duration_check(run_dir: Path) -> dict[str, Any] | None:

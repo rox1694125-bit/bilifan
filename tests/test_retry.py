@@ -239,7 +239,6 @@ def test_retry_render_rewrites_report_and_bundle(tmp_path, monkeypatch):
         pdf_path.write_bytes(b"%PDF")
         return pdf_path
 
-    monkeypatch.setattr(retry_module, "export_report_pdf", fake_export_html_pdf)
     monkeypatch.setattr(
         retry_module,
         "export_html_pdf",
@@ -481,20 +480,51 @@ def test_retry_render_html_only_does_not_expose_stale_pdf(tmp_path, monkeypatch)
     _write_json(run_dir / "chapters.json", _chapters())
     (run_dir / "report.pdf").write_bytes(b"stale pdf")
 
-    monkeypatch.setattr(
-        retry_module,
-        "render_report_html",
-        lambda *, ref, metadata, transcript, chapters, run_dir: (
-            run_dir / "report.html"
-        ),
-    )
-    (run_dir / "report.html").write_text("<html>retry</html>", encoding="utf-8")
+    def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
+        html_path = run_dir / "report.html"
+        html_path.write_text("<html>retry</html>", encoding="utf-8")
+        return html_path
+
+    monkeypatch.setattr(retry_module, "render_report_html", fake_render_report_html)
 
     result = retry_run(run_dir, from_stage="render", output_format="html")
     bundle = json.loads((run_dir / "content_bundle.json").read_text(encoding="utf-8"))
 
     assert "report.pdf" not in result.artifact_paths
     assert "report_pdf" not in bundle["artifacts"]
+    assert not (run_dir / "report.pdf").exists()
+
+
+def test_retry_render_html_only_removes_stale_article_pdfs(tmp_path, monkeypatch):
+    run_dir = _run_dir(tmp_path)
+    _write_json(run_dir / "chapters.json", _chapters())
+    _write_json(run_dir / "transcript_article.json", _article())
+    (run_dir / "transcript.pdf").write_bytes(b"stale transcript pdf")
+    (run_dir / "report.pdf").write_bytes(b"stale report pdf")
+    _write_json(run_dir / "content_bundle.json", {"stale": True})
+
+    def fake_render_transcript_html(*, ref, metadata, article, run_dir):
+        html_path = run_dir / "transcript.html"
+        html_path.write_text("<html>transcript</html>", encoding="utf-8")
+        return html_path
+
+    def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
+        html_path = run_dir / "report.html"
+        html_path.write_text("<html>report</html>", encoding="utf-8")
+        return html_path
+
+    monkeypatch.setattr(retry_module, "render_transcript_html", fake_render_transcript_html)
+    monkeypatch.setattr(retry_module, "render_report_html", fake_render_report_html)
+
+    result = retry_run(run_dir, from_stage="render", output_format="html")
+    bundle = json.loads((run_dir / "content_bundle.json").read_text(encoding="utf-8"))
+
+    assert "transcript.pdf" not in result.artifact_paths
+    assert "report.pdf" not in result.artifact_paths
+    assert "transcript_pdf" not in bundle["artifacts"]
+    assert "report_pdf" not in bundle["artifacts"]
+    assert not (run_dir / "transcript.pdf").exists()
+    assert not (run_dir / "report.pdf").exists()
 
 
 def test_retry_render_does_not_write_nabaichuan_jsonl(tmp_path, monkeypatch):
@@ -506,15 +536,7 @@ def test_retry_render_does_not_write_nabaichuan_jsonl(tmp_path, monkeypatch):
         html_path.write_text("<html>retry</html>", encoding="utf-8")
         return html_path
 
-    def forbidden_write_nabaichuan_jsonl(run_dir):
-        raise AssertionError("retry should not export nabaichuan jsonl by default")
-
     monkeypatch.setattr(retry_module, "render_report_html", fake_render_report_html)
-    monkeypatch.setattr(
-        retry_module,
-        "write_nabaichuan_jsonl",
-        forbidden_write_nabaichuan_jsonl,
-    )
 
     result = retry_run(run_dir, from_stage="render", output_format="html")
 
@@ -538,7 +560,6 @@ def test_retry_require_pdf_failure_writes_failed_diagnostics(tmp_path, monkeypat
         raise PdfExportError("Chrome failed for /Users/jack/report.html")
 
     monkeypatch.setattr(retry_module, "render_report_html", fake_render_report_html)
-    monkeypatch.setattr(retry_module, "export_report_pdf", fake_export_html_pdf)
     monkeypatch.setattr(
         retry_module,
         "export_html_pdf",
@@ -596,6 +617,8 @@ def test_retry_summarization_failure_does_not_expose_stale_downstream_artifacts(
     run_dir = _run_dir(tmp_path)
     _write_json(run_dir / "chapters.json", _chapters())
     (run_dir / "notes.md").write_text("stale notes", encoding="utf-8")
+    (run_dir / "transcript.html").write_text("<html>stale transcript</html>", encoding="utf-8")
+    (run_dir / "transcript.pdf").write_bytes(b"stale transcript pdf")
     (run_dir / "report.html").write_text("<html>stale</html>", encoding="utf-8")
     (run_dir / "report.pdf").write_bytes(b"stale pdf")
     _write_json(run_dir / "content_bundle.json", {"stale": True})
@@ -629,6 +652,11 @@ def test_retry_summarization_failure_does_not_expose_stale_downstream_artifacts(
     assert "report.html" not in diagnostics["artifact_paths"]
     assert "report.pdf" not in diagnostics["artifact_paths"]
     assert "content_bundle.json" not in diagnostics["artifact_paths"]
+    assert not (run_dir / "transcript.html").exists()
+    assert not (run_dir / "transcript.pdf").exists()
+    assert not (run_dir / "report.html").exists()
+    assert not (run_dir / "report.pdf").exists()
+    assert not (run_dir / "content_bundle.json").exists()
 
 
 def test_retry_render_failure_does_not_expose_stale_report_or_bundle(
