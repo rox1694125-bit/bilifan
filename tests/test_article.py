@@ -3,6 +3,7 @@ import subprocess
 
 import pytest
 
+import bilifan.article as article_module
 from bilifan.article import (
     ARTICLE_SCHEMA_VERSION,
     ArticleError,
@@ -12,6 +13,7 @@ from bilifan.article import (
     run_codex_article_generation,
 )
 from bilifan.bilibili import BilibiliPartRef
+from bilifan.summarizer import SummarizationError
 
 
 REF = BilibiliPartRef(
@@ -145,6 +147,15 @@ def test_normalize_transcript_article_rejects_unanchored_section():
         normalize_transcript_article(payload, ref=REF, transcript=_transcript(), chunks=_chunks())
 
 
+def test_normalize_transcript_article_rejects_timestamps_outside_source_segment_span():
+    payload = _article_payload()
+    payload["sections"][0]["start"] = 999
+    payload["sections"][0]["end"] = 1000
+
+    with pytest.raises(ArticleError, match="timestamp.*source segment"):
+        normalize_transcript_article(payload, ref=REF, transcript=_transcript(), chunks=_chunks())
+
+
 def test_run_codex_article_generation_invokes_codex_exec(tmp_path):
     calls = []
 
@@ -169,6 +180,31 @@ def test_run_codex_article_generation_invokes_codex_exec(tmp_path):
     assert calls[0]["cmd"][calls[0]["cmd"].index("--model") + 1] == "gpt-5.5"
     assert "强清洗" in calls[0]["input"]
     assert article["sections"][0]["title"] == "人工智能工作流"
+
+
+def test_run_codex_article_generation_wraps_codex_resolution_errors(tmp_path, monkeypatch):
+    def fake_resolver():
+        raise SummarizationError("missing /Users/jack/secret")
+
+    def fake_runner(cmd, **kwargs):
+        raise AssertionError("runner should not be called when codex cannot be resolved")
+
+    monkeypatch.setattr(article_module, "resolve_codex_executable", fake_resolver)
+
+    with pytest.raises(ArticleError) as exc_info:
+        run_codex_article_generation(
+            ref=REF,
+            metadata=_metadata(),
+            transcript=_transcript(),
+            chunk=_chunks()["chunks"][0],
+            run_dir=tmp_path,
+            model="gpt-5.5",
+            runner=fake_runner,
+        )
+
+    message = str(exc_info.value)
+    assert "missing" in message
+    assert "/Users/jack" not in message
 
 
 def test_generate_transcript_article_writes_stable_artifact(tmp_path):

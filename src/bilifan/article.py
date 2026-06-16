@@ -12,12 +12,17 @@ from jsonschema import ValidationError, validate
 
 from .bilibili import BilibiliPartRef
 from .diagnostics import redact_text
-from .summarizer import CODEX_EXEC_TIMEOUT_SECONDS, resolve_codex_executable
+from .summarizer import (
+    CODEX_EXEC_TIMEOUT_SECONDS,
+    SummarizationError,
+    resolve_codex_executable,
+)
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 ARTICLE_SCHEMA_VERSION = 1
 ARTICLE_ARTIFACT = "transcript_article.json"
+TIMESTAMP_EPSILON_SECONDS = 0.001
 ARTICLE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["schema_version", "source", "cleaning_level", "sections", "warnings"],
@@ -187,8 +192,12 @@ def run_codex_article_generation(
         schema_path = tmp_path / "transcript_article.schema.json"
         output_path = tmp_path / "transcript_article.json"
         _write_json(schema_path, ARTICLE_SCHEMA)
+        try:
+            codex_executable = resolve_codex_executable()
+        except SummarizationError as exc:
+            raise ArticleError(str(exc)) from exc
         cmd = [
-            resolve_codex_executable(),
+            codex_executable,
             "exec",
             "--ephemeral",
             "--json",
@@ -257,7 +266,8 @@ def normalize_transcript_article(
         raise ArticleError("transcript article contained no sections.")
 
     transcript_segment_count = _transcript_segment_count(transcript)
-    covered_source_indices = _chunk_source_indices(chunks)
+    source_segment_spans = _source_segment_spans(chunks, transcript)
+    covered_source_indices = set(source_segment_spans)
     sections: list[dict[str, Any]] = []
     for index, raw_section in enumerate(raw_sections, start=1):
         if not isinstance(raw_section, dict):
@@ -275,6 +285,13 @@ def normalize_transcript_article(
             source_end,
             transcript_segment_count=transcript_segment_count,
             covered_source_indices=covered_source_indices,
+        )
+        _validate_section_timestamp_span(
+            start,
+            end,
+            source_start=source_start,
+            source_end=source_end,
+            source_segment_spans=source_segment_spans,
         )
 
         section = {
@@ -393,14 +410,44 @@ def _transcript_segment_count(transcript: dict[str, Any]) -> int:
     return len(raw_segments) if isinstance(raw_segments, list) else 0
 
 
-def _chunk_source_indices(chunks: dict[str, Any]) -> set[int]:
-    indices: set[int] = set()
+def _source_segment_spans(
+    chunks: dict[str, Any],
+    transcript: dict[str, Any],
+) -> dict[int, tuple[float, float]]:
+    spans: dict[int, tuple[float, float]] = {}
     for chunk in _chunk_items(chunks):
         for segment in _prompt_segments(chunk):
             source_index = _int_value(segment.get("source_index"))
             if source_index is not None and source_index >= 0:
-                indices.add(source_index)
-    return indices
+                _add_segment_span(spans, source_index, segment["start"], segment["end"])
+    if spans:
+        return spans
+
+    raw_segments = transcript.get("segments")
+    if not isinstance(raw_segments, list):
+        return spans
+    for source_index, raw_segment in enumerate(raw_segments):
+        if not isinstance(raw_segment, dict):
+            continue
+        start = _float_value(raw_segment.get("start"))
+        end = _float_value(raw_segment.get("end"))
+        if start is None or end is None or end <= start:
+            continue
+        _add_segment_span(spans, source_index, start, end)
+    return spans
+
+
+def _add_segment_span(
+    spans: dict[int, tuple[float, float]],
+    source_index: int,
+    start: float,
+    end: float,
+) -> None:
+    existing = spans.get(source_index)
+    if existing is None:
+        spans[source_index] = (start, end)
+        return
+    spans[source_index] = (min(existing[0], start), max(existing[1], end))
 
 
 def _validate_source_segment_range(
@@ -422,6 +469,36 @@ def _validate_source_segment_range(
         source_start not in covered_source_indices or source_end not in covered_source_indices
     ):
         raise ArticleError("transcript article section source segment range was unanchored.")
+
+
+def _validate_section_timestamp_span(
+    start: float,
+    end: float,
+    *,
+    source_start: int | None,
+    source_end: int | None,
+    source_segment_spans: dict[int, tuple[float, float]],
+) -> None:
+    if source_start is None or source_end is None or not source_segment_spans:
+        return
+
+    cited_spans = [
+        span
+        for source_index, span in source_segment_spans.items()
+        if source_start <= source_index <= source_end
+    ]
+    if not cited_spans:
+        raise ArticleError("transcript article section source segment range was unanchored.")
+
+    span_start = min(span[0] for span in cited_spans)
+    span_end = max(span[1] for span in cited_spans)
+    if (
+        start < span_start - TIMESTAMP_EPSILON_SECONDS
+        or end > span_end + TIMESTAMP_EPSILON_SECONDS
+    ):
+        raise ArticleError(
+            "transcript article section timestamp was outside source segment time span."
+        )
 
 
 def _normalized_paragraphs(value: Any) -> list[dict[str, Any]]:
