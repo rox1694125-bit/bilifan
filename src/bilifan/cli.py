@@ -193,6 +193,7 @@ def serve(
         outputs=Path("./outputs"),
         token=token,
         open_browser=not no_open,
+        public_url=public_entry_url,
     )
     url = f"http://127.0.0.1:{selected_port}/"
     typer.echo(f"Local URL: {url}")

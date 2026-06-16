@@ -101,6 +101,34 @@ def test_config_and_consent_endpoints(tmp_path, monkeypatch):
     assert after["consent"]["accepted_via"] == "web-ui"
 
 
+def test_status_endpoint_reports_remote_entrypoint_and_current_job(tmp_path):
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        public_url="https://bilifan.buyaoting.top",
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/status", headers=_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["service"] == "bilifan-web-ui"
+    assert payload["access"]["token"] == "valid"
+    assert payload["entrypoint"] == {
+        "mode": "remote",
+        "public_url": "https://bilifan.buyaoting.top",
+    }
+    assert payload["current_job"] == {
+        "status": "idle",
+        "stage": "preflight",
+        "message": "",
+    }
+    assert isinstance(payload["started_at"], str)
+
+
 def test_query_token_works_for_config_and_file_route(tmp_path):
     outputs = tmp_path / "outputs"
     _make_run(outputs)

@@ -287,6 +287,35 @@ def render_app_html(token: str = "") -> str:
               background: #fff3f3;
               color: var(--danger);
             }
+            .service-status {
+              display: grid;
+              gap: 6px;
+              padding: 12px;
+              border: 1px solid var(--border);
+              border-radius: 6px;
+              background: var(--accent-soft);
+              color: var(--accent-strong);
+              font-size: 12px;
+            }
+            .service-status.warning {
+              border-color: #dfc286;
+              background: var(--paper);
+              color: var(--warn);
+            }
+            .service-status.error {
+              border-color: #e4b0b0;
+              background: #fff3f3;
+              color: var(--danger);
+            }
+            .service-status-title {
+              font-size: 13px;
+              font-weight: 800;
+            }
+            .service-status-meta {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 8px 12px;
+            }
             ul {
               list-style: none;
               padding: 0;
@@ -501,6 +530,10 @@ def render_app_html(token: str = "") -> str:
                     <p class="subtle">本地工作台</p>
                   </div>
                   <div class="panel-body stack">
+                    <div id="service-status" class="service-status">
+                      <div class="service-status-title">正在检查远程访问状态...</div>
+                    </div>
+
                     <div id="consent-banner" class="banner" role="status" aria-live="polite">
                       <div class="banner-row">
                         <div class="stack" style="gap:4px;">
@@ -686,6 +719,7 @@ def render_app_html(token: str = "") -> str:
               queueClearCompletedButton: document.getElementById("queue-clear-completed-button"),
               queueSummary: document.getElementById("queue-summary"),
               queueList: document.getElementById("queue-list"),
+              serviceStatus: document.getElementById("service-status"),
               jobMessage: document.getElementById("job-message"),
               consentBanner: document.getElementById("consent-banner"),
               consentButton: document.getElementById("consent-button"),
@@ -739,7 +773,7 @@ def render_app_html(token: str = "") -> str:
             }
 
             function markAuthExpired() {
-              const message = "当前 Web UI token 已失效，请使用 Terminal 最新打印的地址重新打开页面。";
+              const message = "当前 Web UI token 已失效：这通常是旧页面 token 或服务可能重启过，请刷新远程入口，或使用 Terminal 最新打印的地址重新打开页面。";
               state.authExpired = true;
               state.currentStatus = "idle";
               stopPolling();
@@ -751,6 +785,39 @@ def render_app_html(token: str = "") -> str:
             function setJobMessage(message, isError = false) {
               elements.jobMessage.textContent = message;
               elements.jobMessage.className = isError ? "status-line error" : "status-line";
+            }
+
+            function renderServiceStatus(data) {
+              const entrypoint = data && typeof data.entrypoint === "object" ? data.entrypoint : {};
+              const currentJob = data && typeof data.current_job === "object" ? data.current_job : {};
+              const isRemote = entrypoint.mode === "remote";
+              const publicUrl = typeof entrypoint.public_url === "string" && entrypoint.public_url
+                ? entrypoint.public_url
+                : location.origin;
+              const tokenLabel = data && data.access && data.access.token === "valid" ? "token 正常" : "token 未确认";
+              const jobStatus = statusLabel(currentJob.status || "idle");
+              const stage = stageLabel(currentJob.stage || "preflight");
+              elements.serviceStatus.className = "service-status";
+              elements.serviceStatus.innerHTML = `
+                <div class="service-status-title">${escapeHtml(isRemote ? "远程入口已连接" : "本机入口已连接")}</div>
+                <div class="service-status-meta">
+                  <span>${escapeHtml(isRemote ? "远程入口" : "本机入口")}：${escapeHtml(publicUrl)}</span>
+                  <span>${escapeHtml(tokenLabel)}</span>
+                  <span>当前任务：${escapeHtml(jobStatus)}</span>
+                  <span>阶段：${escapeHtml(stage)}</span>
+                </div>
+              `;
+            }
+
+            function renderServiceStatusWarning(message) {
+              elements.serviceStatus.className = state.authExpired ? "service-status error" : "service-status warning";
+              elements.serviceStatus.innerHTML = `
+                <div class="service-status-title">远程访问状态需要刷新</div>
+                <div class="service-status-meta">
+                  <span>${escapeHtml(message)}</span>
+                  <span>旧页面 token 或服务重启后，远程 tab 可能继续请求旧接口。</span>
+                </div>
+              `;
             }
 
             function updateStartButton() {
@@ -1163,6 +1230,19 @@ def render_app_html(token: str = "") -> str:
               }
             }
 
+            async function loadServiceStatus() {
+              if (state.authExpired) return;
+              try {
+                const data = await apiFetch("/api/status");
+                renderServiceStatus(data);
+              } catch (error) {
+                const message = state.authExpired
+                  ? "旧页面 token 已失效，请刷新远程入口。"
+                  : (error.message || "服务状态读取失败。");
+                renderServiceStatusWarning(message);
+              }
+            }
+
             async function loadCurrentJob() {
               if (state.authExpired) return;
               try {
@@ -1392,6 +1472,7 @@ def render_app_html(token: str = "") -> str:
             function init() {
               renderStageList([], "preflight", "idle");
               renderLinks({}, "");
+              loadServiceStatus();
               loadConfig().catch((error) => setJobMessage(error.message || "配置读取失败。", true));
               loadHistory();
               loadCurrentJob();
@@ -1500,6 +1581,7 @@ def render_app_html(token: str = "") -> str:
                 });
               });
               state.pollingTimer = setInterval(() => {
+                loadServiceStatus();
                 loadCurrentJob();
                 loadQueue();
               }, 1000);

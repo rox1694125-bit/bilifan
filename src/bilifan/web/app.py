@@ -88,11 +88,13 @@ def create_app(
     outputs: Path,
     token: str,
     open_browser: bool = True,
+    public_url: str | None = None,
     pipeline_runner=run_summarize_pipeline,
     retry_runner=retry_run,
     run_jobs_inline: bool = False,
 ) -> FastAPI:
     auth = TokenAuth(token)
+    started_at = datetime.now(timezone.utc).isoformat()
     jobs = JobManager(runner=pipeline_runner, run_jobs_inline=run_jobs_inline)
     queue = BatchQueueManager(
         runner=pipeline_runner,
@@ -120,6 +122,25 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         return render_app_html(token=token)
+
+    @app.get("/api/status")
+    def status(_: None = Depends(require_token)) -> dict[str, object]:
+        current = jobs.current().as_dict()
+        return {
+            "ok": True,
+            "service": "bilifan-web-ui",
+            "started_at": started_at,
+            "access": {"token": "valid"},
+            "entrypoint": {
+                "mode": "remote" if public_url else "local",
+                "public_url": public_url,
+            },
+            "current_job": {
+                "status": current.get("status") or "idle",
+                "stage": current.get("stage") or "preflight",
+                "message": current.get("message") or "",
+            },
+        }
 
     @app.get("/api/config")
     def get_config(_: None = Depends(require_token)) -> dict[str, object]:

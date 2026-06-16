@@ -103,6 +103,9 @@ Then open:
 https://bilifan.buyaoting.top
 ```
 
+After Access login, the current-task panel should show the remote access status,
+the public entrypoint, token state, and the current job stage.
+
 Stop both sessions:
 
 ```bash
@@ -144,7 +147,8 @@ export BILIFAN_PYTHON=.venv/bin/python
 - Public page asks for Access login repeatedly: check the Access application
   domain and allowed email policy.
 - Bilifan API returns 403: refresh the page from the current server instance.
-  Old tabs contain an old local token after restart.
+  Old tabs contain an old local token after restart. The Web UI status strip
+  should explain this as a stale page/token problem, not a failed video task.
 - Video tasks fail remotely but work locally: the remote browser only controls
   the UI. All downloads, Whisper, Codex, and file writes still happen on the Mac
   running Bilifan.

@@ -66,6 +66,7 @@ def test_render_app_html_contains_workbench_contract():
         "start-button",
         "advanced-settings",
         "current-options-summary",
+        "service-status",
         "stage-list",
         "result-links",
         "failure-panel",
@@ -81,6 +82,7 @@ def test_render_app_html_contains_workbench_contract():
         "X-Bilifan-Token",
         "只影响 Whisper；已有字幕默认优先使用。",
         "/api/config",
+        "/api/status",
         "/api/history",
         "/api/jobs",
         "/api/jobs/current",
@@ -174,10 +176,76 @@ def test_render_app_html_contains_frontend_state_guards():
     )
     assert "markAuthExpired" in html
     assert "token 已失效" in html
+    assert "旧页面 token" in html
+    assert "服务可能重启过" in html
     assert "请输入 B 站 URL。" in html
     assert "if (!payload.url)" in html
     assert "await loadConfig();" in html
     assert 'input[type="url"]' in html
+
+
+def test_render_app_script_displays_remote_service_status():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        location_origin="https://bilifan.buyaoting.top",
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/status") {
+            return jsonResponse({
+              ok: true,
+              service: "bilifan-web-ui",
+              started_at: "2026-06-16T04:30:00+00:00",
+              access: { token: "valid" },
+              entrypoint: {
+                mode: "remote",
+                public_url: "https://bilifan.buyaoting.top"
+              },
+              current_job: {
+                status: "running",
+                stage: "audio",
+                message: "Downloading audio."
+              }
+            });
+          }
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "AI 自动判断" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "running",
+              stage: "audio",
+              message: "Downloading audio.",
+              progress: [{ stage: "audio", status: "running" }],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 0, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+              visible_counts: { queued: 0, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+              total_items: 0,
+              hidden_completed: 0,
+              hidden_replaced: 0,
+              items: []
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(fetchCalls.some((call) => call.path === "/api/status"));
+        assert(elements["service-status"].innerHTML.includes("远程入口"));
+        assert(elements["service-status"].innerHTML.includes("https://bilifan.buyaoting.top"));
+        assert(elements["service-status"].innerHTML.includes("token 正常"));
+        assert(elements["service-status"].innerHTML.includes("当前任务：运行中"));
+        assert(elements["service-status"].innerHTML.includes("下载音频"));
+        """,
+    )
 
 
 def test_current_task_advanced_options_are_collapsed_by_default():
@@ -1238,6 +1306,7 @@ def _run_node_ui_harness(
     fetch_logic,
     assertions,
     location_search="?token=test-token",
+    location_origin="http://127.0.0.1:8765",
 ):
     if shutil.which("node") is None:
         pytest.skip("node is required for UI behavior tests")
@@ -1307,7 +1376,7 @@ def _run_node_ui_harness(
         return elements[id];
       }}
     }};
-    global.location = {{ search: {json.dumps(location_search)}, origin: "http://127.0.0.1:8765" }};
+    global.location = {{ search: {json.dumps(location_search)}, origin: {json.dumps(location_origin)} }};
     global.window = {{ location: global.location }};
     global.setInterval = (callback, interval) => {{
       global.__poll = {{ callback, interval }};

@@ -1153,11 +1153,12 @@ def test_serve_prints_url_and_starts_uvicorn(monkeypatch):
         calls["generate_token"] = True
         return "fixed-token"
 
-    def fake_create_app(*, outputs, token, open_browser):
+    def fake_create_app(*, outputs, token, open_browser, public_url=None):
         calls["create_app"] = {
             "outputs": outputs,
             "token": token,
             "open_browser": open_browser,
+            "public_url": public_url,
         }
         return "app-instance"
 
@@ -1193,6 +1194,7 @@ def test_serve_prints_url_and_starts_uvicorn(monkeypatch):
         "outputs": cli.Path("./outputs"),
         "token": "fixed-token",
         "open_browser": True,
+        "public_url": None,
     }
     assert calls["find_port"] == {
         "host": "127.0.0.1",
@@ -1212,11 +1214,12 @@ def test_serve_no_open_does_not_open_browser(monkeypatch):
 
     monkeypatch.setattr(cli, "generate_token", lambda: "fixed-token")
 
-    def fake_create_app(*, outputs, token, open_browser):
+    def fake_create_app(*, outputs, token, open_browser, public_url=None):
         calls["create_app"] = {
             "outputs": outputs,
             "token": token,
             "open_browser": open_browser,
+            "public_url": public_url,
         }
         return "app-instance"
 
@@ -1244,6 +1247,7 @@ def test_serve_no_open_does_not_open_browser(monkeypatch):
         "outputs": cli.Path("./outputs"),
         "token": "fixed-token",
         "open_browser": False,
+        "public_url": None,
     }
     assert "schedule_browser_open" not in calls
     assert calls["uvicorn_run"] == {
@@ -1260,7 +1264,11 @@ def test_serve_public_url_prints_remote_entrypoint_without_changing_bind(
     calls: dict[str, object] = {}
 
     monkeypatch.setattr(cli, "generate_token", lambda: "fixed-token")
-    monkeypatch.setattr(cli, "create_app", lambda **kwargs: "app-instance")
+    monkeypatch.setattr(
+        cli,
+        "create_app",
+        lambda **kwargs: calls.setdefault("create_app", kwargs) and "app-instance",
+    )
     monkeypatch.setattr(cli, "_find_available_port", lambda host, preferred_port: 8792)
     monkeypatch.setattr(cli.uvicorn, "run", lambda app_instance, **kwargs: calls.update(kwargs))
 
@@ -1279,6 +1287,7 @@ def test_serve_public_url_prints_remote_entrypoint_without_changing_bind(
     assert result.exit_code == 0
     assert "Local URL: http://127.0.0.1:8792/" in result.output
     assert "Public URL: https://bilifan.buyaoting.top/" in result.output
+    assert calls["create_app"]["public_url"] == "https://bilifan.buyaoting.top/"
     assert calls["host"] == "127.0.0.1"
     assert calls["port"] == 8792
 
