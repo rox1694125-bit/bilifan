@@ -5,8 +5,9 @@ Bilifan is a local Bilibili video learning-note generator.
 The current implementation is a local MVP. It accepts Bilibili or YouTube public
 video URLs, processes only the current P/video, prefers platform subtitles,
 downloads audio only when Whisper is needed, chunks the transcript, asks
-`codex exec` for structured learning-note chapters, and renders an offline
-`report.html`. If Chrome is available it also tries to export `report.pdf`.
+`codex exec` for a cleaned transcript article and structured learning-note
+chapters, and renders offline `transcript.html` and `report.html`. If Chrome is
+available it also tries to export `transcript.pdf` and `report.pdf`.
 
 ## Boundaries
 
@@ -16,7 +17,8 @@ downloads audio only when Whisper is needed, chunks the transcript, asks
 - Bilifan does not bypass login, payment, region, risk-control, DRM, or access controls.
 - You are responsible for having permission to access and summarize the content.
 - If you provide cookies, they must only be used locally for content your account can already view.
-- Codex-backed summarization sends transcript chunks to the model service configured in your local Codex environment.
+- Codex-backed article generation and summarization send transcript/article
+  content to the model service configured in your local Codex environment.
 - SVG diagrams and frame screenshots are experimental helpers, not stable
   evidence. The Web UI includes a local sequential task center for batch jobs.
 
@@ -68,20 +70,17 @@ outputs/
     latest.json
     runs/
       <timestamp>/
-        diagnostics.json
-        metadata.json
-        transcript.json
-        transcript.txt
-        transcript.srt
-        chunks.json
-        partial_summaries/
-          chunk_001.json
-        chapters.json
-        notes.md
+        transcript.html
         report.html
+        transcript.pdf
         report.pdf
-        content_bundle.json
-        nabaichuan.jsonl
+        content_bundle.json        # hidden machine contract
+        metadata.json              # hidden internal
+        transcript.json            # hidden raw transcript
+        transcript_article.json    # hidden article source
+        chunks.json                # hidden internal
+        chapters.json              # hidden report summary
+        diagnostics.json           # hidden internal
         media/
           audio.mp3        # present only when audio was needed
 ```
@@ -92,20 +91,20 @@ The command prints a relative run path such as:
 Prepared Bilifan run: BV..._p2/runs/<timestamp>
 ```
 
-`report.html` is the success artifact. `report.pdf` is best effort unless
-`--require-pdf` is passed. Successful transcript and summarization stages may
-also write `transcript.txt`, `transcript.srt`, and `notes.md` for easier reading
-or reuse outside Bilifan. Successful runs also publish the final audio as
-`media/audio.mp3`; incomplete runs keep intermediate audio under the hidden
-`.bilifan/cache/` directory.
+`transcript.html` is the cleaned transcript article for reading. `report.html`
+is the main report. `transcript.pdf` and `report.pdf` are best effort unless
+`--require-pdf` is passed. Internal JSON files remain in the run directory for
+debugging and retry, but ordinary Web result cards only show the two HTML files,
+the available PDFs, and the local folder entry.
 
 ## Content Bundle
 
-Successful runs write `content_bundle.json` and `nabaichuan.jsonl`.
+Successful runs write `content_bundle.json`.
 `content_bundle.json` is the stable integration artifact for downstream tools.
-It contains source metadata, chapter summaries, transcript segments, artifact
-links, and provenance without local absolute paths. `nabaichuan.jsonl` is the
-ready-to-import JSONL export generated from that bundle.
+It contains source metadata, the cleaned transcript article, chapter summaries,
+transcript provenance, artifact links, and provenance without local absolute
+paths. `nabaichuan.jsonl` is produced only by explicit single-run or batch export
+from that bundle, not by every successful run.
 
 ## Retry
 
@@ -129,9 +128,9 @@ cookies, live streams, and Shorts-specific behavior are outside this phase.
 
 ## Nabaichuan
 
-Successful CLI and Web UI runs automatically generate `nabaichuan.jsonl`.
-External systems should consume the generated JSONL file; Bilifan does not write
-directly into Nabaichuan or any other external system.
+CLI and Web UI runs do not automatically generate `nabaichuan.jsonl`. Use the
+single-run or batch export action when you need a ready-to-import JSONL file.
+Bilifan does not write directly into Nabaichuan or any other external system.
 
 See `docs/nabaichuan-integration.md` for the record schema and manual JSONL
 converter:
@@ -179,8 +178,10 @@ Current MVP boundaries:
   access should be provided by a tunnel or private network that forwards to the
   local server.
 - Web UI job outputs are always read from and written to `./outputs`.
-- The Web UI can show HTML/PDF/TXT/SRT/MD/Bundle/audio export links and can ask
-  macOS to open a run's local folder.
+- The Web UI shows the cleaned transcript article, main report, available PDFs,
+  and can ask macOS to open a run's local folder. Machine-readable artifacts are
+  hidden from ordinary result cards but remain available through token-protected
+  direct file access.
 - The Web UI can export a single successful run to `nabaichuan.jsonl` and
   batch-export all successful history runs to a local JSONL file plus a
   `.report.json` summary.

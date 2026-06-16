@@ -346,25 +346,70 @@ def test_pipeline_can_prepare_youtube_run_with_mocked_adapter(tmp_path, monkeypa
             "chunk_count": 1,
         },
     )
-    monkeypatch.setattr(
-        pipeline_module,
-        "summarize_chunks",
-        lambda **kwargs: {
-            "style": "学习笔记",
-            "chapters": [
+    def fake_generate_transcript_article(*, ref, transcript, chunks, run_dir, **kwargs):
+        article = {
+            "schema_version": 1,
+            "source": transcript["source"],
+            "cleaning_level": "strong",
+            "sections": [
                 {
-                    "chapter_index": 1,
+                    "section_index": 1,
                     "title": "Intro",
                     "start": 0,
                     "end": 3,
-                    "timestamp_url": kwargs["ref"].timestamp_url(0),
+                    "timestamp_url": ref.timestamp_url(0),
+                    "source_segment_start_index": 0,
+                    "source_segment_end_index": 0,
+                    "paragraphs": [{"text": "Hello", "emphasis": []}],
+                    "key_terms": [],
+                    "warnings": [],
+                }
+            ],
+            "warnings": [],
+        }
+        (run_dir / "transcript_article.json").write_text(
+            json.dumps(article, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return article
+
+    def fake_summarize_article_sections(*, ref, article, style="学习笔记", **kwargs):
+        return {
+            "style": style,
+            "chapters": [
+                {
+                    "chapter_index": 1,
+                    "title": article["sections"][0]["title"],
+                    "start": 0,
+                    "end": 3,
+                    "timestamp_url": ref.timestamp_url(0),
                     "summary": "Summary",
                     "key_points": [],
                     "quotes": [],
                     "visual_anchors": [],
                 }
             ],
-        },
+        }
+
+    def fake_render_transcript_html(*, ref, metadata, article, run_dir):
+        html_path = run_dir / "transcript.html"
+        html_path.write_text("<html>transcript</html>", encoding="utf-8")
+        return html_path
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "generate_transcript_article",
+        fake_generate_transcript_article,
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "summarize_article_sections",
+        fake_summarize_article_sections,
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "render_transcript_html",
+        fake_render_transcript_html,
     )
 
     def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
@@ -373,11 +418,6 @@ def test_pipeline_can_prepare_youtube_run_with_mocked_adapter(tmp_path, monkeypa
         return html_path
 
     monkeypatch.setattr(pipeline_module, "render_report_html", fake_render_report_html)
-    monkeypatch.setattr(
-        pipeline_module,
-        "export_report_pdf",
-        lambda *, html_path, pdf_path: pdf_path.write_bytes(b"%PDF") or pdf_path,
-    )
 
     result = run_summarize_pipeline(
         PipelineRequest(
