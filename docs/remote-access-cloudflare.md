@@ -84,17 +84,17 @@ anyone who can load the hostname.
 
 ## Daily Startup
 
-Recommended: start both long-running processes in detached `tmux` sessions:
+Recommended daily entrypoint:
 
 ```bash
 cd /Volumes/mySSD/projects/bilifan
-scripts/start-bilifan-remote-tmux.sh
+scripts/bilifan-remote.sh restart
 ```
 
-Check sessions:
+Check status:
 
 ```bash
-tmux list-sessions
+scripts/bilifan-remote.sh status
 ```
 
 Then open:
@@ -104,13 +104,19 @@ https://bilifan.buyaoting.top
 ```
 
 After Access login, the current-task panel should show the remote access status,
-the public entrypoint, token state, and the current job stage.
+the public entrypoint, and the current job stage.
 
 Stop both sessions:
 
 ```bash
 cd /Volumes/mySSD/projects/bilifan
-scripts/stop-bilifan-remote-tmux.sh
+scripts/bilifan-remote.sh stop
+```
+
+Inspect recent output:
+
+```bash
+scripts/bilifan-remote.sh logs
 ```
 
 Foreground alternative:
@@ -146,9 +152,10 @@ export BILIFAN_PYTHON=.venv/bin/python
   logs and the DNS route.
 - Public page asks for Access login repeatedly: check the Access application
   domain and allowed email policy.
-- Bilifan API returns 403: refresh the page from the current server instance.
-  Old tabs contain an old local token after restart. The Web UI status strip
-  should explain this as a stale page/token problem, not a failed video task.
+- Bilifan API returns 403: this usually means the server was restarted and an
+  old browser tab kept polling with an old local token. Reopen
+  `https://bilifan.buyaoting.top` or refresh the current page; this is not a
+  failed video task.
 - Video tasks fail remotely but work locally: the remote browser only controls
   the UI. All downloads, Whisper, Codex, and file writes still happen on the Mac
   running Bilifan.

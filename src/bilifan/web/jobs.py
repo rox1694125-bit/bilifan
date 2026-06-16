@@ -354,8 +354,36 @@ def explain_failure(
     message: str,
     warnings: list[str],
 ) -> dict[str, str]:
-    normalized = f"{stage} {message} {' '.join(warnings)}".lower()
-    if "codex exec failed to start" in normalized or "no such file or directory: 'codex'" in normalized:
+    stage_name = (stage or "").lower()
+    message_normalized = (message or "").lower()
+    warnings_normalized = " ".join(warnings).lower()
+    normalized = f"{stage_name} {message_normalized} {warnings_normalized}"
+    if stage_name == "bundle" or "bundle_failed" in warnings_normalized or "export failed" in message_normalized:
+        return {
+            "title": "结构化导出失败",
+            "cause": "HTML/PDF 通常已经生成，但 Bundle 或纳百川导出文件写出失败。",
+            "next_action": "先使用 HTML/PDF 笔记；如果需要下游导出，重试结构化导出或检查输出目录权限。",
+        }
+    pdf_message_terms = [
+        "pdfexporterror",
+        "chrome pdf export",
+        "chrome executable",
+        "pdf export",
+    ]
+    if any(term in message_normalized for term in pdf_message_terms) or (
+        stage_name == "render" and ("pdf_failed" in warnings_normalized or "pdf" in message_normalized)
+    ):
+        return {
+            "title": "PDF 生成失败",
+            "cause": "HTML 通常已经可用，但 Chrome 导出 PDF 时失败或超时。",
+            "next_action": "先打开 HTML 笔记；如果勾选了“必须 PDF”，可以取消后重试，或检查本机 Chrome 是否可用。",
+        }
+    if (
+        "codex exec failed to start" in normalized
+        or "no such file or directory: 'codex'" in normalized
+        or "codex cli executable not found" in normalized
+        or "bilifan_codex_bin" in normalized
+    ):
         return {
             "title": "Codex CLI 未找到",
             "cause": "系统找不到 codex 命令，当前无法调用 Codex 做总结。",
@@ -367,11 +395,43 @@ def explain_failure(
             "cause": "下载到的音频时长和视频元数据差异超过阈值。",
             "next_action": "换一个公开视频重试；如果视频需要登录或被风控，先配置 cookies 后再跑。",
         }
-    if "stream download failed" in normalized or "timed out" in normalized:
+    audio_terms = [
+        "audio stream",
+        "stream download failed",
+        "yt-dlp audio download failed",
+        "playurl",
+        "no audio streams",
+        "ffmpeg failed",
+        "ffprobe failed",
+        "download timed out",
+        "timed out",
+        "media_failed",
+    ]
+    if stage_name in {"audio", "media"} and any(term in normalized for term in audio_terms):
         return {
             "title": "音频下载超时或中断",
             "cause": "B 站音频流读取失败，可能是网络、风控或视频访问限制。",
             "next_action": "稍后重试；如果一直失败，尝试使用浏览器 cookies。",
+        }
+    if "openai-whisper is not installed" in normalized or "no module named 'whisper'" in normalized:
+        return {
+            "title": "Whisper 未安装",
+            "cause": "这个视频没有可直接使用的字幕，需要本地 Whisper 转写，但当前环境没有安装 Whisper。",
+            "next_action": "安装项目依赖后重启 Web UI；如果视频有字幕，也可以关闭“强制重新转写”后重试。",
+        }
+    transcript_terms = [
+        "transcript_failed",
+        "whisper transcription failed",
+        "no usable",
+        "subtitle download failed",
+        "transcript appears incomplete",
+        "transcript_incomplete",
+    ]
+    if stage_name == "transcript" and any(term in normalized for term in transcript_terms):
+        return {
+            "title": "逐字稿获取失败",
+            "cause": "没有拿到可用字幕，或本地 Whisper 转写结果不完整。",
+            "next_action": "优先换一个有字幕的视频重试；如果必须转写，确认本地 Whisper 可用后再试。",
         }
     if "timestamp" in normalized or "anchored" in normalized:
         return {
@@ -379,7 +439,38 @@ def explain_failure(
             "cause": "模型返回的章节时间戳没有落在逐字稿片段范围内。",
             "next_action": "使用重试总结；如果反复失败，换短一点的视频或减少并发操作。",
         }
-    if "unsupported" in normalized or "invalid" in normalized and "url" in normalized:
+    codex_auth_terms = [
+        "401",
+        "403",
+        "unauthorized",
+        "authentication",
+        "not authenticated",
+        "auth failed",
+        "login required",
+        "please login",
+        "sign in",
+        "invalid access token",
+        "expired access token",
+        "access token expired",
+        "access token is invalid",
+        "invalid token",
+        "expired token",
+    ]
+    if "codex exec failed" in normalized and any(term in normalized for term in codex_auth_terms):
+        return {
+            "title": "Codex 账号认证失败",
+            "cause": "Codex CLI 能启动，但账号认证、登录态或访问权限失败。",
+            "next_action": "在 Terminal 里重新确认 Codex 登录状态，然后回到 Bilifan 重试总结。",
+        }
+    if "codex exec failed" in normalized or (
+        stage_name == "summarization" and "summarization_failed" in normalized
+    ):
+        return {
+            "title": "Codex 总结失败",
+            "cause": "逐字稿已经准备好，但 Codex 生成总结时失败。",
+            "next_action": "优先使用重试总结；如果仍失败，检查 Codex CLI 输出、账号状态或模型可用性。",
+        }
+    if "unsupported" in normalized or ("invalid" in normalized and "url" in normalized):
         return {
             "title": "视频链接不支持",
             "cause": "当前链接不是 Bilifan 支持的 B 站当前 P 或公开视频链接。",

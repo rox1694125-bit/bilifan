@@ -1085,22 +1085,106 @@ def test_job_pipeline_run_error_exposes_friendly_error(tmp_path, monkeypatch):
     assert state["retry_actions"] == ["summarization"]
 
 
-def test_explain_failure_classifies_audio_and_timestamp_errors():
-    audio = explain_failure(
-        stage="audio",
-        message="Bilibili audio stream download failed.",
-        warnings=[],
-    )
-    timestamp = explain_failure(
-        stage="summarization",
-        message="chunk summary chapter start was not anchored to a transcript segment.",
-        warnings=[],
-    )
+@pytest.mark.parametrize(
+    ("stage", "message", "warnings", "title", "next_action_fragment"),
+    [
+        (
+            "audio",
+            "Bilibili audio stream download failed.",
+            [],
+            "音频下载超时或中断",
+            "cookies",
+        ),
+        (
+            "media",
+            "yt-dlp audio download failed with exit code 1.",
+            ["media_failed"],
+            "音频下载超时或中断",
+            "cookies",
+        ),
+        (
+            "media",
+            "playurl API returned no audio streams.",
+            ["media_failed"],
+            "音频下载超时或中断",
+            "cookies",
+        ),
+        (
+            "media",
+            "ffprobe failed to read audio duration.",
+            ["media_failed"],
+            "音频下载超时或中断",
+            "cookies",
+        ),
+        (
+            "render",
+            "Chrome PDF export timed out after 60s.",
+            ["pdf_failed"],
+            "PDF 生成失败",
+            "必须 PDF",
+        ),
+        (
+            "summarization",
+            "codex exec failed with exit code 1: 401 Unauthorized",
+            ["summarization_failed"],
+            "Codex 账号认证失败",
+            "Codex",
+        ),
+        (
+            "summarization",
+            "codex exec failed with exit code 1: max tokens exceeded",
+            ["summarization_failed"],
+            "Codex 总结失败",
+            "重试总结",
+        ),
+        (
+            "summarization",
+            "Codex CLI executable not found: /bad/codex",
+            [],
+            "Codex CLI 未找到",
+            "Terminal",
+        ),
+        (
+            "transcript",
+            "openai-whisper is not installed.",
+            ["transcript_failed"],
+            "Whisper 未安装",
+            "安装",
+        ),
+        (
+            "transcript",
+            "Bilibili subtitle download failed and transcript appears incomplete.",
+            ["transcript_failed"],
+            "逐字稿获取失败",
+            "Whisper",
+        ),
+        (
+            "summarization",
+            "chunk summary chapter start was not anchored to a transcript segment.",
+            [],
+            "总结时间戳校验失败",
+            "重试总结",
+        ),
+        (
+            "bundle",
+            "nabaichuan export failed while writing content bundle.",
+            ["pdf_failed", "bundle_failed"],
+            "结构化导出失败",
+            "HTML/PDF",
+        ),
+    ],
+)
+def test_explain_failure_classifies_common_recoverable_failures(
+    stage,
+    message,
+    warnings,
+    title,
+    next_action_fragment,
+):
+    explanation = explain_failure(stage=stage, message=message, warnings=warnings)
 
-    assert audio["title"] == "音频下载超时或中断"
-    assert "cookies" in audio["next_action"].lower()
-    assert timestamp["title"] == "总结时间戳校验失败"
-    assert "重试总结" in timestamp["next_action"]
+    assert explanation["title"] == title
+    assert next_action_fragment.lower() in explanation["next_action"].lower()
 
 
 def test_retry_failed_run_from_web_api(tmp_path, monkeypatch):

@@ -186,8 +186,8 @@ def test_render_app_html_contains_frontend_state_guards():
     )
     assert "markAuthExpired" in html
     assert "当前页面访问已过期" in html
-    assert "服务重启后旧页面仍在刷新" in html
-    assert "重新打开服务启动时显示的新地址" in html
+    assert "服务可能已重启" in html
+    assert "重新打开远程入口或刷新当前页面" in html
     assert "请输入 B 站 URL。" in html
     assert "if (!payload.url)" in html
     assert "await loadConfig();" in html
@@ -250,7 +250,8 @@ def test_render_app_script_displays_remote_service_status():
         assertions="""
         assert(fetchCalls.some((call) => call.path === "/api/status"));
         assert(elements["service-status"].innerHTML.includes("远程访问正常"));
-        assert(!elements["service-status"].innerHTML.includes("https://bilifan.buyaoting.top"));
+        assert(elements["service-status"].innerHTML.includes("https://bilifan.buyaoting.top"));
+        assert(elements["service-status"].innerHTML.includes("隧道状态由本机脚本检查"));
         assert(!elements["service-status"].innerHTML.includes("token 正常"));
         assert(elements["service-status"].innerHTML.includes("当前任务：运行中"));
         assert(elements["service-status"].innerHTML.includes("下载音频"));
@@ -932,6 +933,116 @@ def test_render_app_script_queue_item_uses_video_title_as_primary_label():
     )
 
 
+def test_render_app_script_queue_failed_item_shows_friendly_error():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "AI 自动判断" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 0, running: 0, succeeded: 0, failed: 1, canceled: 0 },
+              visible_counts: { queued: 0, running: 0, succeeded: 0, failed: 1, canceled: 0 },
+              total_items: 1,
+              hidden_completed: 0,
+              hidden_replaced: 0,
+              items: [{
+                job_id: "job-1",
+                title: "失败的视频",
+                status: "failed",
+                stage: "media",
+                message: "yt-dlp audio download failed with exit code 1.",
+                request: { url: "https://www.bilibili.com/video/BV1abcDEF12G?p=1" },
+                friendly_error: {
+                  title: "音频下载超时或中断",
+                  cause: "B 站音频流读取失败，可能是网络、风控或视频访问限制。",
+                  next_action: "稍后重试；如果一直失败，尝试使用浏览器 cookies。"
+                },
+                artifacts: {}
+              }]
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["queue-list"].innerHTML.includes("失败的视频"));
+        assert(elements["queue-list"].innerHTML.includes("下载音频"));
+        assert(elements["queue-list"].innerHTML.includes("音频下载超时或中断"));
+        assert(elements["queue-list"].innerHTML.includes("B 站音频流读取失败"));
+        assert(elements["queue-list"].innerHTML.includes("尝试使用浏览器 cookies"));
+        assert(elements["queue-list"].innerHTML.includes("重新排队"));
+        assert(!elements["queue-list"].innerHTML.includes("阶段: media"));
+        """,
+    )
+
+
+def test_render_app_script_stage_list_includes_active_media_stage_without_progress():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "AI 自动判断" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "failed",
+              stage: "media",
+              message: "yt-dlp audio download failed with exit code 1.",
+              progress: [],
+              artifacts: {},
+              run_key: null,
+              friendly_error: {
+                title: "音频下载超时或中断",
+                cause: "B 站音频流读取失败。",
+                next_action: "稍后重试。"
+              },
+              retry_actions: []
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 0, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+              visible_counts: { queued: 0, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+              total_items: 0,
+              hidden_completed: 0,
+              hidden_replaced: 0,
+              items: []
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["stage-list"].innerHTML.includes("下载音频"));
+        assert(elements["stage-list"].innerHTML.includes("失败 当前"));
+        assert(elements["stage-list"].innerHTML.includes("任务: 失败"));
+        assert(!elements["stage-list"].innerHTML.includes(">media<"));
+        """,
+    )
+
+
 def test_render_app_script_task_center_shows_current_job_item():
     script = _extract_inline_script(render_app_html())
 
@@ -1515,6 +1626,8 @@ def test_render_app_script_stops_polling_when_token_is_invalid():
         assert.equal(elements["start-button"].disabled, true);
         assert(elements["job-message"].className.includes("error"));
         assert(elements["job-message"].textContent.includes("页面访问已过期"));
+        assert(elements["job-message"].textContent.includes("服务可能已重启"));
+        assert(elements["job-message"].textContent.includes("重新打开远程入口"));
 
         await global.__poll.callback();
         await flush();

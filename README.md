@@ -210,7 +210,7 @@ Cloudflare Tunnel plus Cloudflare Access:
 
 ```bash
 cd /Volumes/mySSD/projects/bilifan
-scripts/start-bilifan-remote-tmux.sh
+scripts/bilifan-remote.sh restart
 ```
 
 Default public URL:
@@ -222,6 +222,14 @@ https://bilifan.buyaoting.top
 See `docs/remote-access-cloudflare.md` for the required Cloudflare Tunnel, DNS,
 and Access configuration. Do not expose Bilifan by router port forwarding or
 `--host 0.0.0.0`.
+
+Daily remote commands:
+
+```bash
+scripts/bilifan-remote.sh status
+scripts/bilifan-remote.sh logs
+scripts/bilifan-remote.sh stop
+```
 
 ## Runtime Requirements
 

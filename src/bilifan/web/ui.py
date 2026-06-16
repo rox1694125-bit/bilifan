@@ -725,6 +725,7 @@ def render_app_html(token: str = "") -> str:
               preflight: "准备检查",
               metadata: "读取视频信息",
               audio: "下载音频",
+              media: "下载音频",
               transcript: "获取逐字稿",
               chunking: "拆分内容",
               summarization: "生成总结",
@@ -736,6 +737,7 @@ def render_app_html(token: str = "") -> str:
               preflight: "检查参数、本地依赖和运行条件",
               metadata: "读取标题、作者、时长、分 P 和字幕信息",
               audio: "下载当前视频音频并校验时长",
+              media: "下载当前视频音频并校验时长",
               transcript: "优先使用已有字幕，必要时调用 Whisper",
               chunking: "按时长和上下文拆成可总结片段",
               summarization: "调用 Codex 生成学习笔记内容",
@@ -839,7 +841,7 @@ def render_app_html(token: str = "") -> str:
             }
 
             function markAuthExpired() {
-              const message = "当前页面访问已过期：通常是服务重启后旧页面仍在刷新，请重新打开服务启动时显示的新地址。";
+              const message = "当前页面访问已过期：服务可能已重启，旧页面仍在刷新。请重新打开远程入口或刷新当前页面。";
               state.authExpired = true;
               state.currentStatus = "idle";
               stopPolling();
@@ -860,6 +862,10 @@ def render_app_html(token: str = "") -> str:
               const jobStatus = statusLabel(currentJob.status || "idle");
               const stage = stageLabel(currentJob.stage || "preflight");
               const activeJob = currentJob.status && currentJob.status !== "idle";
+              const publicUrl = isRemote && typeof entrypoint.public_url === "string" ? entrypoint.public_url : "";
+              const remoteMeta = publicUrl
+                ? `<span>远程入口：<a href="${escapeAttr(publicUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(publicUrl)}</a></span><span>隧道状态由本机脚本检查</span>`
+                : "";
               const activity = activeJob
                 ? `当前任务：${jobStatus} · ${stage}`
                 : "当前没有运行中的任务";
@@ -868,6 +874,7 @@ def render_app_html(token: str = "") -> str:
                 <div class="service-status-title">${escapeHtml(isRemote ? "远程访问正常" : "本机访问正常")}</div>
                 <div class="service-status-meta">
                   <span>${escapeHtml(activity)}</span>
+                  ${remoteMeta}
                 </div>
               `;
             }
@@ -900,7 +907,7 @@ def render_app_html(token: str = "") -> str:
                 return;
               }
               const hasProgress = Array.isArray(progress) && progress.length;
-              const items = hasProgress ? progress : STAGES.map((stage) => ({ stage, status: "pending" }));
+              const items = hasProgress ? progress : fallbackStageItems(activeStage, status);
               const activeStageElapsed = readableDuration(timing.stage_elapsed_seconds);
               elements.stageList.innerHTML = items.map((item) => {
                 const stage = typeof item.stage === "string" ? item.stage : "";
@@ -921,6 +928,24 @@ def render_app_html(token: str = "") -> str:
                   </li>
                 `;
               }).join("");
+            }
+
+            function fallbackStageItems(activeStage, jobStatus) {
+              const items = STAGES.map((stage) => ({
+                stage,
+                status: stage === activeStage ? jobStatus : "pending",
+              }));
+              if (activeStage && !STAGES.includes(activeStage)) {
+                const activeItem = { stage: activeStage, status: jobStatus };
+                const insertAfter = activeStage === "media" ? "audio" : "";
+                const insertAt = insertAfter ? items.findIndex((item) => item.stage === insertAfter) + 1 : items.length;
+                if (insertAt > 0) {
+                  items.splice(insertAt, 0, activeItem);
+                } else {
+                  items.push(activeItem);
+                }
+              }
+              return items;
             }
 
             function renderTaskLiveness(data) {
@@ -1197,6 +1222,13 @@ def render_app_html(token: str = "") -> str:
                 const sourceLabel = item.source === "current" ? "当前任务" : "队列任务";
                 const transcriptMeta = transcriptSourceMeta(item);
                 const timingMeta = taskTimingMeta(item);
+                const friendly = item.friendly_error && typeof item.friendly_error === "object" ? item.friendly_error : null;
+                const failureDetail = friendly
+                  ? `<div class="history-meta"><span>${escapeHtml(friendly.title || "任务失败")}</span><span>${escapeHtml(friendly.cause || "")}</span><span>${escapeHtml(friendly.next_action || "")}</span></div>`
+                  : "";
+                const messageMarkup = friendly
+                  ? ""
+                  : `<div class="history-meta"><span>${escapeHtml(item.message || "")}</span></div>`;
                 return `
                   <li class="history-item">
                     <div class="history-item-title">${escapeHtml(displayTitle)}</div>
@@ -1208,7 +1240,8 @@ def render_app_html(token: str = "") -> str:
                       ${timingMeta}
                       ${compactUrl ? `<span class="queue-url">${escapeHtml(compactUrl)}</span>` : ""}
                     </div>
-                    <div class="history-meta"><span>${escapeHtml(item.message || "")}</span></div>
+                    ${messageMarkup}
+                    ${failureDetail}
                     ${queueControls.length ? `<div class="action-groups">${queueControls.join("")}</div>` : ""}
                     ${actionMarkup}
                   </li>
