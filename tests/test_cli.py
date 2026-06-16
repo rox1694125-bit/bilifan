@@ -1254,6 +1254,45 @@ def test_serve_no_open_does_not_open_browser(monkeypatch):
     }
 
 
+def test_serve_public_url_prints_remote_entrypoint_without_changing_bind(
+    monkeypatch,
+):
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(cli, "generate_token", lambda: "fixed-token")
+    monkeypatch.setattr(cli, "create_app", lambda **kwargs: "app-instance")
+    monkeypatch.setattr(cli, "_find_available_port", lambda host, preferred_port: 8792)
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app_instance, **kwargs: calls.update(kwargs))
+
+    result = runner.invoke(
+        app,
+        [
+            "serve",
+            "--no-open",
+            "--port",
+            "8792",
+            "--public-url",
+            "https://bilifan.buyaoting.top",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Local URL: http://127.0.0.1:8792/" in result.output
+    assert "Public URL: https://bilifan.buyaoting.top/" in result.output
+    assert calls["host"] == "127.0.0.1"
+    assert calls["port"] == 8792
+
+
+def test_serve_public_url_rejects_non_https_url():
+    result = runner.invoke(
+        app,
+        ["serve", "--public-url", "http://bilifan.buyaoting.top"],
+    )
+
+    assert result.exit_code == 2
+    assert "--public-url must start with https://" in result.output
+
+
 def test_serve_rejects_non_localhost_host():
     result = runner.invoke(app, ["serve", "--host", "0.0.0.0"])
 

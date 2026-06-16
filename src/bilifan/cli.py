@@ -1,6 +1,7 @@
 import socket
 import threading
 import time
+import urllib.parse
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -177,10 +178,12 @@ def retry(
 def serve(
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8765, "--port"),
+    public_url: str | None = typer.Option(None, "--public-url"),
     no_open: bool = typer.Option(False, "--no-open"),
 ) -> None:
     """Serve the local Bilifan Web UI."""
     host = _ensure_localhost_host(host)
+    public_entry_url = _normalize_public_url(public_url) if public_url else None
     selected_port = _find_available_port(host, port)
     token = generate_token()
     app_instance = create_app(
@@ -189,7 +192,9 @@ def serve(
         open_browser=not no_open,
     )
     url = f"http://127.0.0.1:{selected_port}/"
-    typer.echo(url)
+    typer.echo(f"Local URL: {url}")
+    if public_entry_url:
+        typer.echo(f"Public URL: {public_entry_url}")
     if not no_open:
         _schedule_browser_open(url)
     uvicorn.run(app_instance, host=host, port=selected_port, log_level="info")
@@ -231,6 +236,17 @@ def _ensure_localhost_host(host: str) -> str:
     if host != "127.0.0.1":
         raise typer.BadParameter("MVP only supports --host 127.0.0.1.")
     return host
+
+
+def _normalize_public_url(public_url: str) -> str:
+    value = public_url.strip()
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise typer.BadParameter("--public-url must start with https://")
+    if parsed.query or parsed.fragment:
+        raise typer.BadParameter("--public-url must not include query string or fragment.")
+    path = parsed.path.rstrip("/")
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, f"{path}/", "", ""))
 
 
 def _find_available_port(host: str, preferred_port: int) -> int:

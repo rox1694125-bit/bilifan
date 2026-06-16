@@ -158,7 +158,7 @@ fixed history/output directory, generates a one-time access token, and prints a
 URL like:
 
 ```text
-http://127.0.0.1:8765/
+Local URL: http://127.0.0.1:8765/
 ```
 
 Open that URL in your browser. The HTML page embeds the current local token and
@@ -173,9 +173,11 @@ local default browser.
 Current MVP boundaries:
 
 - Web UI API access is protected by a per-server local token embedded in the
-  served page; treat the server as local-only and do not expose it on a shared
-  network.
-- The server only supports local `127.0.0.1` binding in this MVP.
+  served page; for remote use, put Cloudflare Access in front of the local
+  server instead of binding Bilifan directly to a public interface.
+- The server intentionally supports only local `127.0.0.1` binding. Remote
+  access should be provided by a tunnel or private network that forwards to the
+  local server.
 - Web UI job outputs are always read from and written to `./outputs`.
 - The Web UI can show HTML/PDF/TXT/SRT/MD/Bundle/audio export links and can ask
   macOS to open a run's local folder.
@@ -200,6 +202,33 @@ cd /path/to/bilifan
 
 然后打开 Terminal 打印的固定地址，例如 `http://127.0.0.1:8792/`。输出文件在
 `./outputs`，每个视频的最新成功结果会显示在左侧历史记录里。
+
+## Cloudflare Remote Access
+
+For remote access from other computers, keep Bilifan local and expose it through
+Cloudflare Tunnel plus Cloudflare Access:
+
+```bash
+cd /Volumes/mySSD/projects/bilifan
+scripts/start-bilifan-for-cloudflare.sh
+```
+
+In another terminal, after completing the one-time Cloudflare setup:
+
+```bash
+cd /Volumes/mySSD/projects/bilifan
+scripts/start-cloudflared-bilifan.sh
+```
+
+Default public URL:
+
+```text
+https://bilifan.buyaoting.top
+```
+
+See `docs/remote-access-cloudflare.md` for the required Cloudflare Tunnel, DNS,
+and Access configuration. Do not expose Bilifan by router port forwarding or
+`--host 0.0.0.0`.
 
 ## Runtime Requirements
 
