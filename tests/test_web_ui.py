@@ -90,18 +90,14 @@ def test_render_app_html_contains_workbench_contract():
         "/api/jobs",
         "/api/jobs/current",
         "setInterval",
-        "打开笔记",
-        "下载 PDF",
+        "逐字稿文章",
+        "主报告",
+        "逐字稿 PDF",
+        "报告 PDF",
         "导出",
         "AI 自动判断",
-        "逐字稿 TXT",
-        "字幕 SRT",
-        "Markdown",
         "更多",
-        "结构化数据",
         "纳百川",
-        "诊断信息",
-        "文件列表",
         "batch-nabaichuan-button",
         "batch-urls",
         "batch-submit-button",
@@ -112,7 +108,6 @@ def test_render_app_html_contains_workbench_contract():
         "/api/jobs/queue",
         "/api/jobs/queue/clear-completed",
         "exportNabaichuan",
-        "音频文件",
         "data-folder-url",
         "openFolder",
         "retryAction",
@@ -422,14 +417,10 @@ def test_render_app_script_submits_language_and_renders_export_actions():
                 status: "succeeded",
                 stage: "render",
                 artifacts: {
+                  transcript_html: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.html?token=test-token",
                   html: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html?token=test-token",
+                  transcript_pdf: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.pdf?token=test-token",
                   pdf: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf?token=test-token",
-                  txt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt?token=test-token",
-                  srt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt?token=test-token",
-                  md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md?token=test-token",
-                  bundle: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json?token=test-token",
-                  nabaichuan: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/nabaichuan.jsonl?token=test-token",
-                  audio: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/media/audio.mp3?token=test-token",
                   folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder?token=test-token"
                 }
               }]
@@ -437,22 +428,28 @@ def test_render_app_script_submits_language_and_renders_export_actions():
           }
           if (path === "/api/jobs/current") {
             return jsonResponse({
-              status: "idle",
-              stage: "preflight",
+              status: "succeeded",
+              stage: "render",
               message: "",
               progress: [],
               artifacts: {
+                transcript_html: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.html",
                 html: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
+                transcript_pdf: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.pdf",
                 pdf: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf",
-                txt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
-                srt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
-                md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
-                bundle: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json",
-                nabaichuan: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/nabaichuan.jsonl",
-                audio: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/media/audio.mp3",
                 folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder"
               },
               run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000"
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 0, running: 0, succeeded: 1, failed: 0, canceled: 0 },
+              visible_counts: { queued: 0, running: 0, succeeded: 1, failed: 0, canceled: 0 },
+              total_items: 1,
+              hidden_completed: 0,
+              hidden_replaced: 0,
+              items: []
             });
           }
           if (path === "/api/jobs") {
@@ -468,24 +465,34 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         assertions="""
         assert.equal(elements["language-select"].value, "en");
         assert.equal(elements["summary-template-select"].value, "教程步骤");
-        assert(elements["history-list"].innerHTML.includes("打开笔记"));
-        assert(elements["history-list"].innerHTML.includes("下载 PDF"));
-        assert(elements["history-list"].innerHTML.includes("逐字稿 TXT"));
-        assert(elements["history-list"].innerHTML.includes("字幕 SRT"));
-        assert(elements["history-list"].innerHTML.includes("Markdown"));
-        assert(elements["history-list"].innerHTML.includes("结构化数据"));
-        assert(elements["history-list"].innerHTML.includes("纳百川"));
-        assert(elements["history-list"].innerHTML.includes("音频文件"));
+        assert(elements["history-list"].innerHTML.includes("逐字稿文章"));
+        assert(elements["history-list"].innerHTML.includes("主报告"));
+        assert(elements["history-list"].innerHTML.includes("逐字稿 PDF"));
+        assert(elements["history-list"].innerHTML.includes("报告 PDF"));
+        assert(elements["history-list"].innerHTML.includes("导出到纳百川"));
         assert(elements["history-list"].innerHTML.includes("打开本地文件夹"));
-        assert(elements["result-links"].innerHTML.includes("逐字稿 TXT"));
-        assert(elements["result-links"].innerHTML.includes("字幕 SRT"));
-        assert(elements["result-links"].innerHTML.includes("Markdown"));
-        assert(elements["result-links"].innerHTML.includes("结构化数据"));
-        assert(elements["result-links"].innerHTML.includes("纳百川"));
-        assert(elements["result-links"].innerHTML.includes("音频文件"));
+        assert(elements["result-links"].innerHTML.includes("逐字稿文章"));
+        assert(elements["result-links"].innerHTML.includes("主报告"));
+        assert(elements["result-links"].innerHTML.includes("逐字稿 PDF"));
+        assert(elements["result-links"].innerHTML.includes("报告 PDF"));
+        assert(elements["result-links"].innerHTML.includes("导出到纳百川"));
         assert(!elements["history-list"].innerHTML.includes(">HTML<"));
-        assert(!elements["history-list"].innerHTML.includes(">diagnostics<"));
-        assert(!elements["history-list"].innerHTML.includes(">file list<"));
+        assert(!elements["history-list"].innerHTML.includes("逐字稿 TXT"));
+        assert(!elements["history-list"].innerHTML.includes("字幕 SRT"));
+        assert(!elements["history-list"].innerHTML.includes("Markdown"));
+        assert(!elements["history-list"].innerHTML.includes("结构化数据"));
+        assert(!elements["history-list"].innerHTML.includes("纳百川文件"));
+        assert(!elements["history-list"].innerHTML.includes("音频文件"));
+        assert(!elements["history-list"].innerHTML.includes("诊断信息"));
+        assert(!elements["history-list"].innerHTML.includes("文件列表"));
+        assert(!elements["result-links"].innerHTML.includes("逐字稿 TXT"));
+        assert(!elements["result-links"].innerHTML.includes("字幕 SRT"));
+        assert(!elements["result-links"].innerHTML.includes("Markdown"));
+        assert(!elements["result-links"].innerHTML.includes("结构化数据"));
+        assert(!elements["result-links"].innerHTML.includes("纳百川文件"));
+        assert(!elements["result-links"].innerHTML.includes("音频文件"));
+        assert(!elements["result-links"].innerHTML.includes("诊断信息"));
+        assert(!elements["result-links"].innerHTML.includes("文件列表"));
 
         elements["url-input"].value = "https://www.bilibili.com/video/BV1abcDEF12G";
         elements["language-select"].value = "en";
@@ -627,8 +634,8 @@ def test_render_app_script_preserves_open_action_menu_after_refresh():
                 status: "succeeded",
                 stage: "render",
                 artifacts: {
-                  md: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
-                  txt: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt"
+                  html: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
+                  folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder"
                 }
               }]
             });
@@ -647,7 +654,7 @@ def test_render_app_script_preserves_open_action_menu_after_refresh():
         }
         """,
         assertions="""
-        const menuKey = "history:BV1abcDEF12G_p1/runs/2026-06-08_120000:export";
+        const menuKey = "history:BV1abcDEF12G_p1/runs/2026-06-08_120000:more";
         assert(elements["history-list"].innerHTML.includes(`data-menu-key="${menuKey}"`));
         assert(!elements["history-list"].innerHTML.includes(`data-menu-key="${menuKey}" open`));
 
@@ -1320,7 +1327,8 @@ def test_render_app_script_exports_nabaichuan_from_history_and_batch_button():
                 status: "succeeded",
                 stage: "render",
                 artifacts: {
-                  bundle: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json?token=test-token"
+                  html: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html?token=test-token",
+                  folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder?token=test-token"
                 }
               }]
             });
@@ -1332,7 +1340,8 @@ def test_render_app_script_exports_nabaichuan_from_history_and_batch_button():
               message: "",
               progress: [],
               artifacts: {
-                bundle: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json"
+                html: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
+                folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder"
               },
               run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000"
             });
@@ -1428,7 +1437,7 @@ def test_render_app_script_cancels_running_job_and_retries_failed_run():
               stage: "summarization",
               message: "codex missing",
               progress: [{ stage: "summarization", status: "failed" }],
-              artifacts: { diagnostics: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json" },
+              artifacts: { folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder" },
               run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
               retry_actions: ["summarization", "bundle"],
               friendly_error: {
@@ -1454,7 +1463,9 @@ def test_render_app_script_cancels_running_job_and_retries_failed_run():
         assert(elements["failure-panel"].innerHTML.includes("Codex CLI 未找到"));
         assert(elements["failure-panel"].innerHTML.includes("下一步"));
         assert(elements["failure-panel"].innerHTML.includes("优先尝试"));
-        assert(elements["failure-panel"].innerHTML.indexOf("重试总结") < elements["failure-panel"].innerHTML.indexOf("诊断信息"));
+        assert(elements["failure-panel"].innerHTML.includes("重试总结"));
+        assert(!elements["failure-panel"].innerHTML.includes("诊断信息"));
+        assert(!elements["failure-panel"].innerHTML.includes("文件列表"));
 
         const retryTarget = {
           closest(selector) {
@@ -1498,7 +1509,7 @@ def test_render_app_script_retries_failed_history_item_with_its_run_key():
                 run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
                 status: "failed",
                 stage: "summarization",
-                artifacts: { diagnostics: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json" },
+                artifacts: { folder: "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder" },
                 retry_actions: ["summarization"],
                 friendly_error: {
                   title: "Codex CLI 未找到",

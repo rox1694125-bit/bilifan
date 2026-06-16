@@ -43,6 +43,12 @@ def _make_run(
     )
     (run_dir / "report.html").write_text("<html></html>", encoding="utf-8")
     (run_dir / "report.pdf").write_bytes(b"%PDF")
+    (run_dir / "transcript.html").write_text("<html>transcript</html>", encoding="utf-8")
+    (run_dir / "transcript.pdf").write_bytes(b"%PDF transcript")
+    (run_dir / "transcript_article.json").write_text(
+        '{"schema_version":1}',
+        encoding="utf-8",
+    )
     (run_dir / "transcript.txt").write_text("plain transcript", encoding="utf-8")
     (run_dir / "transcript.srt").write_text(
         "1\n00:00:00,000 --> 00:00:01,000\ncaption",
@@ -84,14 +90,10 @@ def test_list_latest_runs_reads_outputs_latest_json(tmp_path):
     assert items[0]["stage"] == "render"
     assert items[0]["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120000"
     assert items[0]["artifacts"] == {
+        "transcript_html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.html",
         "html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
+        "transcript_pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.pdf",
         "pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf",
-        "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
-        "txt": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
-        "srt": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
-        "md": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
-        "bundle": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json",
-        "nabaichuan": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/nabaichuan.jsonl",
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
 
@@ -266,6 +268,7 @@ def test_failed_latest_run_uses_diagnostics_artifacts_not_stale_files(tmp_path):
                     "transcript.json",
                     "chunks.json",
                 ],
+                "warnings": ["summarization_failed"],
             }
         ),
         encoding="utf-8",
@@ -275,9 +278,9 @@ def test_failed_latest_run_uses_diagnostics_artifacts_not_stale_files(tmp_path):
 
     artifacts = items[0]["artifacts"]
     assert artifacts == {
-        "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
+    assert items[0]["friendly_error"]["title"] == "Codex 总结失败"
 
 
 def test_failed_all_runs_uses_diagnostics_artifacts_not_stale_files(tmp_path):
@@ -305,10 +308,132 @@ def test_failed_all_runs_uses_diagnostics_artifacts_not_stale_files(tmp_path):
 
     artifacts = items[0]["artifacts"]
     assert artifacts == {
-        "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
-        "bundle": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json",
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
+    assert items[0]["friendly_error"]["title"] == "任务失败"
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "output_id", "success", "files", "expected_artifacts"),
+    [
+        (
+            "legacy_success_no_bundle",
+            "BV1abcDEF12G_p1",
+            True,
+            [
+                "report.html",
+                "report.pdf",
+                "notes.md",
+                "transcript.txt",
+                "transcript.srt",
+                "diagnostics.json",
+            ],
+            {
+                "html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
+                "pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf",
+                "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+            },
+        ),
+        (
+            "legacy_success_bundle_no_nabaichuan",
+            "BV1abcDEF12G_p1",
+            True,
+            ["report.html", "report.pdf", "content_bundle.json", "diagnostics.json"],
+            {
+                "html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
+                "pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf",
+                "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+            },
+        ),
+        (
+            "legacy_success_full_old",
+            "BV1abcDEF12G_p1",
+            True,
+            [
+                "report.html",
+                "report.pdf",
+                "notes.md",
+                "transcript.txt",
+                "transcript.srt",
+                "content_bundle.json",
+                "nabaichuan.jsonl",
+                "diagnostics.json",
+            ],
+            {
+                "html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
+                "pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf",
+                "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+            },
+        ),
+        (
+            "legacy_transcript_partial",
+            "BV1abcDEF12G_p1",
+            False,
+            ["transcript.json", "transcript.txt", "transcript.srt", "diagnostics.json"],
+            {
+                "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+            },
+        ),
+        (
+            "legacy_diagnostics_only",
+            "BV1abcDEF12G_p1",
+            False,
+            ["diagnostics.json"],
+            {
+                "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+            },
+        ),
+        (
+            "legacy_youtube_success",
+            "YTdQw4w9WgXcQ_p1",
+            True,
+            ["report.html", "report.pdf", "content_bundle.json", "diagnostics.json"],
+            {
+                "html": "/api/runs/YTdQw4w9WgXcQ_p1/runs/2026-06-08_120000/files/report.html",
+                "pdf": "/api/runs/YTdQw4w9WgXcQ_p1/runs/2026-06-08_120000/files/report.pdf",
+                "folder": "/api/runs/YTdQw4w9WgXcQ_p1/runs/2026-06-08_120000/open-folder",
+            },
+        ),
+    ],
+)
+def test_legacy_runs_expose_only_human_artifacts(
+    tmp_path,
+    fixture_name,
+    output_id,
+    success,
+    files,
+    expected_artifacts,
+):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_legacy_run(outputs, output_id, success=success, files=files)
+
+    latest_items = list_latest_runs(outputs)
+    all_items = list_all_runs(outputs)
+
+    assert latest_items[0]["artifacts"] == expected_artifacts, fixture_name
+    assert all_items[0]["artifacts"] == expected_artifacts, fixture_name
+    hidden_keys = {
+        "bundle",
+        "nabaichuan",
+        "txt",
+        "srt",
+        "md",
+        "audio",
+        "diagnostics",
+    }
+    assert hidden_keys.isdisjoint(latest_items[0]["artifacts"])
+    if success:
+        assert latest_items[0]["status"] == "succeeded"
+        assert latest_items[0]["friendly_error"] is None
+    else:
+        assert latest_items[0]["status"] == "failed"
+        assert latest_items[0]["friendly_error"]["title"] == "逐字稿获取失败"
+        assert latest_items[0]["retry_actions"] == []
+    for file_path in files:
+        if file_path == "diagnostics.json":
+            assert resolve_run_file(outputs, output_id, "2026-06-08_120000", file_path) == (
+                run_dir / file_path
+            )
 
 
 def test_list_latest_runs_skips_run_dir_symlink_escape(tmp_path):
@@ -339,6 +464,10 @@ def test_list_run_files_only_includes_whitelisted_files(tmp_path):
 
     assert "metadata.json" in files
     assert "report.html" in files
+    assert "report.pdf" in files
+    assert "transcript.html" in files
+    assert "transcript.pdf" in files
+    assert "transcript_article.json" in files
     assert "transcript.txt" in files
     assert "transcript.srt" in files
     assert "notes.md" in files
@@ -473,6 +602,8 @@ def test_resolve_run_file_accepts_numeric_partial_summary_chunk(tmp_path):
     [
         ("transcript.txt", "plain transcript"),
         ("transcript.srt", "caption"),
+        ("transcript.html", "transcript"),
+        ("transcript_article.json", "schema_version"),
         ("notes.md", "# Notes"),
         ("content_bundle.json", "schema_version"),
         ("nabaichuan.jsonl", "video"),
@@ -532,3 +663,60 @@ def test_resolve_run_file_rejects_unsafe_paths(tmp_path, file_path):
 
     with pytest.raises(ValueError):
         resolve_run_file(outputs, "BV1abcDEF12G_p1", "2026-06-08_120000", file_path)
+
+
+def _make_legacy_run(
+    outputs,
+    output_id,
+    *,
+    success,
+    files,
+    run_id="2026-06-08_120000",
+):
+    video_dir = outputs / output_id
+    run_dir = video_dir / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    (video_dir / "latest.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "run_dir": f"runs/{run_id}",
+                "generated_at": "2026-06-08T12:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "metadata.json").write_text(
+        json.dumps({"title": f"{output_id} legacy"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    writers = {
+        "report.html": lambda path: path.write_text("<html></html>", encoding="utf-8"),
+        "report.pdf": lambda path: path.write_bytes(b"%PDF"),
+        "notes.md": lambda path: path.write_text("# Notes", encoding="utf-8"),
+        "transcript.json": lambda path: path.write_text("{}", encoding="utf-8"),
+        "transcript.txt": lambda path: path.write_text("plain transcript", encoding="utf-8"),
+        "transcript.srt": lambda path: path.write_text("caption", encoding="utf-8"),
+        "content_bundle.json": lambda path: path.write_text(
+            '{"schema_version":1}',
+            encoding="utf-8",
+        ),
+        "nabaichuan.jsonl": lambda path: path.write_text('{"type":"video"}\n', encoding="utf-8"),
+    }
+    for file_path in files:
+        if file_path == "diagnostics.json":
+            continue
+        writers[file_path](run_dir / file_path)
+    if "diagnostics.json" in files:
+        (run_dir / "diagnostics.json").write_text(
+            json.dumps(
+                {
+                    "error_type": None if success else "TranscriptError",
+                    "stage": "render" if success else "transcript",
+                    "sanitized_message": "" if success else "transcript_failed",
+                    "artifact_paths": files,
+                }
+            ),
+            encoding="utf-8",
+        )
+    return run_dir

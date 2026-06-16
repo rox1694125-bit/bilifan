@@ -46,6 +46,13 @@ def _make_run(outputs, output_id="BV1abcDEF12G_p1", run_id="2026-06-08_120000"):
         encoding="utf-8",
     )
     (run_dir / "report.html").write_text("<html></html>", encoding="utf-8")
+    (run_dir / "report.pdf").write_bytes(b"%PDF-report")
+    (run_dir / "transcript.html").write_text("<html>transcript</html>", encoding="utf-8")
+    (run_dir / "transcript.pdf").write_bytes(b"%PDF-transcript")
+    (run_dir / "transcript_article.json").write_text(
+        '{"schema_version":1}',
+        encoding="utf-8",
+    )
     (run_dir / "transcript.txt").write_text("plain transcript", encoding="utf-8")
     (run_dir / "transcript.srt").write_text(
         "1\n00:00:00,000 --> 00:00:01,000\ncaption",
@@ -184,17 +191,20 @@ def test_history_endpoint_returns_direct_artifact_links_with_query_token(tmp_pat
 
     assert response.status_code == 200
     artifacts = response.json()["items"][0]["artifacts"]
+    assert set(artifacts) == {"transcript_html", "html", "transcript_pdf", "pdf", "folder"}
+    assert artifacts["transcript_html"].endswith("/transcript.html?token=test-token")
     assert artifacts["html"].endswith("/report.html?token=test-token")
-    assert artifacts["diagnostics"].endswith("/diagnostics.json?token=test-token")
-    assert artifacts["txt"].endswith("/transcript.txt?token=test-token")
-    assert artifacts["srt"].endswith("/transcript.srt?token=test-token")
-    assert artifacts["md"].endswith("/notes.md?token=test-token")
-    assert artifacts["bundle"].endswith("/content_bundle.json?token=test-token")
-    assert artifacts["nabaichuan"].endswith("/nabaichuan.jsonl?token=test-token")
+    assert artifacts["transcript_pdf"].endswith("/transcript.pdf?token=test-token")
+    assert artifacts["pdf"].endswith("/report.pdf?token=test-token")
     assert artifacts["folder"].endswith("/open-folder?token=test-token")
-    direct_response = client.get(artifacts["html"])
-    assert direct_response.status_code == 200
-    assert direct_response.text == "<html></html>"
+    for hidden_key in ["diagnostics", "txt", "srt", "md", "bundle", "nabaichuan", "audio"]:
+        assert hidden_key not in artifacts
+    html_response = client.get(artifacts["html"])
+    transcript_response = client.get(artifacts["transcript_html"])
+    assert html_response.status_code == 200
+    assert html_response.text == "<html></html>"
+    assert transcript_response.status_code == 200
+    assert transcript_response.text == "<html>transcript</html>"
 
 
 def test_job_success_lifecycle(tmp_path, monkeypatch):
@@ -206,6 +216,9 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
         run_dir = request.out / "BV1abcDEF12G_p1" / "runs" / "2026-06-08_120000"
         run_dir.mkdir(parents=True)
         (run_dir / "report.html").write_text("<html></html>", encoding="utf-8")
+        (run_dir / "report.pdf").write_bytes(b"%PDF-report")
+        (run_dir / "transcript.html").write_text("<html>transcript</html>", encoding="utf-8")
+        (run_dir / "transcript.pdf").write_bytes(b"%PDF-transcript")
         (run_dir / "diagnostics.json").write_text(
             '{"error_type": null, "stage": "render"}',
             encoding="utf-8",
@@ -217,7 +230,10 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
             run_dir=run_dir,
             diagnostics_path=run_dir / "diagnostics.json",
             artifact_paths=[
+                "transcript.html",
                 "report.html",
+                "transcript.pdf",
+                "report.pdf",
                 "diagnostics.json",
                 "transcript.txt",
                 "transcript.srt",
@@ -262,13 +278,10 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
     assert state["message"] == "Report ready."
     assert state["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120000"
     assert state["artifacts"] == {
+        "transcript_html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.html",
         "html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
-        "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
-        "txt": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
-        "srt": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.srt",
-        "md": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/notes.md",
-        "bundle": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/content_bundle.json",
-        "audio": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/media/audio.mp3",
+        "transcript_pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.pdf",
+        "pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf",
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
     assert "job_started_at" in state
@@ -653,8 +666,12 @@ def test_run_files_endpoint_returns_safe_file_list(tmp_path):
             "nabaichuan.jsonl",
             "notes.md",
             "report.html",
+            "report.pdf",
+            "transcript.html",
+            "transcript.pdf",
             "transcript.srt",
             "transcript.txt",
+            "transcript_article.json",
             "partial_summaries/chunk_001.json",
         ]
     }
@@ -713,17 +730,25 @@ def test_run_file_endpoint_serves_artifacts_with_token(tmp_path):
             headers=_headers(),
         )
         for file_path in [
+            "transcript.html",
             "report.html",
+            "transcript.pdf",
+            "report.pdf",
             "transcript.txt",
             "transcript.srt",
             "notes.md",
             "content_bundle.json",
+            "diagnostics.json",
             "nabaichuan.jsonl",
         ]
     }
 
     assert responses["report.html"].status_code == 200
     assert responses["report.html"].text == "<html></html>"
+    assert responses["transcript.html"].status_code == 200
+    assert responses["transcript.html"].text == "<html>transcript</html>"
+    assert responses["transcript.pdf"].status_code == 200
+    assert responses["report.pdf"].status_code == 200
     assert responses["transcript.txt"].status_code == 200
     assert responses["transcript.txt"].text == "plain transcript"
     assert responses["transcript.srt"].status_code == 200
@@ -732,6 +757,8 @@ def test_run_file_endpoint_serves_artifacts_with_token(tmp_path):
     assert responses["notes.md"].text == "# Notes"
     assert responses["content_bundle.json"].status_code == 200
     assert "schema_version" in responses["content_bundle.json"].text
+    assert responses["diagnostics.json"].status_code == 200
+    assert "error_type" in responses["diagnostics.json"].text
     nabaichuan_response = client.get(
         "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/nabaichuan.jsonl",
         headers=_headers(),
@@ -747,7 +774,7 @@ def test_run_file_endpoint_maps_not_found_and_invalid_paths(tmp_path):
     client = TestClient(app)
 
     missing = client.get(
-        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf",
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/media/audio.mp3",
         headers=_headers(),
     )
     traversal = client.get(
@@ -995,7 +1022,7 @@ def test_job_failure_lifecycle_sanitizes_error_message_and_marks_stage_failed(
     assert "<redacted>" in state["message"] or "<redacted-path>" in state["message"]
 
 
-def test_job_pipeline_run_error_exposes_diagnostics_link(tmp_path, monkeypatch):
+def test_job_pipeline_run_error_hides_diagnostics_artifact_link(tmp_path, monkeypatch):
     monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
 
     def fake_pipeline(request, *, progress_callback):
@@ -1032,9 +1059,9 @@ def test_job_pipeline_run_error_exposes_diagnostics_link(tmp_path, monkeypatch):
     state = client.get("/api/jobs/current", headers=_headers()).json()
     assert state["status"] == "failed"
     assert state["artifacts"] == {
-        "diagnostics": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/diagnostics.json",
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
+    assert state["friendly_error"]["title"] == "任务失败"
     assert state["warnings"] == ["metadata_failed"]
 
 
@@ -1331,7 +1358,7 @@ def test_retry_invalid_options_return_400(tmp_path, monkeypatch, payload):
     assert response.status_code == 400
 
 
-def test_retry_failure_preserves_run_context_and_diagnostics_link(tmp_path, monkeypatch):
+def test_retry_failure_preserves_run_context_without_diagnostics_artifact_link(tmp_path, monkeypatch):
     monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
     outputs = tmp_path / "outputs"
     run_dir = _make_run(outputs)
@@ -1389,8 +1416,9 @@ def test_retry_failure_preserves_run_context_and_diagnostics_link(tmp_path, monk
     assert response.status_code == 200
     assert state["status"] == "failed"
     assert state["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120000"
-    assert state["artifacts"]["diagnostics"].endswith("/diagnostics.json")
-    assert state["artifacts"]["folder"].endswith("/open-folder")
+    assert state["artifacts"] == {
+        "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
+    }
     assert state["retry_actions"] == ["summarization"]
 
 

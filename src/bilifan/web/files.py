@@ -25,6 +25,9 @@ ROOT_FILES = {
     "content_bundle.json",
     "report.html",
     "report.pdf",
+    "transcript.html",
+    "transcript.pdf",
+    "transcript_article.json",
     "transcript.txt",
     "transcript.srt",
     "notes.md",
@@ -300,24 +303,9 @@ def _artifact_links(
     if artifact_paths is not None:
         return _artifact_links_from_paths(prefix, run_key, run_dir, artifact_paths)
     artifacts: dict[str, str] = {}
-    if _safe_existing_file(run_dir, "report.html") is not None:
-        artifacts["html"] = f"{prefix}/report.html"
-    if _safe_existing_file(run_dir, "report.pdf") is not None:
-        artifacts["pdf"] = f"{prefix}/report.pdf"
-    if _safe_existing_file(run_dir, "diagnostics.json") is not None:
-        artifacts["diagnostics"] = f"{prefix}/diagnostics.json"
-    if _safe_existing_file(run_dir, "transcript.txt") is not None:
-        artifacts["txt"] = f"{prefix}/transcript.txt"
-    if _safe_existing_file(run_dir, "transcript.srt") is not None:
-        artifacts["srt"] = f"{prefix}/transcript.srt"
-    if _safe_existing_file(run_dir, "notes.md") is not None:
-        artifacts["md"] = f"{prefix}/notes.md"
-    if _safe_existing_file(run_dir, "content_bundle.json") is not None:
-        artifacts["bundle"] = f"{prefix}/content_bundle.json"
-    if _safe_existing_file(run_dir, "nabaichuan.jsonl") is not None:
-        artifacts["nabaichuan"] = f"{prefix}/nabaichuan.jsonl"
-    if _safe_existing_file(run_dir, "media/audio.mp3") is not None:
-        artifacts["audio"] = f"{prefix}/media/audio.mp3"
+    for key, relative_path in _DISPLAYED_ARTIFACTS.items():
+        if _safe_existing_file(run_dir, relative_path) is not None:
+            artifacts[key] = f"{prefix}/{relative_path}"
     artifacts["folder"] = f"/api/runs/{run_key}/open-folder"
     return artifacts
 
@@ -330,26 +318,22 @@ def _artifact_links_from_paths(
 ) -> dict[str, str]:
     artifact_set = set(artifact_paths)
     artifacts: dict[str, str] = {}
-    known_artifacts = {
-        "html": "report.html",
-        "pdf": "report.pdf",
-        "diagnostics": "diagnostics.json",
-        "txt": "transcript.txt",
-        "srt": "transcript.srt",
-        "md": "notes.md",
-        "bundle": "content_bundle.json",
-        "nabaichuan": "nabaichuan.jsonl",
-        "audio": "media/audio.mp3",
-    }
-    for key, relative_path in known_artifacts.items():
+    for key, relative_path in _DISPLAYED_ARTIFACTS.items():
         if (
             relative_path in artifact_set
             and _safe_existing_file(run_dir, relative_path) is not None
         ):
             artifacts[key] = f"{prefix}/{relative_path}"
-    if artifact_paths:
-        artifacts["folder"] = f"/api/runs/{run_key}/open-folder"
+    artifacts["folder"] = f"/api/runs/{run_key}/open-folder"
     return artifacts
+
+
+_DISPLAYED_ARTIFACTS = {
+    "transcript_html": "transcript.html",
+    "html": "report.html",
+    "transcript_pdf": "transcript.pdf",
+    "pdf": "report.pdf",
+}
 
 
 def _text(value: Any) -> str:

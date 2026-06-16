@@ -985,25 +985,17 @@ def render_app_html(token: str = "") -> str:
               const exports = [];
               const advanced = [];
 
-              if (safeArtifacts.html) primary.push(linkItem("打开笔记", safeArtifacts.html, "primary-action"));
-              if (safeArtifacts.pdf) primary.push(linkItem("下载 PDF", safeArtifacts.pdf, "secondary-action"));
-              if (safeArtifacts.md) exports.push(linkItem("Markdown", safeArtifacts.md));
-              if (safeArtifacts.txt) exports.push(linkItem("逐字稿 TXT", safeArtifacts.txt));
-              if (safeArtifacts.srt) exports.push(linkItem("字幕 SRT", safeArtifacts.srt));
-              if (safeArtifacts.bundle) advanced.push(linkItem("结构化数据", safeArtifacts.bundle));
-              if (safeArtifacts.nabaichuan) advanced.push(linkItem("纳百川文件", safeArtifacts.nabaichuan));
-              if (!safeArtifacts.nabaichuan && safeArtifacts.bundle && runKey && status === "succeeded") {
+              if (safeArtifacts.transcript_html) primary.push(linkItem("逐字稿文章", safeArtifacts.transcript_html, "primary-action"));
+              if (safeArtifacts.html) primary.push(linkItem("主报告", safeArtifacts.html, "primary-action"));
+              if (safeArtifacts.transcript_pdf) primary.push(linkItem("逐字稿 PDF", safeArtifacts.transcript_pdf, "secondary-action"));
+              if (safeArtifacts.pdf) primary.push(linkItem("报告 PDF", safeArtifacts.pdf, "secondary-action"));
+              if (runKey && status === "succeeded") {
                 advanced.push(nabaichuanButton("导出到纳百川", runKey));
               }
               if (runKey && status === "succeeded") {
                 advanced.push(resummarizeButton("重新生成总结", runKey));
               }
-              if (safeArtifacts.audio) advanced.push(linkItem("音频文件", safeArtifacts.audio));
-              if (safeArtifacts.diagnostics) advanced.push(linkItem("诊断信息", safeArtifacts.diagnostics));
               if (safeArtifacts.folder) advanced.push(folderButton("打开本地文件夹", safeArtifacts.folder));
-              if (runKey && options.includeFiles !== false) {
-                advanced.push(linkItem("文件列表", runFilesUrl(runKey)));
-              }
 
               return actionGroups(primary, exports, advanced, options.menuScope || "");
             }
@@ -1060,14 +1052,6 @@ def render_app_html(token: str = "") -> str:
             }
 
             function renderFailure(stage, message, diagnostics, runKey, friendlyError, retryActions) {
-              const links = [];
-              if (diagnostics) {
-                links.push(linkItem("诊断信息", diagnostics));
-              }
-              if (runKey) {
-                links.push(linkItem("文件列表", runFilesUrl(runKey)));
-              }
-              const linkMarkup = links.length ? `<div class="action-groups">${links.join("")}</div>` : "";
               const friendly = friendlyError && typeof friendlyError === "object" ? friendlyError : null;
               const title = friendly && friendly.title ? friendly.title : "任务失败";
               const cause = friendly && friendly.cause ? friendly.cause : (message || "Unknown error.");
@@ -1082,7 +1066,6 @@ def render_app_html(token: str = "") -> str:
                   <div>${escapeHtml(cause)}</div>
                   ${nextAction}
                   ${retryButtons}
-                  ${linkMarkup}
                 </div>
               `;
               elements.failurePanel.classList.add("active");

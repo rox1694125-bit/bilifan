@@ -301,25 +301,17 @@ class JobManager:
 def _artifact_links(run_key: str, artifact_paths: list[str]) -> dict[str, str]:
     prefix = f"/api/runs/{run_key}/files"
     artifacts: dict[str, str] = {}
-    if "report.html" in artifact_paths:
-        artifacts["html"] = f"{prefix}/report.html"
-    if "report.pdf" in artifact_paths:
-        artifacts["pdf"] = f"{prefix}/report.pdf"
-    if "diagnostics.json" in artifact_paths:
-        artifacts["diagnostics"] = f"{prefix}/diagnostics.json"
-    if "transcript.txt" in artifact_paths:
-        artifacts["txt"] = f"{prefix}/transcript.txt"
-    if "transcript.srt" in artifact_paths:
-        artifacts["srt"] = f"{prefix}/transcript.srt"
-    if "notes.md" in artifact_paths:
-        artifacts["md"] = f"{prefix}/notes.md"
-    if "content_bundle.json" in artifact_paths:
-        artifacts["bundle"] = f"{prefix}/content_bundle.json"
-    if "nabaichuan.jsonl" in artifact_paths:
-        artifacts["nabaichuan"] = f"{prefix}/nabaichuan.jsonl"
-    if "media/audio.mp3" in artifact_paths:
-        artifacts["audio"] = f"{prefix}/media/audio.mp3"
-    if artifact_paths:
+    artifact_set = set(artifact_paths)
+    displayed_artifacts = {
+        "transcript_html": "transcript.html",
+        "html": "report.html",
+        "transcript_pdf": "transcript.pdf",
+        "pdf": "report.pdf",
+    }
+    for key, relative_path in displayed_artifacts.items():
+        if relative_path in artifact_set:
+            artifacts[key] = f"{prefix}/{relative_path}"
+    if run_key:
         artifacts["folder"] = f"/api/runs/{run_key}/open-folder"
     return artifacts
 
