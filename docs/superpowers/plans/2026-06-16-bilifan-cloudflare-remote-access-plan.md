@@ -55,6 +55,8 @@ Expected: `2 passed`.
 - Create: `docs/remote-access-cloudflare.md`
 - Create: `scripts/start-bilifan-for-cloudflare.sh`
 - Create: `scripts/start-cloudflared-bilifan.sh`
+- Create: `scripts/start-bilifan-remote-tmux.sh`
+- Create: `scripts/stop-bilifan-remote-tmux.sh`
 - Create local ignored file: `.bilifan/cloudflared-bilifan.yml`
 - Modify: `README.md`
 
@@ -68,6 +70,8 @@ Document Browser -> Cloudflare Access -> Cloudflare Tunnel ->
 Add one script for starting Bilifan with `--public-url` and one script for
 running the named Cloudflare tunnel from `.bilifan/cloudflared-bilifan.yml`.
 The tunnel script refuses to run unless `BILIFAN_ACCESS_CONFIGURED=1` is set.
+Add tmux helper scripts that start and stop the Web UI and tunnel together in
+detached sessions.
 
 - [x] **Step 3: Verify docs and scripts**
 

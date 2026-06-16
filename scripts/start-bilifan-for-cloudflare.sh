@@ -21,4 +21,5 @@ echo "Public URL: ${PUBLIC_URL}"
 exec "$PYTHON_BIN" -m bilifan serve \
   --no-open \
   --port "$PORT" \
+  --strict-port \
   --public-url "$PUBLIC_URL"

@@ -84,6 +84,34 @@ anyone who can load the hostname.
 
 ## Daily Startup
 
+Recommended: start both long-running processes in detached `tmux` sessions:
+
+```bash
+cd /Volumes/mySSD/projects/bilifan
+scripts/start-bilifan-remote-tmux.sh
+```
+
+Check sessions:
+
+```bash
+tmux list-sessions
+```
+
+Then open:
+
+```text
+https://bilifan.buyaoting.top
+```
+
+Stop both sessions:
+
+```bash
+cd /Volumes/mySSD/projects/bilifan
+scripts/stop-bilifan-remote-tmux.sh
+```
+
+Foreground alternative:
+
 Terminal 1:
 
 ```bash
@@ -96,12 +124,6 @@ Terminal 2:
 ```bash
 cd /Volumes/mySSD/projects/bilifan
 BILIFAN_ACCESS_CONFIGURED=1 scripts/start-cloudflared-bilifan.sh
-```
-
-Then open:
-
-```text
-https://bilifan.buyaoting.top
 ```
 
 ## Useful Environment Variables

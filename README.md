@@ -210,14 +210,7 @@ Cloudflare Tunnel plus Cloudflare Access:
 
 ```bash
 cd /Volumes/mySSD/projects/bilifan
-scripts/start-bilifan-for-cloudflare.sh
-```
-
-In another terminal, after completing the one-time Cloudflare setup:
-
-```bash
-cd /Volumes/mySSD/projects/bilifan
-scripts/start-cloudflared-bilifan.sh
+scripts/start-bilifan-remote-tmux.sh
 ```
 
 Default public URL:

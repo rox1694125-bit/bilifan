@@ -22,6 +22,8 @@ project must not encourage direct public binding or router port forwarding.
 - Add `bilifan serve --public-url` to print the remote entrypoint while keeping
   the bind address local-only.
 - Add scripts for starting Bilifan and the named tunnel.
+- Add tmux helper scripts for keeping both processes alive in the user's login
+  session without occupying terminal windows.
 - Use a Bilifan-specific ignored `cloudflared` config under `.bilifan/` so the
   existing insurance workbench tunnel config is not overwritten.
 - Refuse to start the public tunnel from the helper script unless the operator

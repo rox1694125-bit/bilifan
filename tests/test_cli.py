@@ -1331,6 +1331,24 @@ def test_serve_uses_next_available_port(monkeypatch):
     }
 
 
+def test_serve_strict_port_rejects_port_fallback(monkeypatch):
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(cli, "generate_token", lambda: "fixed-token")
+    monkeypatch.setattr(cli, "create_app", lambda **kwargs: "app-instance")
+    monkeypatch.setattr(cli, "_find_available_port", lambda host, preferred_port: 8793)
+    monkeypatch.setattr(cli.uvicorn, "run", lambda *args, **kwargs: calls.update(kwargs))
+
+    result = runner.invoke(
+        app,
+        ["serve", "--port", "8792", "--strict-port", "--no-open"],
+    )
+
+    assert result.exit_code == 2
+    assert "--port 8792 is already in use" in result.output
+    assert calls == {}
+
+
 def test_serve_rejects_invalid_port_bounds():
     low = runner.invoke(app, ["serve", "--port", "0"])
     high = runner.invoke(app, ["serve", "--port", "65536"])

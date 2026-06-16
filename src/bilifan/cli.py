@@ -179,12 +179,15 @@ def serve(
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8765, "--port"),
     public_url: str | None = typer.Option(None, "--public-url"),
+    strict_port: bool = typer.Option(False, "--strict-port"),
     no_open: bool = typer.Option(False, "--no-open"),
 ) -> None:
     """Serve the local Bilifan Web UI."""
     host = _ensure_localhost_host(host)
     public_entry_url = _normalize_public_url(public_url) if public_url else None
     selected_port = _find_available_port(host, port)
+    if strict_port and selected_port != port:
+        raise typer.BadParameter(f"--port {port} is already in use.")
     token = generate_token()
     app_instance = create_app(
         outputs=Path("./outputs"),
