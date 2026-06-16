@@ -173,6 +173,7 @@ def test_run_codex_article_generation_invokes_codex_exec(tmp_path):
 
 def test_generate_transcript_article_writes_stable_artifact(tmp_path):
     def fake_runner(cmd, **kwargs):
+        assert cmd[cmd.index("--model") + 1] == "gpt-5.5"
         output_path = tmp_path / cmd[cmd.index("--output-last-message") + 1]
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(_article_payload(), ensure_ascii=False), encoding="utf-8")
@@ -184,10 +185,26 @@ def test_generate_transcript_article_writes_stable_artifact(tmp_path):
         transcript=_transcript(),
         chunks=_chunks(),
         run_dir=tmp_path,
-        model="gpt-5.5",
+        provider="codex-exec",
         runner=fake_runner,
     )
 
     written = json.loads((tmp_path / "transcript_article.json").read_text(encoding="utf-8"))
     assert article == written
     assert written["sections"][0]["timestamp_url"].endswith("&t=0")
+
+
+def test_generate_transcript_article_rejects_unsupported_provider(tmp_path):
+    def fake_runner(cmd, **kwargs):
+        raise AssertionError("runner should not be called for unsupported provider")
+
+    with pytest.raises(ArticleError, match="Unsupported LLM provider"):
+        generate_transcript_article(
+            ref=REF,
+            metadata=_metadata(),
+            transcript=_transcript(),
+            chunks=_chunks(),
+            run_dir=tmp_path,
+            provider="other",
+            runner=fake_runner,
+        )

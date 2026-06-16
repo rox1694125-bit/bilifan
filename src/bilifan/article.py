@@ -307,9 +307,13 @@ def generate_transcript_article(
     transcript: dict[str, Any],
     chunks: dict[str, Any],
     run_dir: Path,
-    model: str,
+    provider: str = "codex-exec",
+    model: str = "gpt-5.5",
     runner: Runner = subprocess.run,
 ) -> dict[str, Any]:
+    if provider != "codex-exec":
+        raise ArticleError(f"Unsupported LLM provider: {provider}")
+
     chunk_items = _chunk_items(chunks)
     partials = [
         run_codex_article_generation(
