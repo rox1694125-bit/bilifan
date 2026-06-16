@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from .article import ArticleError, generate_transcript_article
 from .bilibili import parse_bilibili_url
 from .bundle import write_content_bundle
 from .diagnostics import (
@@ -21,9 +22,21 @@ from .exports import (
     write_nabaichuan_jsonl,
     write_notes_markdown,
 )
-from .renderer import PdfExportError, RenderError, export_report_pdf, render_report_html
+from .renderer import (
+    PdfExportError,
+    RenderError,
+    export_html_pdf,
+    export_report_pdf,
+    render_report_html,
+    render_transcript_html,
+)
 from .runs import RUN_OUTPUT_ID_PATTERN
-from .summarizer import SummarizationError, summarize_chunks, validate_summary_style
+from .summarizer import (
+    SummarizationError,
+    summarize_article_sections,
+    summarize_chunks,
+    validate_summary_style,
+)
 from .visuals import enrich_chapters_with_visuals, visual_artifact_paths
 
 RETRY_STAGES = {"summarization", "render", "bundle"}
@@ -108,10 +121,19 @@ def retry_run(
     if stage == "summarization":
         chunks = _read_required_json(run_dir, "chunks.json")
         try:
-            chapters = summarize_chunks(
+            transcript_article = generate_transcript_article(
                 ref=ref,
                 metadata=metadata,
+                transcript=transcript,
                 chunks=chunks,
+                run_dir=run_dir,
+                provider=llm_provider,
+                model=llm_model,
+            )
+            chapters = summarize_article_sections(
+                ref=ref,
+                metadata=metadata,
+                article=transcript_article,
                 run_dir=run_dir,
                 provider=llm_provider,
                 model=llm_model,
@@ -125,14 +147,16 @@ def retry_run(
                 with_frames=with_frames,
                 with_diagrams=with_diagrams,
             )
-        except SummarizationError as exc:
+        except (ArticleError, SummarizationError) as exc:
             _write_failure_diagnostics(
                 run_dir,
                 stage="summarization",
-                error_type="SummarizationError",
+                error_type=exc.__class__.__name__,
                 ref=ref,
                 transcript=transcript,
                 message=str(exc),
+                artifact_paths=_base_artifact_paths(run_dir)
+                + _existing_named_artifacts(run_dir, ["transcript_article.json"]),
             )
             raise RetryError(str(exc)) from exc
         _write_json(run_dir / "chapters.json", chapters)
@@ -142,6 +166,7 @@ def retry_run(
             ref=ref,
             metadata=metadata,
             transcript=transcript,
+            transcript_article=transcript_article,
             chapters=chapters,
             requested_formats=requested_formats,
             llm_provider=llm_provider,
@@ -151,6 +176,7 @@ def retry_run(
         )
 
     chapters = _read_required_json(run_dir, "chapters.json")
+    transcript_article = _read_optional_json(run_dir, "transcript_article.json") or None
     if stage == "render":
         visual_warnings = enrich_chapters_with_visuals(
             ref=ref,
@@ -168,6 +194,7 @@ def retry_run(
             ref=ref,
             metadata=metadata,
             transcript=transcript,
+            transcript_article=transcript_article,
             chapters=chapters,
             requested_formats=requested_formats,
             llm_provider=llm_provider,
@@ -182,6 +209,7 @@ def retry_run(
         ref=ref,
         metadata=metadata,
         transcript=transcript,
+        transcript_article=transcript_article,
         chapters=chapters,
         llm_provider=llm_provider,
         llm_model=llm_model,
@@ -195,6 +223,7 @@ def _render_and_bundle(
     ref,
     metadata: dict[str, Any],
     transcript: dict[str, Any],
+    transcript_article: dict[str, Any] | None,
     chapters: dict[str, Any],
     requested_formats: set[str],
     llm_provider: str,
@@ -203,19 +232,22 @@ def _render_and_bundle(
     require_pdf: bool = False,
 ) -> RetryResult:
     warnings: list[str] = list(visual_warnings or [])
+    artifact_paths = _base_artifact_paths(run_dir)
+    artifact_paths.extend(_existing_named_artifacts(run_dir, ["transcript_article.json"]))
+    artifact_paths.append("chapters.json")
+    artifact_paths.extend(visual_artifact_paths(chapters))
 
     try:
-        write_notes_markdown(
-            run_dir=run_dir,
-            metadata=metadata,
-            transcript=transcript,
-            chapters=chapters,
-            overwrite=True,
-        )
-    except ExportError:
-        warnings.append("notes_export_failed")
-
-    try:
+        pdf_sources: list[tuple[Path, str]] = []
+        if transcript_article is not None:
+            transcript_html = render_transcript_html(
+                ref=ref,
+                metadata=metadata,
+                article=transcript_article,
+                run_dir=run_dir,
+            )
+            artifact_paths.append(transcript_html.name)
+            pdf_sources.append((transcript_html, "transcript.pdf"))
         report_html = render_report_html(
             ref=ref,
             metadata=metadata,
@@ -223,6 +255,8 @@ def _render_and_bundle(
             chapters=chapters,
             run_dir=run_dir,
         )
+        artifact_paths.append(report_html.name)
+        pdf_sources.append((report_html, "report.pdf"))
     except (RenderError, OSError, ValueError) as exc:
         _write_failure_diagnostics(
             run_dir,
@@ -231,38 +265,35 @@ def _render_and_bundle(
             ref=ref,
             transcript=transcript,
             message=str(exc),
+            artifact_paths=artifact_paths,
         )
         raise RetryError(str(exc)) from exc
 
-    pdf_path: Path | None = None
     if "pdf" in requested_formats or require_pdf:
-        try:
-            pdf_path = export_report_pdf(html_path=report_html, pdf_path=run_dir / "report.pdf")
-        except PdfExportError as exc:
-            if require_pdf:
-                _write_failure_diagnostics(
-                    run_dir,
-                    stage="render",
-                    error_type="PdfExportError",
-                    ref=ref,
-                    transcript=transcript,
-                    message=str(exc),
-                    artifact_paths=_base_artifact_paths(run_dir)
-                    + ["chapters.json", "notes.md", report_html.name],
-                )
-                raise RetryError(str(exc)) from exc
-            warnings.append("pdf_failed")
-
-    artifact_paths = _base_artifact_paths(run_dir)
-    artifact_paths.extend(["chapters.json", "notes.md", report_html.name])
-    artifact_paths.extend(visual_artifact_paths(chapters))
-    if pdf_path is not None:
-        artifact_paths.append(pdf_path.name)
+        for html_path, pdf_name in pdf_sources:
+            try:
+                pdf_path = export_html_pdf(html_path=html_path, pdf_path=run_dir / pdf_name)
+                artifact_paths.append(pdf_path.name)
+            except PdfExportError as exc:
+                warnings = _append_unique(warnings, "pdf_failed")
+                if require_pdf:
+                    _write_failure_diagnostics(
+                        run_dir,
+                        stage="render",
+                        error_type="PdfExportError",
+                        ref=ref,
+                        transcript=transcript,
+                        message=str(exc),
+                        artifact_paths=artifact_paths,
+                        warnings=warnings,
+                    )
+                    raise RetryError(str(exc)) from exc
     try:
         bundle_path = write_content_bundle(
             run_dir=run_dir,
             metadata=metadata,
             transcript=transcript,
+            transcript_article=transcript_article,
             chapters=chapters,
             artifact_paths=artifact_paths,
             platform=ref.platform,
@@ -283,33 +314,6 @@ def _render_and_bundle(
         )
         raise RetryError(str(exc)) from exc
     artifact_paths = _append_unique(artifact_paths, bundle_path.name)
-    try:
-        nabaichuan_artifact = write_nabaichuan_jsonl(run_dir)
-    except ExportError as exc:
-        _write_failure_diagnostics(
-            run_dir,
-            stage="bundle",
-            error_type=exc.__class__.__name__,
-            ref=ref,
-            transcript=transcript,
-            message=str(exc),
-            artifact_paths=artifact_paths,
-            warnings=["bundle_retry_failed", *warnings, "nabaichuan_export_failed"],
-        )
-        raise RetryError(str(exc)) from exc
-    artifact_paths = _append_unique(artifact_paths, nabaichuan_artifact)
-    write_content_bundle(
-        run_dir=run_dir,
-        metadata=metadata,
-        transcript=transcript,
-        chapters=chapters,
-        artifact_paths=artifact_paths,
-        platform=ref.platform,
-        source_id=ref.source_id,
-        part_id=ref.part_id,
-        llm_provider=llm_provider,
-        llm_model=llm_model,
-    )
     _write_success_diagnostics(
         run_dir,
         stage="render",
@@ -341,6 +345,7 @@ def _bundle_only(
     ref,
     metadata: dict[str, Any],
     transcript: dict[str, Any],
+    transcript_article: dict[str, Any] | None,
     chapters: dict[str, Any],
     llm_provider: str,
     llm_model: str,
@@ -351,6 +356,7 @@ def _bundle_only(
             run_dir=run_dir,
             metadata=metadata,
             transcript=transcript,
+            transcript_article=transcript_article,
             chapters=chapters,
             artifact_paths=artifact_paths,
             platform=ref.platform,
@@ -372,33 +378,6 @@ def _bundle_only(
         raise RetryError(str(exc)) from exc
     artifact_paths = _append_unique(artifact_paths, bundle_path.name)
     warnings: list[str] = []
-    try:
-        nabaichuan_artifact = write_nabaichuan_jsonl(run_dir)
-    except ExportError as exc:
-        _write_failure_diagnostics(
-            run_dir,
-            stage="bundle",
-            error_type=exc.__class__.__name__,
-            ref=ref,
-            transcript=transcript,
-            message=str(exc),
-            artifact_paths=artifact_paths,
-            warnings=["bundle_retry_failed", "nabaichuan_export_failed"],
-        )
-        raise RetryError(str(exc)) from exc
-    artifact_paths = _append_unique(artifact_paths, nabaichuan_artifact)
-    write_content_bundle(
-        run_dir=run_dir,
-        metadata=metadata,
-        transcript=transcript,
-        chapters=chapters,
-        artifact_paths=artifact_paths,
-        platform=ref.platform,
-        source_id=ref.source_id,
-        part_id=ref.part_id,
-        llm_provider=llm_provider,
-        llm_model=llm_model,
-    )
     _write_success_diagnostics(
         run_dir,
         stage="bundle",
@@ -497,12 +476,14 @@ def _existing_artifact_paths(run_dir: Path) -> list[str]:
         "transcript.txt",
         "transcript.srt",
         "chunks.json",
+        "transcript_article.json",
         "chapters.json",
         "notes.md",
+        "transcript.html",
+        "transcript.pdf",
         "report.html",
         "report.pdf",
         "content_bundle.json",
-        "nabaichuan.jsonl",
         *_frame_artifact_paths(run_dir),
     ]:
         if (run_dir / relative_path).is_file():
@@ -521,12 +502,15 @@ def _base_artifact_paths(run_dir: Path) -> list[str]:
         "transcript.txt",
         "transcript.srt",
         "chunks.json",
-        "nabaichuan.jsonl",
         *_frame_artifact_paths(run_dir),
     ]:
         if (run_dir / relative_path).is_file():
             paths.append(relative_path)
     return validate_artifact_paths(paths)
+
+
+def _existing_named_artifacts(run_dir: Path, names: list[str]) -> list[str]:
+    return [name for name in names if (run_dir / name).is_file()]
 
 
 def _duration_check(run_dir: Path) -> dict[str, Any] | None:

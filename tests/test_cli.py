@@ -170,14 +170,62 @@ def _install_fake_transcript_build(monkeypatch):
     return calls
 
 
-def _install_fake_summarize_chunks(monkeypatch):
+def _install_fake_article_summary(monkeypatch):
     calls = []
 
-    def fake_summarize_chunks(
+    def fake_generate_transcript_article(
         *,
         ref,
         metadata,
+        transcript,
         chunks,
+        run_dir,
+        provider="codex-exec",
+        model="gpt-5.5",
+    ):
+        calls.append(
+            {
+                "stage": "article",
+                "ref": ref,
+                "metadata": metadata,
+                "transcript": transcript,
+                "chunks": chunks,
+                "run_dir": run_dir,
+                "provider": provider,
+                "model": model,
+            }
+        )
+        article = {
+            "schema_version": 1,
+            "source": transcript["source"],
+            "cleaning_level": "strong",
+            "sections": [
+                {
+                    "section_index": 1,
+                    "title": "开场",
+                    "start": 0,
+                    "end": chunks["chunks"][0]["end"],
+                    "timestamp_url": ref.timestamp_url(0),
+                    "source_segment_start_index": 0,
+                    "source_segment_end_index": 0,
+                    "paragraphs": [{"text": "转写", "emphasis": []}],
+                    "key_terms": [],
+                    "warnings": [],
+                }
+            ],
+            "warnings": [],
+        }
+        (run_dir / "transcript_article.json").write_text(
+            json.dumps(article, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return article
+
+    def fake_summarize_article_sections(
+        *,
+        ref,
+        metadata,
+        article,
         run_dir,
         provider="codex-exec",
         model="gpt-5.5",
@@ -185,36 +233,15 @@ def _install_fake_summarize_chunks(monkeypatch):
     ):
         calls.append(
             {
+                "stage": "summary",
                 "ref": ref,
                 "metadata": metadata,
-                "chunks": chunks,
+                "article": article,
                 "run_dir": run_dir,
                 "provider": provider,
                 "model": model,
                 "style": style,
             }
-        )
-        partial_dir = run_dir / "partial_summaries"
-        partial_dir.mkdir(parents=True, exist_ok=True)
-        (partial_dir / "chunk_001.json").write_text(
-            json.dumps(
-                {
-                    "chunk_index": 1,
-                    "chapters": [
-                        {
-                            "title": "开场",
-                            "start": 0,
-                            "end": chunks["chunks"][0]["end"],
-                            "summary": "学习笔记摘要",
-                            "key_points": ["要点"],
-                            "quotes": [],
-                            "visual_anchors": [],
-                        }
-                    ],
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
         )
         return {
             "style": style,
@@ -223,7 +250,7 @@ def _install_fake_summarize_chunks(monkeypatch):
                     "chapter_index": 1,
                     "title": "开场",
                     "start": 0,
-                    "end": chunks["chunks"][0]["end"],
+                    "end": article["sections"][0]["end"],
                     "timestamp_url": ref.timestamp_url(0),
                     "summary": "学习笔记摘要",
                     "key_points": ["要点"],
@@ -233,17 +260,42 @@ def _install_fake_summarize_chunks(monkeypatch):
             ],
         }
 
-    monkeypatch.setattr(pipeline, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(
+        pipeline,
+        "generate_transcript_article",
+        fake_generate_transcript_article,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "summarize_article_sections",
+        fake_summarize_article_sections,
+        raising=False,
+    )
     return calls
 
 
 def _install_fake_report_render(monkeypatch, *, pdf_success=True):
     calls = []
 
+    def fake_render_transcript_html(*, ref, metadata, article, run_dir):
+        calls.append(
+            {
+                "stage": "transcript_html",
+                "ref": ref,
+                "metadata": metadata,
+                "article": article,
+                "run_dir": run_dir,
+            }
+        )
+        html_path = run_dir / "transcript.html"
+        html_path.write_text("<html><body>transcript</body></html>", encoding="utf-8")
+        return html_path
+
     def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
         calls.append(
             {
-                "stage": "html",
+                "stage": "report_html",
                 "ref": ref,
                 "metadata": metadata,
                 "transcript": transcript,
@@ -255,15 +307,17 @@ def _install_fake_report_render(monkeypatch, *, pdf_success=True):
         html_path.write_text("<html><body>report</body></html>", encoding="utf-8")
         return html_path
 
-    def fake_export_report_pdf(*, html_path, pdf_path):
+    def fake_export_html_pdf(*, html_path, pdf_path):
         calls.append({"stage": "pdf", "html_path": html_path, "pdf_path": pdf_path})
         if not pdf_success:
             raise cli.PdfExportError("Chrome failed for /Users/jack/report.html")
         pdf_path.write_bytes(b"%PDF")
         return pdf_path
 
+    monkeypatch.setattr(pipeline, "render_transcript_html", fake_render_transcript_html, raising=False)
     monkeypatch.setattr(pipeline, "render_report_html", fake_render_report_html)
-    monkeypatch.setattr(pipeline, "export_report_pdf", fake_export_report_pdf)
+    monkeypatch.setattr(pipeline, "export_report_pdf", fake_export_html_pdf)
+    monkeypatch.setattr(pipeline, "export_html_pdf", fake_export_html_pdf, raising=False)
     return calls
 
 
@@ -299,7 +353,7 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     _install_fake_metadata_fetch(monkeypatch, title="CLI metadata title")
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
-    _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_article_summary(monkeypatch)
     _install_fake_report_render(monkeypatch)
 
     result = runner.invoke(
@@ -332,15 +386,14 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
         "metadata.json",
         "media/audio.mp3",
         "transcript.json",
-        "transcript.txt",
-        "transcript.srt",
         "chunks.json",
+        "transcript_article.json",
         "chapters.json",
-        "notes.md",
+        "transcript.html",
         "report.html",
+        "transcript.pdf",
         "report.pdf",
         "content_bundle.json",
-        "nabaichuan.jsonl",
     ]
     assert diagnostics["warnings"] == []
     assert metadata["input_url_sanitized"] == (
@@ -352,21 +405,26 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     transcript = json.loads((run_dir / "transcript.json").read_text(encoding="utf-8"))
     assert transcript["source"] == "whisper"
     assert transcript["segments"][0]["text"] == "转写"
-    assert (run_dir / "transcript.txt").is_file()
-    assert (run_dir / "transcript.srt").is_file()
+    article = json.loads((run_dir / "transcript_article.json").read_text(encoding="utf-8"))
+    assert article["sections"][0]["title"] == "开场"
+    assert not (run_dir / "transcript.txt").exists()
+    assert not (run_dir / "transcript.srt").exists()
     chunks = json.loads((run_dir / "chunks.json").read_text(encoding="utf-8"))
     assert chunks["strategy"]["mode"] == "single_pass"
     assert chunks["chunk_count"] == 1
     chapters = json.loads((run_dir / "chapters.json").read_text(encoding="utf-8"))
     assert chapters["style"] == "学习笔记"
     assert chapters["chapters"][0]["title"] == "开场"
-    assert (run_dir / "notes.md").is_file()
+    assert not (run_dir / "notes.md").exists()
+    assert (run_dir / "transcript.html").is_file()
+    assert (run_dir / "transcript.pdf").is_file()
     assert (run_dir / "report.html").is_file()
     assert (run_dir / "report.pdf").is_file()
     assert (run_dir / "media" / "audio.mp3").is_file()
-    assert (run_dir / "nabaichuan.jsonl").is_file()
+    assert not (run_dir / "nabaichuan.jsonl").exists()
     bundle = json.loads((run_dir / "content_bundle.json").read_text(encoding="utf-8"))
     assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p2"
+    assert bundle["transcript_article"]["sections"][0]["title"] == "开场"
     assert bundle["artifacts"]["audio_mp3"] == "media/audio.mp3"
     assert bundle["provenance"]["llm_provider"] == "codex-exec"
     assert bundle["provenance"]["llm_model"] == "gpt-5.5"
@@ -379,7 +437,7 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch)
     transcript_calls = _install_fake_transcript_build(monkeypatch)
-    summary_calls = _install_fake_summarize_chunks(monkeypatch)
+    summary_calls = _install_fake_article_summary(monkeypatch)
     _install_fake_report_render(monkeypatch)
 
     result = runner.invoke(
@@ -419,7 +477,9 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
     assert transcript_calls[0]["language"] == "en"
     assert summary_calls[0]["provider"] == "codex-exec"
     assert summary_calls[0]["model"] == "gpt-5.5"
-    assert summary_calls[0]["style"] == "教程步骤"
+    assert summary_calls[1]["provider"] == "codex-exec"
+    assert summary_calls[1]["model"] == "gpt-5.5"
+    assert summary_calls[1]["style"] == "教程步骤"
 
 
 def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
@@ -428,7 +488,7 @@ def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
-    _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_article_summary(monkeypatch)
     _install_fake_report_render(monkeypatch)
 
     for url, output_id in REAL_BILIBILI_URLS:
@@ -466,7 +526,7 @@ def test_summarize_records_cookie_notice_without_storing_cookie_file_name(
     calls = _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
-    _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_article_summary(monkeypatch)
     _install_fake_report_render(monkeypatch)
 
     result = runner.invoke(
@@ -724,7 +784,7 @@ def test_summarize_transcript_failure_writes_diagnostics_after_media(
     outputs = tmp_path / "outputs"
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch, duration_seconds=120)
-    _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_article_summary(monkeypatch)
 
     def fake_build_transcript(
         metadata,
@@ -787,7 +847,7 @@ def test_summarize_incomplete_transcript_writes_file_with_warning(
     outputs = tmp_path / "outputs"
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch, duration_seconds=120)
-    _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_article_summary(monkeypatch)
     _install_fake_report_render(monkeypatch)
 
     def fake_build_transcript(
@@ -857,7 +917,7 @@ def test_summarize_chunking_confirmation_decline_writes_diagnostics(
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch, duration_seconds=90 * 60)
     _install_fake_transcript_build(monkeypatch)
-    _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_article_summary(monkeypatch)
     _install_fake_report_render(monkeypatch)
 
     result = runner.invoke(
@@ -898,7 +958,7 @@ def test_summarize_pdf_failure_is_warning_when_pdf_is_not_required(
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
-    _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_article_summary(monkeypatch)
     _install_fake_report_render(monkeypatch, pdf_success=False)
 
     result = runner.invoke(
@@ -913,14 +973,17 @@ def test_summarize_pdf_failure_is_warning_when_pdf_is_not_required(
     run_dir = video_dir / latest["run_dir"]
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
 
+    assert (run_dir / "transcript.html").is_file()
     assert (run_dir / "report.html").is_file()
+    assert not (run_dir / "transcript.pdf").exists()
     assert not (run_dir / "report.pdf").exists()
     assert (run_dir / "content_bundle.json").is_file()
     assert diagnostics["stage"] == "render"
     assert diagnostics["warnings"] == ["pdf_failed"]
+    assert "transcript.html" in diagnostics["artifact_paths"]
     assert "report.html" in diagnostics["artifact_paths"]
     assert "content_bundle.json" in diagnostics["artifact_paths"]
-    assert "nabaichuan.jsonl" in diagnostics["artifact_paths"]
+    assert "nabaichuan.jsonl" not in diagnostics["artifact_paths"]
 
 
 def test_summarize_require_pdf_returns_nonzero_when_pdf_fails(
@@ -931,7 +994,7 @@ def test_summarize_require_pdf_returns_nonzero_when_pdf_fails(
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
-    _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_article_summary(monkeypatch)
     _install_fake_report_render(monkeypatch, pdf_success=False)
 
     result = runner.invoke(
@@ -956,6 +1019,8 @@ def test_summarize_require_pdf_returns_nonzero_when_pdf_fails(
     run_dir = video_dir / latest["run_dir"]
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
 
+    assert (run_dir / "transcript.html").is_file()
+    assert not (run_dir / "transcript.pdf").exists()
     assert (run_dir / "report.html").is_file()
     assert not (run_dir / "report.pdf").exists()
     assert diagnostics["error_type"] == "PdfExportError"
@@ -969,7 +1034,7 @@ def test_summarize_format_html_skips_pdf_export(tmp_path, monkeypatch):
     _install_fake_metadata_fetch(monkeypatch)
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
-    _install_fake_summarize_chunks(monkeypatch)
+    _install_fake_article_summary(monkeypatch)
     render_calls = _install_fake_report_render(monkeypatch)
 
     result = runner.invoke(
@@ -987,7 +1052,10 @@ def test_summarize_format_html_skips_pdf_export(tmp_path, monkeypatch):
     )
 
     assert result.exit_code == 0
-    assert [call["stage"] for call in render_calls] == ["html"]
+    assert [call["stage"] for call in render_calls] == [
+        "transcript_html",
+        "report_html",
+    ]
 
 
 def test_summarize_invalid_format_fails_before_creating_run(tmp_path):
@@ -1070,27 +1138,59 @@ def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
     _install_fake_audio_download(monkeypatch)
     _install_fake_transcript_build(monkeypatch)
 
-    def fake_summarize_chunks(
+    def fake_generate_transcript_article(
         *,
         ref,
         metadata,
+        transcript,
         chunks,
         run_dir,
         provider="codex-exec",
         model="gpt-5.5",
-        style="学习笔记",
     ):
-        partial_dir = run_dir / "partial_summaries"
-        partial_dir.mkdir(parents=True, exist_ok=True)
-        (partial_dir / "chunk_001.json").write_text(
-            '{"chunk_index": 1, "chapters": []}',
+        article = {
+            "schema_version": 1,
+            "source": transcript["source"],
+            "cleaning_level": "strong",
+            "sections": [
+                {
+                    "section_index": 1,
+                    "title": "开场",
+                    "start": 0,
+                    "end": chunks["chunks"][0]["end"],
+                    "timestamp_url": ref.timestamp_url(0),
+                    "source_segment_start_index": 0,
+                    "source_segment_end_index": 0,
+                    "paragraphs": [{"text": "转写", "emphasis": []}],
+                    "key_terms": [],
+                    "warnings": [],
+                }
+            ],
+            "warnings": [],
+        }
+        (run_dir / "transcript_article.json").write_text(
+            json.dumps(article, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+        return article
+
+    def fake_summarize_article_sections(**kwargs):
         raise SummarizationError(
             "codex exec failed with OPENAI_API_KEY=secret /Users/jack/raw"
         )
 
-    monkeypatch.setattr(pipeline, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(
+        pipeline,
+        "generate_transcript_article",
+        fake_generate_transcript_article,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "summarize_article_sections",
+        fake_summarize_article_sections,
+        raising=False,
+    )
 
     result = runner.invoke(
         app,
@@ -1109,6 +1209,7 @@ def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
 
     assert (run_dir / "chunks.json").is_file()
+    assert (run_dir / "transcript_article.json").is_file()
     assert not (run_dir / "chapters.json").exists()
     assert diagnostics["error_type"] == "SummarizationError"
     assert diagnostics["stage"] == "summarization"
@@ -1117,10 +1218,8 @@ def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
         "metadata.json",
         ".bilifan/cache/BV1abcDEF12G_p2.mp3",
         "transcript.json",
-        "transcript.txt",
-        "transcript.srt",
         "chunks.json",
-        "partial_summaries/chunk_001.json",
+        "transcript_article.json",
     ]
     assert "secret" not in diagnostics["sanitized_message"]
     assert "/Users/jack" not in diagnostics["sanitized_message"]

@@ -51,6 +51,196 @@ def test_default_progress_accepts_all_known_stages():
         default_progress(stage.value, "running", f"{stage.value} running")
 
 
+def _fake_transcript_article(end: float = 120.0) -> dict:
+    return {
+        "schema_version": 1,
+        "source": "whisper",
+        "cleaning_level": "strong",
+        "sections": [
+            {
+                "section_index": 1,
+                "title": "开场",
+                "start": 0,
+                "end": end,
+                "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?t=0",
+                "source_segment_start_index": 0,
+                "source_segment_end_index": 0,
+                "paragraphs": [{"text": "转写", "emphasis": []}],
+                "key_terms": [],
+                "warnings": [],
+            }
+        ],
+        "warnings": [],
+    }
+
+
+@pytest.fixture(autouse=True)
+def _article_first_defaults(monkeypatch):
+    def fake_generate_transcript_article(
+        *,
+        ref,
+        metadata,
+        transcript,
+        chunks,
+        run_dir,
+        provider="codex-exec",
+        model="gpt-5.5",
+    ):
+        article = _fake_transcript_article(chunks["chunks"][0]["end"])
+        (run_dir / "transcript_article.json").write_text(
+            json.dumps(article, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return article
+
+    def fake_summarize_article_sections(
+        *,
+        ref,
+        metadata,
+        article,
+        run_dir,
+        provider="codex-exec",
+        model="gpt-5.5",
+        style="学习笔记",
+    ):
+        return {
+            "style": style,
+            "chapters": [
+                {
+                    "chapter_index": 1,
+                    "title": article["sections"][0]["title"],
+                    "start": article["sections"][0]["start"],
+                    "end": article["sections"][0]["end"],
+                    "timestamp_url": ref.timestamp_url(0),
+                    "summary": "学习笔记摘要",
+                    "key_points": ["要点"],
+                    "quotes": [],
+                    "visual_anchors": [],
+                }
+            ],
+        }
+
+    def fake_render_transcript_html(*, ref, metadata, article, run_dir):
+        html_path = run_dir / "transcript.html"
+        html_path.write_text("<html><body>transcript</body></html>", encoding="utf-8")
+        return html_path
+
+    monkeypatch.setattr(
+        pipeline,
+        "generate_transcript_article",
+        fake_generate_transcript_article,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "summarize_article_sections",
+        fake_summarize_article_sections,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "render_transcript_html",
+        fake_render_transcript_html,
+        raising=False,
+    )
+
+
+def _install_minimal_successful_pipeline_fakes(monkeypatch) -> None:
+    def fake_fetch_current_part_metadata(
+        ref,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        return {
+            "bilifan_version": "0.1.0",
+            "generated_at": "2026-06-17T00:00:00+00:00",
+            "input_url_sanitized": ref.sanitized_url,
+            "video_id": ref.bvid,
+            "part_index": ref.part_index,
+            "title": "Mock metadata title",
+            "part_title": "Mock metadata title",
+            "owner_name": "Mock Owner",
+            "duration": 120,
+            "subtitles": [],
+        }
+
+    def fake_download_current_part_audio(
+        ref,
+        metadata,
+        run_dir,
+        *,
+        cookies_from_browser=None,
+        cookies_file=None,
+    ):
+        audio_path = f".bilifan/cache/{ref.output_id}.mp3"
+        (run_dir / audio_path).parent.mkdir(parents=True, exist_ok=True)
+        (run_dir / audio_path).write_bytes(b"audio")
+        return {
+            "audio_path": audio_path,
+            "duration_seconds": 120,
+            "duration_check": {"status": "ok"},
+        }
+
+    def fake_build_transcript(
+        metadata,
+        media,
+        run_dir,
+        *,
+        force_whisper=False,
+        language="auto",
+        transcriber="auto",
+    ):
+        if not media.get("audio_path"):
+            raise pipeline.TranscriptError("Audio file for Whisper is missing.")
+        return {
+            "source": "whisper",
+            "language": "zh",
+            "model": "turbo",
+            "segments": [{"start": 0.0, "end": 120.0, "text": "转写"}],
+            "transcript_check": {"status": "ok", "segment_count": 1},
+        }
+
+    def fake_build_chunks(
+        transcript,
+        media,
+        *,
+        allow_long_video=False,
+        long_video_confirmed=False,
+    ):
+        return {
+            "chunk_count": 1,
+            "chunks": [
+                {
+                    "chunk_index": 1,
+                    "start": 0.0,
+                    "end": 120.0,
+                    "segments": [
+                        {
+                            "source_index": 0,
+                            "start": 0.0,
+                            "end": 120.0,
+                            "text": "转写",
+                        }
+                    ],
+                    "text": "转写",
+                }
+            ],
+        }
+
+    def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
+        html_path = run_dir / "report.html"
+        html_path.write_text("<html><body>report</body></html>", encoding="utf-8")
+        return html_path
+
+    monkeypatch.setattr(pipeline, "fetch_current_part_metadata", fake_fetch_current_part_metadata)
+    monkeypatch.setattr(pipeline, "download_current_part_audio", fake_download_current_part_audio)
+    monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
+    monkeypatch.setattr(pipeline, "build_chunks", fake_build_chunks)
+    monkeypatch.setattr(pipeline, "render_report_html", fake_render_report_html)
+
+
 def test_metadata_done_message_includes_long_video_chunk_estimate():
     message = pipeline._metadata_done_message({"duration": 2.5 * 60 * 60})
 
@@ -281,6 +471,7 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
     monkeypatch.setattr(pipeline, "summarize_chunks", fake_summarize_chunks)
     monkeypatch.setattr(pipeline, "render_report_html", fake_render_report_html)
     monkeypatch.setattr(pipeline, "export_report_pdf", fake_export_report_pdf)
+    monkeypatch.setattr(pipeline, "export_html_pdf", fake_export_report_pdf, raising=False)
 
     result = pipeline.run_summarize_pipeline(
         PipelineRequest(
@@ -294,35 +485,46 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
     )
 
     assert result.run_key.startswith("BV1abcDEF12G_p1/runs/")
+    assert "transcript_article.json" in result.artifact_paths
+    assert "transcript.html" in result.artifact_paths
     assert "report.html" in result.artifact_paths
     assert "report.pdf" in result.artifact_paths
-    assert "transcript.txt" in result.artifact_paths
-    assert "transcript.srt" in result.artifact_paths
-    assert "notes.md" in result.artifact_paths
     assert "content_bundle.json" in result.artifact_paths
     assert "media/audio.mp3" in result.artifact_paths
-    assert "nabaichuan.jsonl" in result.artifact_paths
+    assert "nabaichuan.jsonl" not in result.artifact_paths
+    assert "notes.md" not in result.artifact_paths
+    assert "transcript.txt" not in result.artifact_paths
+    assert "transcript.srt" not in result.artifact_paths
 
     for artifact_name in (
         "metadata.json",
         "media/audio.mp3",
-        "nabaichuan.jsonl",
         "transcript.json",
-        "transcript.txt",
-        "transcript.srt",
         "chunks.json",
+        "transcript_article.json",
         "chapters.json",
-        "notes.md",
+        "transcript.html",
+        "report.html",
         "content_bundle.json",
         "diagnostics.json",
     ):
         assert (result.run_dir / artifact_name).is_file()
+    for legacy_artifact_name in (
+        "nabaichuan.jsonl",
+        "notes.md",
+        "transcript.txt",
+        "transcript.srt",
+    ):
+        assert not (result.run_dir / legacy_artifact_name).exists()
 
     bundle = json.loads((result.run_dir / "content_bundle.json").read_text(encoding="utf-8"))
     diagnostics = json.loads((result.run_dir / "diagnostics.json").read_text(encoding="utf-8"))
     assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p1"
+    assert bundle["artifacts"]["transcript_article_json"] == "transcript_article.json"
+    assert bundle["artifacts"]["transcript_html"] == "transcript.html"
     assert bundle["artifacts"]["report_html"] == "report.html"
     assert bundle["artifacts"]["audio_mp3"] == "media/audio.mp3"
+    assert bundle["transcript_article"]["sections"][0]["title"] == "开场"
     assert bundle["summary"]["chapters"][0]["title"] == "开场"
     assert bundle["summary"]["chapters"][0]["diagram"]["caption"] == "图解：开场"
     assert "frames_unavailable" in diagnostics["warnings"]
@@ -341,6 +543,99 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
         ("summarization", "running"),
         ("render", "running"),
     ]
+
+
+def test_pipeline_exports_transcript_and_report_pdfs_when_pdf_requested(
+    tmp_path, monkeypatch
+):
+    _install_minimal_successful_pipeline_fakes(monkeypatch)
+
+    def fake_render_transcript_html(*, ref, metadata, article, run_dir):
+        html_path = run_dir / "transcript.html"
+        html_path.write_text("<html><body>transcript</body></html>", encoding="utf-8")
+        return html_path
+
+    def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
+        html_path = run_dir / "report.html"
+        html_path.write_text("<html><body>report</body></html>", encoding="utf-8")
+        return html_path
+
+    def fake_export_html_pdf(*, html_path, pdf_path):
+        pdf_path.write_bytes(f"PDF for {html_path.name}".encode())
+        return pdf_path
+
+    monkeypatch.setattr(pipeline, "render_transcript_html", fake_render_transcript_html)
+    monkeypatch.setattr(pipeline, "render_report_html", fake_render_report_html)
+    monkeypatch.setattr(pipeline, "export_html_pdf", fake_export_html_pdf, raising=False)
+
+    result = pipeline.run_summarize_pipeline(
+        PipelineRequest(
+            url="https://www.bilibili.com/video/BV1abcDEF12G",
+            out=tmp_path,
+            output_format="html,pdf",
+            yes_i_understand=True,
+        )
+    )
+
+    assert "transcript.pdf" in result.artifact_paths
+    assert "report.pdf" in result.artifact_paths
+    assert (result.run_dir / "transcript.pdf").read_bytes() == b"PDF for transcript.html"
+    assert (result.run_dir / "report.pdf").read_bytes() == b"PDF for report.html"
+
+
+def test_pipeline_pdf_failure_warns_when_not_required(tmp_path, monkeypatch):
+    _install_minimal_successful_pipeline_fakes(monkeypatch)
+
+    def fake_export_html_pdf(*, html_path, pdf_path):
+        raise pipeline.PdfExportError("pdf failed")
+
+    monkeypatch.setattr(pipeline, "export_html_pdf", fake_export_html_pdf, raising=False)
+
+    result = pipeline.run_summarize_pipeline(
+        PipelineRequest(
+            url="https://www.bilibili.com/video/BV1abcDEF12G",
+            out=tmp_path,
+            output_format="html,pdf",
+            yes_i_understand=True,
+        )
+    )
+
+    assert result.warnings.count("pdf_failed") == 1
+    assert "transcript.html" in result.artifact_paths
+    assert "report.html" in result.artifact_paths
+    assert (result.run_dir / "transcript.html").is_file()
+    assert (result.run_dir / "report.html").is_file()
+    assert not (result.run_dir / "transcript.pdf").exists()
+    assert not (result.run_dir / "report.pdf").exists()
+
+
+def test_pipeline_require_pdf_fails_if_transcript_pdf_fails(tmp_path, monkeypatch):
+    _install_minimal_successful_pipeline_fakes(monkeypatch)
+
+    def fake_export_html_pdf(*, html_path, pdf_path):
+        if pdf_path.name == "transcript.pdf":
+            raise pipeline.PdfExportError("pdf failed")
+        pdf_path.write_bytes(b"%PDF")
+        return pdf_path
+
+    monkeypatch.setattr(pipeline, "export_html_pdf", fake_export_html_pdf, raising=False)
+
+    with pytest.raises(pipeline.PipelineRunError) as exc_info:
+        pipeline.run_summarize_pipeline(
+            PipelineRequest(
+                url="https://www.bilibili.com/video/BV1abcDEF12G",
+                out=tmp_path,
+                output_format="html,pdf",
+                require_pdf=True,
+                yes_i_understand=True,
+            )
+        )
+
+    assert exc_info.value.exit_code == 1
+    assert "transcript.html" in exc_info.value.artifact_paths
+    diagnostics = json.loads(exc_info.value.diagnostics_path.read_text(encoding="utf-8"))
+    assert diagnostics["error_type"] == "PdfExportError"
+    assert diagnostics["warnings"] == ["pdf_failed"]
 
 
 def test_run_summarize_pipeline_uses_subtitles_without_downloading_audio(
@@ -499,8 +794,10 @@ def test_run_summarize_pipeline_uses_subtitles_without_downloading_audio(
         progress_callback=record_progress,
     )
 
+    assert "transcript_article.json" in result.artifact_paths
+    assert "transcript.html" in result.artifact_paths
     assert "report.html" in result.artifact_paths
-    assert "transcript.txt" in result.artifact_paths
+    assert "transcript.txt" not in result.artifact_paths
     assert "content_bundle.json" in result.artifact_paths
     assert "media/audio.mp3" not in result.artifact_paths
     assert not any(path.endswith(".mp3") for path in result.artifact_paths)
@@ -721,14 +1018,14 @@ def test_summarization_failure_keeps_transcript_exports_in_artifacts(
             ]
         }
 
-    def fake_summarize_chunks(**kwargs):
+    def fake_summarize_article_sections(**kwargs):
         raise pipeline.SummarizationError("codex exec failed")
 
     monkeypatch.setattr(pipeline, "fetch_current_part_metadata", fake_fetch_current_part_metadata)
     monkeypatch.setattr(pipeline, "download_current_part_audio", fake_download_current_part_audio)
     monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
     monkeypatch.setattr(pipeline, "build_chunks", fake_build_chunks)
-    monkeypatch.setattr(pipeline, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(pipeline, "summarize_article_sections", fake_summarize_article_sections)
 
     with pytest.raises(pipeline.PipelineRunError) as exc_info:
         pipeline.run_summarize_pipeline(
@@ -740,11 +1037,11 @@ def test_summarization_failure_keeps_transcript_exports_in_artifacts(
         )
 
     assert "transcript.json" in exc_info.value.artifact_paths
-    assert "transcript.txt" in exc_info.value.artifact_paths
-    assert "transcript.srt" in exc_info.value.artifact_paths
+    assert "transcript_article.json" in exc_info.value.artifact_paths
     run_dir = exc_info.value.diagnostics_path.parent
-    assert (run_dir / "transcript.txt").is_file()
-    assert (run_dir / "transcript.srt").is_file()
+    assert (run_dir / "transcript_article.json").is_file()
+    assert not (run_dir / "transcript.txt").exists()
+    assert not (run_dir / "transcript.srt").exists()
 
 
 def test_render_failure_keeps_completed_exports_in_artifacts(tmp_path, monkeypatch):
@@ -863,11 +1160,10 @@ def test_render_failure_keeps_completed_exports_in_artifacts(tmp_path, monkeypat
         "metadata.json",
         ".bilifan/cache/BV1abcDEF12G_p1.mp3",
         "transcript.json",
-        "transcript.txt",
-        "transcript.srt",
         "chunks.json",
+        "transcript_article.json",
         "chapters.json",
-        "notes.md",
+        "transcript.html",
     ]
     diagnostics = json.loads(exc_info.value.diagnostics_path.read_text(encoding="utf-8"))
     assert diagnostics["error_type"] == "RenderError"

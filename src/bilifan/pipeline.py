@@ -8,6 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from .article import ArticleError, generate_transcript_article
 from .bilibili import BilibiliPartRef
 from .bundle import write_content_bundle
 from .chunking import (
@@ -27,10 +28,11 @@ from .exports import (
 from .media import MediaDownloadError, download_current_part_audio, publish_audio_artifact
 from .metadata import MetadataIngestError, fetch_current_part_metadata
 from .renderer import PdfExportError, export_report_pdf, render_report_html
+from .renderer import export_html_pdf, render_transcript_html
 from .runs import RunPaths, create_error_run, create_run
 from .sources import SourceAdapterError, SourceOptions, resolve_source_adapter
 from .sources.bilibili import BilibiliAdapter
-from .summarizer import SummarizationError, summarize_chunks
+from .summarizer import SummarizationError, summarize_article_sections, summarize_chunks
 from .transcript import TranscriptError, build_transcript
 from .visuals import enrich_chapters_with_visuals, visual_artifact_paths
 
@@ -285,16 +287,7 @@ def run_summarize_pipeline(
     assert transcript is not None
 
     _write_json(run.run_dir / "transcript.json", transcript)
-    transcript_export_artifacts: list[str] = []
     export_warnings: list[str] = []
-    try:
-        transcript_export_artifacts = write_transcript_exports(
-            run_dir=run.run_dir,
-            metadata=metadata,
-            transcript=transcript,
-        )
-    except ExportError:
-        export_warnings.append("transcript_export_failed")
     _progress(progress_callback, PipelineStage.TRANSCRIPT, "done", "Transcript saved.")
 
     _progress(progress_callback, PipelineStage.CHUNKING, "running", "Building chunks.")
@@ -322,7 +315,7 @@ def run_summarize_pipeline(
                 transcript,
                 sanitized_message=exc.sanitized_message,
                 warnings=[*export_warnings, "chunking_confirmation_required"],
-                transcript_export_artifacts=transcript_export_artifacts,
+                transcript_export_artifacts=[],
             )
             _progress(
                 progress_callback,
@@ -335,7 +328,7 @@ def run_summarize_pipeline(
                 exc.sanitized_message,
                 artifact_paths=_chunking_failure_artifacts(
                     media,
-                    transcript_export_artifacts,
+                    [],
                 ),
                 warnings=[*export_warnings, "chunking_confirmation_required"],
             ) from exc
@@ -350,7 +343,7 @@ def run_summarize_pipeline(
             sanitized_message = redact_text(str(retry_exc))
             artifact_paths = _chunking_failure_artifacts(
                 media,
-                transcript_export_artifacts,
+                [],
             )
             _write_chunking_failure_diagnostics(
                 run,
@@ -359,7 +352,7 @@ def run_summarize_pipeline(
                 transcript,
                 sanitized_message=sanitized_message,
                 warnings=[*export_warnings, "chunking_failed"],
-                transcript_export_artifacts=transcript_export_artifacts,
+                transcript_export_artifacts=[],
             )
             _progress(
                 progress_callback,
@@ -375,7 +368,7 @@ def run_summarize_pipeline(
             ) from retry_exc
     except ChunkingError as exc:
         sanitized_message = redact_text(str(exc))
-        artifact_paths = _chunking_failure_artifacts(media, transcript_export_artifacts)
+        artifact_paths = _chunking_failure_artifacts(media, [])
         _write_chunking_failure_diagnostics(
             run,
             ref,
@@ -383,7 +376,7 @@ def run_summarize_pipeline(
             transcript,
             sanitized_message=sanitized_message,
             warnings=[*export_warnings, "chunking_failed"],
-            transcript_export_artifacts=transcript_export_artifacts,
+            transcript_export_artifacts=[],
         )
         _progress(progress_callback, PipelineStage.CHUNKING, "failed", sanitized_message)
         raise _pipeline_run_error(
@@ -400,33 +393,42 @@ def run_summarize_pipeline(
         progress_callback,
         PipelineStage.SUMMARIZATION,
         "running",
-        "Summarizing chunks.",
+        "Generating transcript article.",
     )
     try:
-        chapters = summarize_chunks(
+        article = generate_transcript_article(
             ref=ref,
             metadata=metadata,
+            transcript=transcript,
             chunks=chunks,
+            run_dir=run.run_dir,
+            provider=request.llm_provider,
+            model=request.llm_model,
+        )
+        chapters = summarize_article_sections(
+            ref=ref,
+            metadata=metadata,
+            article=article,
             run_dir=run.run_dir,
             provider=request.llm_provider,
             model=request.llm_model,
             style=request.summary_template,
         )
-    except SummarizationError as exc:
+    except (ArticleError, SummarizationError) as exc:
         sanitized_message = redact_text(str(exc))
         artifact_paths = [
             "diagnostics.json",
             "metadata.json",
             *_media_artifact_paths(media),
             "transcript.json",
-            *transcript_export_artifacts,
             "chunks.json",
+            *_existing_named_artifacts(run.run_dir, ["transcript_article.json"]),
             *_partial_summary_artifacts(run.run_dir),
         ]
         write_diagnostics(
             run.run_dir / "diagnostics.json",
             Diagnostics(
-                error_type="SummarizationError",
+                error_type=exc.__class__.__name__,
                 exit_code=1,
                 stage=PipelineStage.SUMMARIZATION.value,
                 video_id=ref.bvid,
@@ -461,16 +463,6 @@ def run_summarize_pipeline(
     export_warnings.extend(visual_warnings)
     visual_artifacts = visual_artifact_paths(chapters)
     _write_json(run.run_dir / "chapters.json", chapters)
-    notes_artifacts: list[str] = []
-    try:
-        notes_artifacts = write_notes_markdown(
-            run_dir=run.run_dir,
-            metadata=metadata,
-            transcript=transcript,
-            chapters=chapters,
-        )
-    except ExportError:
-        export_warnings.append("notes_export_failed")
     _progress(
         progress_callback,
         PipelineStage.SUMMARIZATION,
@@ -484,14 +476,21 @@ def run_summarize_pipeline(
         "metadata.json",
         *_media_artifact_paths(media),
         "transcript.json",
-        *transcript_export_artifacts,
         "chunks.json",
+        "transcript_article.json",
         "chapters.json",
         *visual_artifacts,
-        *notes_artifacts,
     ]
-    _progress(progress_callback, PipelineStage.RENDER, "running", "Rendering report.")
+    _progress(progress_callback, PipelineStage.RENDER, "running", "Rendering outputs.")
+    render_artifacts = list(render_base_artifacts)
     try:
+        transcript_html = render_transcript_html(
+            ref=ref,
+            metadata=metadata,
+            article=article,
+            run_dir=run.run_dir,
+        )
+        render_artifacts.append(transcript_html.name)
         report_html = render_report_html(
             ref=ref,
             metadata=metadata,
@@ -499,9 +498,10 @@ def run_summarize_pipeline(
             chapters=chapters,
             run_dir=run.run_dir,
         )
+        render_artifacts.append(report_html.name)
     except Exception as exc:
         sanitized_message = redact_text(str(exc))
-        artifact_paths = list(render_base_artifacts)
+        artifact_paths = list(render_artifacts)
         write_diagnostics(
             run.run_dir / "diagnostics.json",
             Diagnostics(
@@ -524,44 +524,52 @@ def run_summarize_pipeline(
             artifact_paths=artifact_paths,
             warnings=render_warnings,
         ) from exc
-    render_artifacts = [*render_base_artifacts, report_html.name]
     if should_export_pdf:
-        try:
-            report_pdf = export_report_pdf(
-                html_path=report_html,
-                pdf_path=run.run_dir / "report.pdf",
-            )
-            render_artifacts.append(report_pdf.name)
-        except PdfExportError as exc:
-            sanitized_message = redact_text(str(exc))
-            if request.require_pdf:
-                artifact_paths = list(render_artifacts)
-                write_diagnostics(
-                    run.run_dir / "diagnostics.json",
-                    Diagnostics(
-                        error_type="PdfExportError",
-                        exit_code=1,
-                        stage=PipelineStage.RENDER.value,
-                        video_id=ref.bvid,
-                        part_index=ref.part_index,
-                        duration_check=media["duration_check"],
-                        transcript_check=transcript["transcript_check"],
-                        artifact_paths=artifact_paths,
-                        sanitized_message=sanitized_message,
-                        warnings=[*render_warnings, "pdf_failed"],
-                    ),
+        for html_path, pdf_name in (
+            (transcript_html, "transcript.pdf"),
+            (report_html, "report.pdf"),
+        ):
+            try:
+                pdf_path = export_html_pdf(
+                    html_path=html_path,
+                    pdf_path=run.run_dir / pdf_name,
                 )
-                _progress(progress_callback, PipelineStage.RENDER, "failed", sanitized_message)
-                raise _pipeline_run_error(
-                    run,
-                    sanitized_message,
-                    artifact_paths=artifact_paths,
-                    warnings=[*render_warnings, "pdf_failed"],
-                ) from exc
-            render_warnings.append("pdf_failed")
+                render_artifacts.append(pdf_path.name)
+            except PdfExportError as exc:
+                sanitized_message = redact_text(str(exc))
+                render_warnings = _append_unique(render_warnings, "pdf_failed")
+                if request.require_pdf:
+                    artifact_paths = list(render_artifacts)
+                    write_diagnostics(
+                        run.run_dir / "diagnostics.json",
+                        Diagnostics(
+                            error_type="PdfExportError",
+                            exit_code=1,
+                            stage=PipelineStage.RENDER.value,
+                            video_id=ref.bvid,
+                            part_index=ref.part_index,
+                            duration_check=media["duration_check"],
+                            transcript_check=transcript["transcript_check"],
+                            artifact_paths=artifact_paths,
+                            sanitized_message=sanitized_message,
+                            warnings=render_warnings,
+                        ),
+                    )
+                    _progress(
+                        progress_callback,
+                        PipelineStage.RENDER,
+                        "failed",
+                        sanitized_message,
+                    )
+                    raise _pipeline_run_error(
+                        run,
+                        sanitized_message,
+                        artifact_paths=artifact_paths,
+                        warnings=render_warnings,
+                    ) from exc
 
     if transcript["transcript_check"]["status"] == "transcript_incomplete":
-        render_warnings.append("transcript_incomplete")
+        render_warnings = _append_unique(render_warnings, "transcript_incomplete")
 
     if _has_audio(media):
         try:
@@ -577,6 +585,7 @@ def run_summarize_pipeline(
         run_dir=run.run_dir,
         metadata=metadata,
         transcript=transcript,
+        transcript_article=article,
         chapters=chapters,
         artifact_paths=render_artifacts,
         platform=adapter.platform,
@@ -586,45 +595,6 @@ def run_summarize_pipeline(
         llm_model=request.llm_model,
     )
     render_artifacts.append(bundle_path.name)
-    try:
-        nabaichuan_artifact = write_nabaichuan_jsonl(run.run_dir)
-    except ExportError as exc:
-        sanitized_message = redact_text(str(exc))
-        write_diagnostics(
-            run.run_dir / "diagnostics.json",
-            Diagnostics(
-                error_type="ExportError",
-                exit_code=1,
-                stage=PipelineStage.RENDER.value,
-                video_id=ref.bvid,
-                part_index=ref.part_index,
-                duration_check=media["duration_check"],
-                transcript_check=transcript["transcript_check"],
-                artifact_paths=render_artifacts,
-                sanitized_message=sanitized_message,
-                warnings=[*render_warnings, "nabaichuan_export_failed"],
-            ),
-        )
-        _progress(progress_callback, PipelineStage.RENDER, "failed", sanitized_message)
-        raise _pipeline_run_error(
-            run,
-            sanitized_message,
-            artifact_paths=render_artifacts,
-            warnings=[*render_warnings, "nabaichuan_export_failed"],
-        ) from exc
-    render_artifacts.append(nabaichuan_artifact)
-    write_content_bundle(
-        run_dir=run.run_dir,
-        metadata=metadata,
-        transcript=transcript,
-        chapters=chapters,
-        artifact_paths=render_artifacts,
-        platform=adapter.platform,
-        source_id=source_ref.source_id,
-        part_id=source_ref.part_id,
-        llm_provider=request.llm_provider,
-        llm_model=request.llm_model,
-    )
 
     write_diagnostics(
         run.run_dir / "diagnostics.json",
@@ -936,6 +906,14 @@ def _partial_summary_artifacts(run_dir: Path) -> list[str]:
         for path in sorted(partial_dir.glob("*.json"))
         if path.is_file()
     ]
+
+
+def _existing_named_artifacts(run_dir: Path, names: list[str]) -> list[str]:
+    return [name for name in names if (run_dir / name).is_file()]
+
+
+def _append_unique(items: list[str], item: str) -> list[str]:
+    return [*items, item] if item not in items else list(items)
 
 
 def _parse_output_formats(raw_format: str) -> set[str]:

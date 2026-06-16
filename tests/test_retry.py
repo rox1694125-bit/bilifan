@@ -120,6 +120,29 @@ def _chapters():
     }
 
 
+def _article():
+    return {
+        "schema_version": 1,
+        "source": "whisper",
+        "cleaning_level": "strong",
+        "sections": [
+            {
+                "section_index": 1,
+                "title": "重试文章",
+                "start": 0,
+                "end": 120,
+                "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1&t=0",
+                "source_segment_start_index": 0,
+                "source_segment_end_index": 0,
+                "paragraphs": [{"text": "转写", "emphasis": []}],
+                "key_terms": [],
+                "warnings": [],
+            }
+        ],
+        "warnings": [],
+    }
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -138,10 +161,10 @@ def test_retry_bundle_writes_bundle_and_success_diagnostics(tmp_path):
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
     assert result.run_key == "BV1abcDEF12G_p1/runs/2026-06-09_120000"
     assert "content_bundle.json" in result.artifact_paths
-    assert "nabaichuan.jsonl" in result.artifact_paths
+    assert "nabaichuan.jsonl" not in result.artifact_paths
     assert "media/frames/chapter_001_000030.jpg" in result.artifact_paths
     assert "media/frames/chapter_001_000030.jpg" in bundle["artifacts"]["all"]
-    assert (run_dir / "nabaichuan.jsonl").is_file()
+    assert not (run_dir / "nabaichuan.jsonl").exists()
     assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p1"
     assert diagnostics["error_type"] is None
     assert diagnostics["stage"] == "bundle"
@@ -180,6 +203,27 @@ def test_retry_youtube_bundle_preserves_platform_and_source_id(tmp_path):
     assert diagnostics["video_id"] == "dQw4w9WgXcQ"
 
 
+def test_retry_bundle_passes_article_when_available(tmp_path, monkeypatch):
+    run_dir = _run_dir(tmp_path)
+    _write_json(run_dir / "chapters.json", _chapters())
+    _write_json(run_dir / "transcript_article.json", _article())
+    calls = []
+
+    def fake_write_content_bundle(**kwargs):
+        calls.append(kwargs)
+        path = kwargs["run_dir"] / "content_bundle.json"
+        path.write_text("{}", encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(retry_module, "write_content_bundle", fake_write_content_bundle)
+
+    result = retry_run(run_dir, from_stage="bundle")
+
+    assert calls[0]["transcript_article"]["sections"][0]["title"] == "重试文章"
+    assert "content_bundle.json" in result.artifact_paths
+    assert "nabaichuan.jsonl" not in result.artifact_paths
+
+
 def test_retry_render_rewrites_report_and_bundle(tmp_path, monkeypatch):
     run_dir = _run_dir(tmp_path)
     _write_json(run_dir / "chapters.json", _chapters())
@@ -191,38 +235,130 @@ def test_retry_render_rewrites_report_and_bundle(tmp_path, monkeypatch):
 
     monkeypatch.setattr(retry_module, "render_report_html", fake_render_report_html)
 
-    def fake_export_report_pdf(*, html_path, pdf_path):
+    def fake_export_html_pdf(*, html_path, pdf_path):
         pdf_path.write_bytes(b"%PDF")
         return pdf_path
 
-    monkeypatch.setattr(retry_module, "export_report_pdf", fake_export_report_pdf)
+    monkeypatch.setattr(retry_module, "export_report_pdf", fake_export_html_pdf)
+    monkeypatch.setattr(
+        retry_module,
+        "export_html_pdf",
+        fake_export_html_pdf,
+        raising=False,
+    )
 
     result = retry_run(run_dir, from_stage="render", output_format="html,pdf")
 
     assert (run_dir / "report.html").read_text(encoding="utf-8") == "<html>重试章节</html>"
     assert (run_dir / "report.pdf").is_file()
     assert (run_dir / "content_bundle.json").is_file()
-    assert (run_dir / "nabaichuan.jsonl").is_file()
+    assert not (run_dir / "transcript.html").exists()
+    assert not (run_dir / "nabaichuan.jsonl").exists()
     assert "content_bundle.json" in result.artifact_paths
-    assert "nabaichuan.jsonl" in result.artifact_paths
+    assert "transcript.html" not in result.artifact_paths
+    assert "nabaichuan.jsonl" not in result.artifact_paths
 
 
-def test_retry_summarization_rewrites_chapters_notes_report_and_bundle(tmp_path, monkeypatch):
+def test_retry_render_with_article_writes_transcript_report_and_bundle(
+    tmp_path, monkeypatch
+):
+    run_dir = _run_dir(tmp_path)
+    _write_json(run_dir / "chapters.json", _chapters())
+    _write_json(run_dir / "transcript_article.json", _article())
+
+    def fake_render_transcript_html(*, ref, metadata, article, run_dir):
+        html_path = run_dir / "transcript.html"
+        html_path.write_text(f"<html>{article['sections'][0]['title']}</html>", encoding="utf-8")
+        return html_path
+
+    def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
+        html_path = run_dir / "report.html"
+        html_path.write_text(f"<html>{chapters['chapters'][0]['title']}</html>", encoding="utf-8")
+        return html_path
+
+    monkeypatch.setattr(
+        retry_module,
+        "render_transcript_html",
+        fake_render_transcript_html,
+        raising=False,
+    )
+    monkeypatch.setattr(retry_module, "render_report_html", fake_render_report_html)
+
+    result = retry_run(run_dir, from_stage="render", output_format="html")
+
+    bundle = json.loads((run_dir / "content_bundle.json").read_text(encoding="utf-8"))
+    assert (run_dir / "transcript.html").read_text(encoding="utf-8") == "<html>重试文章</html>"
+    assert (run_dir / "report.html").read_text(encoding="utf-8") == "<html>重试章节</html>"
+    assert "transcript_article" in bundle
+    assert bundle["artifacts"]["transcript_html"] == "transcript.html"
+    assert "nabaichuan.jsonl" not in result.artifact_paths
+    assert not (run_dir / "nabaichuan.jsonl").exists()
+
+
+def test_retry_summarization_rewrites_article_chapters_report_and_bundle(
+    tmp_path, monkeypatch
+):
     run_dir = _run_dir(tmp_path)
     summary_styles = []
 
-    def fake_summarize_chunks(*, ref, metadata, chunks, run_dir, provider, model, style):
+    def fake_generate_transcript_article(
+        *,
+        ref,
+        metadata,
+        transcript,
+        chunks,
+        run_dir,
+        provider,
+        model,
+    ):
+        article = _article()
+        _write_json(run_dir / "transcript_article.json", article)
+        return article
+
+    def fake_summarize_article_sections(
+        *,
+        ref,
+        metadata,
+        article,
+        run_dir,
+        provider,
+        model,
+        style,
+    ):
         assert provider == "codex-exec"
         assert model == "gpt-5.5"
+        assert article["sections"][0]["title"] == "重试文章"
         summary_styles.append(style)
         return _chapters()
+
+    def fake_render_transcript_html(*, ref, metadata, article, run_dir):
+        html_path = run_dir / "transcript.html"
+        html_path.write_text("<html>article</html>", encoding="utf-8")
+        return html_path
 
     def fake_render_report_html(*, ref, metadata, transcript, chapters, run_dir):
         html_path = run_dir / "report.html"
         html_path.write_text("<html>retry</html>", encoding="utf-8")
         return html_path
 
-    monkeypatch.setattr(retry_module, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(
+        retry_module,
+        "generate_transcript_article",
+        fake_generate_transcript_article,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        retry_module,
+        "summarize_article_sections",
+        fake_summarize_article_sections,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        retry_module,
+        "render_transcript_html",
+        fake_render_transcript_html,
+        raising=False,
+    )
     monkeypatch.setattr(retry_module, "render_report_html", fake_render_report_html)
 
     result = retry_run(
@@ -235,10 +371,14 @@ def test_retry_summarization_rewrites_chapters_notes_report_and_bundle(tmp_path,
     chapters = json.loads((run_dir / "chapters.json").read_text(encoding="utf-8"))
     assert summary_styles == ["观点提炼"]
     assert chapters["chapters"][0]["title"] == "重试章节"
-    assert (run_dir / "notes.md").is_file()
+    assert (run_dir / "transcript_article.json").is_file()
+    assert (run_dir / "transcript.html").is_file()
     assert (run_dir / "report.html").is_file()
     assert (run_dir / "content_bundle.json").is_file()
     assert "content_bundle.json" in result.artifact_paths
+    assert "nabaichuan.jsonl" not in result.artifact_paths
+    assert not (run_dir / "notes.md").exists()
+    assert not (run_dir / "nabaichuan.jsonl").exists()
 
 
 def test_retry_missing_required_file_fails_with_sanitized_message(tmp_path):
@@ -294,11 +434,16 @@ def test_retry_invalid_format_fails_before_summarization_side_effects(
     run_dir = _run_dir(tmp_path)
     calls = []
 
-    def fake_summarize_chunks(**kwargs):
+    def fake_summarize_article_sections(**kwargs):
         calls.append(kwargs)
         return _chapters()
 
-    monkeypatch.setattr(retry_module, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(
+        retry_module,
+        "summarize_article_sections",
+        fake_summarize_article_sections,
+        raising=False,
+    )
 
     with pytest.raises(RetryError, match="--format"):
         retry_run(run_dir, from_stage="summarization", output_format="docx")
@@ -313,11 +458,16 @@ def test_retry_invalid_summary_template_fails_before_summarization_side_effects(
     run_dir = _run_dir(tmp_path)
     calls = []
 
-    def fake_summarize_chunks(**kwargs):
+    def fake_summarize_article_sections(**kwargs):
         calls.append(kwargs)
         return _chapters()
 
-    monkeypatch.setattr(retry_module, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(
+        retry_module,
+        "summarize_article_sections",
+        fake_summarize_article_sections,
+        raising=False,
+    )
 
     with pytest.raises(RetryError, match="Unsupported summary template"):
         retry_run(run_dir, from_stage="summarization", summary_template="营销文案")
@@ -347,7 +497,7 @@ def test_retry_render_html_only_does_not_expose_stale_pdf(tmp_path, monkeypatch)
     assert "report_pdf" not in bundle["artifacts"]
 
 
-def test_retry_nabaichuan_failure_keeps_bundle_artifacts_truthful(tmp_path, monkeypatch):
+def test_retry_render_does_not_write_nabaichuan_jsonl(tmp_path, monkeypatch):
     run_dir = _run_dir(tmp_path)
     _write_json(run_dir / "chapters.json", _chapters())
 
@@ -356,18 +506,22 @@ def test_retry_nabaichuan_failure_keeps_bundle_artifacts_truthful(tmp_path, monk
         html_path.write_text("<html>retry</html>", encoding="utf-8")
         return html_path
 
-    def fake_write_nabaichuan_jsonl(run_dir):
-        raise retry_module.ExportError("jsonl failed")
+    def forbidden_write_nabaichuan_jsonl(run_dir):
+        raise AssertionError("retry should not export nabaichuan jsonl by default")
 
     monkeypatch.setattr(retry_module, "render_report_html", fake_render_report_html)
-    monkeypatch.setattr(retry_module, "write_nabaichuan_jsonl", fake_write_nabaichuan_jsonl)
+    monkeypatch.setattr(
+        retry_module,
+        "write_nabaichuan_jsonl",
+        forbidden_write_nabaichuan_jsonl,
+    )
 
-    with pytest.raises(RetryError, match="jsonl failed"):
-        retry_run(run_dir, from_stage="render", output_format="html")
+    result = retry_run(run_dir, from_stage="render", output_format="html")
 
     bundle = json.loads((run_dir / "content_bundle.json").read_text(encoding="utf-8"))
     assert "content_bundle.json" in bundle["artifacts"]["all"]
     assert "nabaichuan.jsonl" not in bundle["artifacts"]["all"]
+    assert "nabaichuan.jsonl" not in result.artifact_paths
     assert not (run_dir / "nabaichuan.jsonl").exists()
 
 
@@ -380,11 +534,17 @@ def test_retry_require_pdf_failure_writes_failed_diagnostics(tmp_path, monkeypat
         html_path.write_text("<html>retry</html>", encoding="utf-8")
         return html_path
 
-    def fake_export_report_pdf(*, html_path, pdf_path):
+    def fake_export_html_pdf(*, html_path, pdf_path):
         raise PdfExportError("Chrome failed for /Users/jack/report.html")
 
     monkeypatch.setattr(retry_module, "render_report_html", fake_render_report_html)
-    monkeypatch.setattr(retry_module, "export_report_pdf", fake_export_report_pdf)
+    monkeypatch.setattr(retry_module, "export_report_pdf", fake_export_html_pdf)
+    monkeypatch.setattr(
+        retry_module,
+        "export_html_pdf",
+        fake_export_html_pdf,
+        raising=False,
+    )
 
     with pytest.raises(RetryError, match="Chrome failed"):
         retry_run(run_dir, from_stage="render", require_pdf=True)
@@ -399,10 +559,26 @@ def test_retry_require_pdf_failure_writes_failed_diagnostics(tmp_path, monkeypat
 def test_retry_summarization_failure_writes_failed_diagnostics(tmp_path, monkeypatch):
     run_dir = _run_dir(tmp_path)
 
-    def fake_summarize_chunks(**kwargs):
+    def fake_generate_transcript_article(**kwargs):
+        article = _article()
+        _write_json(run_dir / "transcript_article.json", article)
+        return article
+
+    def fake_summarize_article_sections(**kwargs):
         raise SummarizationError("CODEX_ACCESS_TOKEN=secret failed")
 
-    monkeypatch.setattr(retry_module, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(
+        retry_module,
+        "generate_transcript_article",
+        fake_generate_transcript_article,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        retry_module,
+        "summarize_article_sections",
+        fake_summarize_article_sections,
+        raising=False,
+    )
 
     with pytest.raises(RetryError, match="CODEX_ACCESS_TOKEN=<redacted>"):
         retry_run(run_dir, from_stage="summarization", output_format="html")
@@ -424,15 +600,32 @@ def test_retry_summarization_failure_does_not_expose_stale_downstream_artifacts(
     (run_dir / "report.pdf").write_bytes(b"stale pdf")
     _write_json(run_dir / "content_bundle.json", {"stale": True})
 
-    def fake_summarize_chunks(**kwargs):
+    def fake_generate_transcript_article(**kwargs):
+        article = _article()
+        _write_json(run_dir / "transcript_article.json", article)
+        return article
+
+    def fake_summarize_article_sections(**kwargs):
         raise SummarizationError("summary failed")
 
-    monkeypatch.setattr(retry_module, "summarize_chunks", fake_summarize_chunks)
+    monkeypatch.setattr(
+        retry_module,
+        "generate_transcript_article",
+        fake_generate_transcript_article,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        retry_module,
+        "summarize_article_sections",
+        fake_summarize_article_sections,
+        raising=False,
+    )
 
     with pytest.raises(RetryError, match="summary failed"):
         retry_run(run_dir, from_stage="summarization", output_format="html")
 
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+    assert "transcript_article.json" in diagnostics["artifact_paths"]
     assert "report.html" not in diagnostics["artifact_paths"]
     assert "report.pdf" not in diagnostics["artifact_paths"]
     assert "content_bundle.json" not in diagnostics["artifact_paths"]
