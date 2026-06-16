@@ -51,6 +51,9 @@ def test_render_app_html_contains_workbench_contract():
     required_strings = [
         "Bilifan 视频笔记",
         "history-list",
+        "history-search",
+        "history-toggle-button",
+        "history-summary",
         "url-input",
         "format-select",
         "summary-template-select",
@@ -652,6 +655,117 @@ def test_render_app_script_preserves_open_action_menu_after_refresh():
         await flush();
 
         assert(elements["history-list"].innerHTML.includes(`data-menu-key="${menuKey}" open`));
+        """,
+    )
+
+
+def test_render_app_script_collapses_history_by_default_and_can_expand():
+    script = _extract_inline_script(render_app_html())
+
+    history_items = [
+        {
+            "title": f"历史视频 {index}",
+            "output_id": f"BV1history{index:02d}_p1",
+            "run_key": f"BV1history{index:02d}_p1/runs/2026-06-08_120000",
+            "status": "succeeded",
+            "stage": "render",
+            "artifacts": {},
+        }
+        for index in range(1, 9)
+    ]
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic=f"""
+        const historyItems = {json.dumps(history_items, ensure_ascii=False)};
+        async function fetchMock(path, options = {{}}) {{
+          fetchCalls.push({{ path, method: options.method || "GET", body: options.body || "" }});
+          if (path === "/api/config") {{
+            return jsonResponse({{ consent: {{ local_processing: true }}, defaults: {{ format: "html,pdf", language: "auto", summary_template: "AI 自动判断" }} }});
+          }}
+          if (path === "/api/history") return jsonResponse({{ items: historyItems }});
+          if (path === "/api/jobs/current") {{
+            return jsonResponse({{
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {{}},
+              run_key: null
+            }});
+          }}
+          throw new Error(`unexpected fetch ${{path}}`);
+        }}
+        """,
+        assertions="""
+        assert(elements["history-list"].innerHTML.includes("历史视频 1"));
+        assert(elements["history-list"].innerHTML.includes("历史视频 6"));
+        assert(!elements["history-list"].innerHTML.includes("历史视频 7"));
+        assert(!elements["history-list"].innerHTML.includes("历史视频 8"));
+        assert(elements["history-summary"].textContent.includes("显示最近 6 条，共 8 条"));
+        assert.equal(elements["history-toggle-button"].hidden, false);
+        assert(elements["history-toggle-button"].textContent.includes("展开更多"));
+
+        await elements["history-toggle-button"].listeners.click();
+        await flush();
+
+        assert(elements["history-list"].innerHTML.includes("历史视频 8"));
+        assert(elements["history-summary"].textContent.includes("已展开全部 8 条"));
+        assert(elements["history-toggle-button"].textContent.includes("收起"));
+        """,
+    )
+
+
+def test_render_app_script_history_search_filters_all_items():
+    script = _extract_inline_script(render_app_html())
+
+    history_items = [
+        {
+            "title": f"历史视频 {index}",
+            "output_id": f"BV1history{index:02d}_p1",
+            "run_key": f"BV1history{index:02d}_p1/runs/2026-06-08_120000",
+            "status": "succeeded",
+            "stage": "render",
+            "transcript_source_label": "Whisper turbo",
+            "artifacts": {},
+        }
+        for index in range(1, 9)
+    ]
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic=f"""
+        const historyItems = {json.dumps(history_items, ensure_ascii=False)};
+        async function fetchMock(path, options = {{}}) {{
+          fetchCalls.push({{ path, method: options.method || "GET", body: options.body || "" }});
+          if (path === "/api/config") {{
+            return jsonResponse({{ consent: {{ local_processing: true }}, defaults: {{ format: "html,pdf", language: "auto", summary_template: "AI 自动判断" }} }});
+          }}
+          if (path === "/api/history") return jsonResponse({{ items: historyItems }});
+          if (path === "/api/jobs/current") {{
+            return jsonResponse({{
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {{}},
+              run_key: null
+            }});
+          }}
+          throw new Error(`unexpected fetch ${{path}}`);
+        }}
+        """,
+        assertions="""
+        assert(!elements["history-list"].innerHTML.includes("历史视频 8"));
+
+        elements["history-search"].value = "history08";
+        await elements["history-search"].listeners.input();
+        await flush();
+
+        assert(!elements["history-list"].innerHTML.includes("历史视频 1"));
+        assert(elements["history-list"].innerHTML.includes("历史视频 8"));
+        assert(elements["history-summary"].textContent.includes("搜索到 1 条"));
+        assert.equal(elements["history-toggle-button"].hidden, true);
         """,
     )
 

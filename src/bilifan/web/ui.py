@@ -116,6 +116,7 @@ def render_app_html(token: str = "") -> str:
             }
             input[type="text"],
             input[type="url"],
+            input[type="search"],
             select,
             textarea,
             button {
@@ -123,6 +124,7 @@ def render_app_html(token: str = "") -> str:
             }
             input[type="text"],
             input[type="url"],
+            input[type="search"],
             select,
             textarea {
               width: 100%;
@@ -138,6 +140,7 @@ def render_app_html(token: str = "") -> str:
             }
             input[type="text"]:focus,
             input[type="url"]:focus,
+            input[type="search"]:focus,
             select:focus,
             textarea:focus,
             button:focus {
@@ -351,6 +354,25 @@ def render_app_html(token: str = "") -> str:
               display: grid;
               gap: 10px;
             }
+            .history-tools {
+              display: grid;
+              gap: 8px;
+              margin-bottom: 12px;
+            }
+            .history-toolbar {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 8px;
+            }
+            .history-toolbar .subtle {
+              min-width: 0;
+              overflow-wrap: anywhere;
+            }
+            .history-search-label {
+              display: grid;
+              gap: 6px;
+            }
             .history-item,
             .stage-item {
               min-width: 0;
@@ -543,6 +565,16 @@ def render_app_html(token: str = "") -> str:
                   </div>
                 </div>
                 <div class="panel-body">
+                  <div class="history-tools">
+                    <label class="history-search-label">
+                      <span>搜索历史</span>
+                      <input id="history-search" type="search" placeholder="标题、BV 号、逐字稿来源">
+                    </label>
+                    <div class="history-toolbar">
+                      <span id="history-summary" class="subtle">正在读取历史...</span>
+                      <button id="history-toggle-button" class="compact secondary" type="button" hidden>展开更多</button>
+                    </div>
+                  </div>
                   <ul id="history-list" class="history-list"></ul>
                 </div>
               </aside>
@@ -688,6 +720,7 @@ def render_app_html(token: str = "") -> str:
 
           <script>
             const STAGES = ["preflight", "metadata", "audio", "transcript", "chunking", "summarization", "render"];
+            const HISTORY_COLLAPSED_LIMIT = 6;
             const STAGE_LABELS = {
               preflight: "准备检查",
               metadata: "读取视频信息",
@@ -718,12 +751,18 @@ def render_app_html(token: str = "") -> str:
               consentAccepted: false,
               currentStatus: "idle",
               currentRunKey: "",
+              historyItems: [],
+              historyExpanded: false,
+              historyQuery: "",
               openMenus: new Set(),
               pollingTimer: null,
             };
 
             const elements = {
               historyList: document.getElementById("history-list"),
+              historySearch: document.getElementById("history-search"),
+              historySummary: document.getElementById("history-summary"),
+              historyToggleButton: document.getElementById("history-toggle-button"),
               jobForm: document.getElementById("job-form"),
               urlInput: document.getElementById("url-input"),
               currentOptionsSummary: document.getElementById("current-options-summary"),
@@ -1030,11 +1069,29 @@ def render_app_html(token: str = "") -> str:
             }
 
             function renderHistory(items) {
-              if (!Array.isArray(items) || items.length === 0) {
+              state.historyItems = Array.isArray(items) ? items : [];
+              renderHistoryList();
+            }
+
+            function renderHistoryList() {
+              const items = state.historyItems;
+              const query = state.historyQuery.trim().toLowerCase();
+              const matchedItems = query
+                ? items.filter((item) => historySearchText(item).includes(query))
+                : items;
+              const shouldCollapse = !query && !state.historyExpanded && matchedItems.length > HISTORY_COLLAPSED_LIMIT;
+              const visibleItems = shouldCollapse ? matchedItems.slice(0, HISTORY_COLLAPSED_LIMIT) : matchedItems;
+              renderHistorySummary(items.length, matchedItems.length, visibleItems.length, query);
+
+              if (items.length === 0) {
                 elements.historyList.innerHTML = '<li class="muted-panel">暂无历史记录。</li>';
                 return;
               }
-              elements.historyList.innerHTML = items.map((item) => {
+              if (matchedItems.length === 0) {
+                elements.historyList.innerHTML = '<li class="muted-panel">没有匹配的历史记录。</li>';
+                return;
+              }
+              elements.historyList.innerHTML = visibleItems.map((item) => {
                 const artifacts = item && typeof item.artifacts === "object" ? item.artifacts : {};
                 const historyKey = item.run_key || item.output_id || item.title || "history";
                 const actionMarkup = artifactActionGroups(artifacts, item.run_key, item.status, {
@@ -1067,6 +1124,49 @@ def render_app_html(token: str = "") -> str:
                   </li>
                 `;
               }).join("");
+            }
+
+            function renderHistorySummary(totalCount, matchedCount, visibleCount, query) {
+              const hasMore = totalCount > HISTORY_COLLAPSED_LIMIT;
+              elements.historyToggleButton.hidden = Boolean(query) || !hasMore;
+              if (query) {
+                elements.historySummary.textContent = `搜索到 ${matchedCount} 条，共 ${totalCount} 条`;
+                return;
+              }
+              if (!totalCount) {
+                elements.historySummary.textContent = "暂无历史记录";
+                return;
+              }
+              if (!hasMore) {
+                elements.historySummary.textContent = `共 ${totalCount} 条`;
+                return;
+              }
+              if (state.historyExpanded) {
+                elements.historySummary.textContent = `已展开全部 ${totalCount} 条`;
+                elements.historyToggleButton.textContent = "收起";
+                return;
+              }
+              elements.historySummary.textContent = `显示最近 ${visibleCount} 条，共 ${totalCount} 条`;
+              elements.historyToggleButton.textContent = `展开更多 ${totalCount - HISTORY_COLLAPSED_LIMIT} 条`;
+            }
+
+            function historySearchText(item) {
+              if (!item || typeof item !== "object") return "";
+              const friendly = item.friendly_error && typeof item.friendly_error === "object" ? item.friendly_error : {};
+              return [
+                item.title,
+                item.output_id,
+                item.run_key,
+                item.status,
+                item.stage,
+                item.transcript_source_label,
+                friendly.title,
+                friendly.cause,
+                friendly.next_action,
+              ]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase();
             }
 
             function renderQueue(queue) {
@@ -1590,6 +1690,14 @@ def render_app_html(token: str = "") -> str:
               elements.consentButton.addEventListener("click", acceptConsent);
               elements.jobForm.addEventListener("submit", startJob);
               elements.cancelButton.addEventListener("click", cancelJob);
+              elements.historySearch.addEventListener("input", () => {
+                state.historyQuery = elements.historySearch.value || "";
+                renderHistoryList();
+              });
+              elements.historyToggleButton.addEventListener("click", () => {
+                state.historyExpanded = !state.historyExpanded;
+                renderHistoryList();
+              });
               [
                 elements.formatSelect,
                 elements.summaryTemplateSelect,
