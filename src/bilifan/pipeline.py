@@ -280,7 +280,7 @@ def run_summarize_pipeline(
     assert transcript is not None
 
     _write_json(run.run_dir / "transcript.json", transcript)
-    export_warnings: list[str] = []
+    export_warnings = _transcript_pipeline_warnings(transcript)
     _progress(progress_callback, PipelineStage.TRANSCRIPT, "done", "Transcript saved.")
 
     _progress(progress_callback, PipelineStage.CHUNKING, "running", "Building chunks.")
@@ -933,6 +933,32 @@ def _existing_named_artifacts(run_dir: Path, names: list[str]) -> list[str]:
 
 def _append_unique(items: list[str], item: str) -> list[str]:
     return [*items, item] if item not in items else list(items)
+
+
+def _transcript_pipeline_warnings(transcript: dict[str, Any]) -> list[str]:
+    quality_check = transcript.get("transcript_quality_check")
+    if not isinstance(quality_check, dict):
+        return []
+
+    warnings: list[str] = []
+    status = quality_check.get("status")
+    if status in {"low_confidence", "suspect_wrong_route", "unusable"}:
+        warnings = _append_unique(warnings, f"transcript_quality_{status}")
+
+    attempts = transcript.get("transcription_attempts")
+    if isinstance(attempts, list) and len(attempts) > 1:
+        selected_index = next(
+            (
+                index
+                for index, attempt in enumerate(attempts)
+                if isinstance(attempt, dict) and attempt.get("selected") is True
+            ),
+            None,
+        )
+        if selected_index is not None and selected_index > 0:
+            warnings = _append_unique(warnings, "transcript_auto_corrected")
+
+    return warnings
 
 
 def _parse_output_formats(raw_format: str) -> set[str]:

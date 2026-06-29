@@ -555,6 +555,57 @@ def test_pipeline_exports_transcript_and_report_pdfs_when_pdf_requested(
     assert (result.run_dir / "report.pdf").read_bytes() == b"PDF for report.html"
 
 
+def test_pipeline_promotes_transcript_quality_warning_to_diagnostics(
+    tmp_path, monkeypatch
+):
+    _install_minimal_successful_pipeline_fakes(monkeypatch)
+
+    def fake_build_transcript(
+        metadata,
+        media,
+        run_dir,
+        *,
+        force_whisper=False,
+        language="auto",
+        transcriber="auto",
+    ):
+        if not media.get("audio_path"):
+            raise pipeline.TranscriptError("Audio file for Whisper is missing.")
+        return {
+            "source": "whisper",
+            "language": "zh",
+            "model": "turbo",
+            "segments": [{"start": 0.0, "end": 120.0, "text": "转写"}],
+            "transcript_check": {"status": "ok", "segment_count": 1},
+            "transcript_quality_check": {"status": "suspect_wrong_route"},
+            "transcription_attempts": [
+                {
+                    "model": "turbo",
+                    "language": "zh",
+                    "backend": "openai-whisper",
+                    "quality_status": "suspect_wrong_route",
+                    "selected": True,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
+
+    result = pipeline.run_summarize_pipeline(
+        PipelineRequest(
+            url="https://www.bilibili.com/video/BV1abcDEF12G",
+            out=tmp_path,
+            output_format="html",
+            yes_i_understand=True,
+        )
+    )
+
+    diagnostics = json.loads((result.run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+    assert "transcript_quality_suspect_wrong_route" in result.warnings
+    assert "transcript_quality_suspect_wrong_route" in diagnostics["warnings"]
+    assert diagnostics["transcript_check"]["status"] == "ok"
+
+
 def test_pipeline_pdf_failure_warns_when_not_required(tmp_path, monkeypatch):
     _install_minimal_successful_pipeline_fakes(monkeypatch)
 
