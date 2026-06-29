@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 from .diagnostics import redact_text
 from .sources.youtube import parse_youtube_vtt
 from .transcript_quality import check_transcript_quality
-from .transcription_routing import choose_whisper_route
+from .transcription_routing import alternate_whisper_route, choose_whisper_route
 
 
 SUBTITLE_TIMEOUT_SECONDS = 60
@@ -86,42 +86,45 @@ def build_transcript(
             f"{_first_text(media.get('audio_path'))}"
         )
 
-    segments, backend = _transcribe_with_preferred_whisper(
+    first_attempt = _build_whisper_attempt(
         audio_path,
         model_name=model_name,
         language=whisper_language,
+        metadata=metadata,
+        media=media,
         whisper_transcriber=whisper_transcriber,
         mlx_whisper_transcriber=mlx_whisper_transcriber,
     )
-    normalized_segments = _normalize_segments(
-        segments,
-        language=whisper_language,
-        source="whisper",
-    )
-    quality_check = check_transcript_quality(
-        normalized_segments,
-        expected_language=whisper_language,
-        metadata=metadata,
-        audio_seconds=_float_value(media.get("duration_seconds")),
-    )
+    attempts = [first_attempt]
+    if _should_retry_whisper_attempt(first_attempt, language):
+        alternate = alternate_whisper_route(routing_decision)
+        attempts.append(
+            _build_whisper_attempt(
+                audio_path,
+                model_name=alternate["model"],
+                language=alternate["language"],
+                metadata=metadata,
+                media=media,
+                whisper_transcriber=whisper_transcriber,
+                mlx_whisper_transcriber=mlx_whisper_transcriber,
+            )
+        )
+
+    selected_attempt = _select_whisper_attempt(attempts)
+    for attempt in attempts:
+        attempt["selected"] = attempt is selected_attempt
+
     transcript = _transcript_payload(
         source="whisper",
-        language=whisper_language,
-        model=model_name,
-        backend=backend,
-        segments=segments,
+        language=str(selected_attempt["language"]),
+        model=str(selected_attempt["model"]),
+        backend=str(selected_attempt["backend"]),
+        segments=selected_attempt["segments"],
         media=media,
         routing_decision=routing_decision,
-        transcript_quality_check=quality_check,
-        transcription_attempts=[
-            {
-                "model": model_name,
-                "language": whisper_language,
-                "backend": backend,
-                "quality_status": quality_check["status"],
-                "selected": True,
-            }
-        ],
+        transcript_quality_check=selected_attempt["quality_check"],
+        transcription_attempts=[_attempt_summary(attempt) for attempt in attempts],
+        segments_are_normalized=True,
     )
     _raise_if_incomplete(transcript)
     return transcript
@@ -307,12 +310,16 @@ def _transcript_payload(
     routing_decision: dict[str, Any] | None = None,
     transcript_quality_check: dict[str, Any] | None = None,
     transcription_attempts: list[dict[str, Any]] | None = None,
+    segments_are_normalized: bool = False,
 ) -> dict[str, Any]:
-    normalized_segments = _normalize_segments(
-        segments,
-        language=language,
-        source=source,
-    )
+    if segments_are_normalized:
+        normalized_segments = segments
+    else:
+        normalized_segments = _normalize_segments(
+            segments,
+            language=language,
+            source=source,
+        )
     payload = {
         "source": source,
         "language": language,
@@ -332,6 +339,81 @@ def _transcript_payload(
     if transcription_attempts is not None:
         payload["transcription_attempts"] = transcription_attempts
     return payload
+
+
+def _build_whisper_attempt(
+    audio_path: Path,
+    *,
+    model_name: str,
+    language: str,
+    metadata: dict[str, Any],
+    media: dict[str, Any],
+    whisper_transcriber,
+    mlx_whisper_transcriber,
+) -> dict[str, Any]:
+    raw_segments, backend = _transcribe_with_preferred_whisper(
+        audio_path,
+        model_name=model_name,
+        language=language,
+        whisper_transcriber=whisper_transcriber,
+        mlx_whisper_transcriber=mlx_whisper_transcriber,
+    )
+    normalized_segments = _normalize_segments(
+        raw_segments,
+        language=language,
+        source="whisper",
+    )
+    quality_check = check_transcript_quality(
+        normalized_segments,
+        expected_language=language,
+        metadata=metadata,
+        audio_seconds=_float_value(media.get("duration_seconds")),
+    )
+    return {
+        "model": model_name,
+        "language": language,
+        "backend": backend,
+        "raw_segments": raw_segments,
+        "segments": normalized_segments,
+        "quality_check": quality_check,
+        "selected": False,
+    }
+
+
+def _should_retry_whisper_attempt(
+    attempt: dict[str, Any],
+    requested_language: str,
+) -> bool:
+    status = str(attempt["quality_check"]["status"])
+    if requested_language == "auto":
+        return status in {"suspect_wrong_route", "unusable"}
+    return status == "unusable"
+
+
+def _quality_rank(status: str) -> int:
+    return {
+        "unusable": 0,
+        "suspect_wrong_route": 1,
+        "low_confidence": 2,
+        "ok": 3,
+    }.get(status, -1)
+
+
+def _select_whisper_attempt(attempts: list[dict[str, Any]]) -> dict[str, Any]:
+    return max(
+        attempts,
+        key=lambda attempt: _quality_rank(str(attempt["quality_check"]["status"])),
+    )
+
+
+def _attempt_summary(attempt: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "model": attempt["model"],
+        "language": attempt["language"],
+        "backend": attempt["backend"],
+        "quality_status": attempt["quality_check"]["status"],
+        "selected": attempt["selected"],
+    }
 
 
 def _transcribe_with_preferred_whisper(

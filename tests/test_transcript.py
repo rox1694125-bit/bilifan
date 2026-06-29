@@ -290,7 +290,7 @@ def test_build_transcript_uses_whisper_when_no_subtitles(tmp_path):
 
     def fake_whisper(audio_file, *, model_name, language):
         calls.append((audio_file, model_name, language))
-        return [{"start": 0, "end": 2, "text": "转写内容"}]
+        return [{"start": 0, "end": 2, "text": "这里是完整中文转写内容 用于教程说明"}]
 
     transcript = build_transcript(
         metadata,
@@ -307,7 +307,7 @@ def test_build_transcript_uses_whisper_when_no_subtitles(tmp_path):
         {
             "start": 0.0,
             "end": 2.0,
-            "text": "转写内容",
+            "text": "这里是完整中文转写内容 用于教程说明",
             "language": "zh",
             "source": "whisper",
         }
@@ -345,6 +345,158 @@ def test_build_transcript_adds_routing_and_quality_metadata_for_whisper(tmp_path
             "selected": True,
         }
     ]
+
+
+def test_build_transcript_auto_retries_alternate_route_when_first_route_is_suspect(
+    tmp_path,
+):
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"fake audio")
+    metadata = {
+        "title": "给傻子的Git教程",
+        "description": "Git官网: https://git-scm.com/book/en/v2",
+        "subtitles": [],
+    }
+    media = {"duration_seconds": 8, "audio_path": "audio.mp3"}
+    calls = []
+
+    def fake_whisper(audio_file, *, model_name, language):
+        calls.append((model_name, language))
+        if language == "zh":
+            return [
+                {"start": 0, "end": 4, "text": "Now I do Ay Ari's text."},
+                {
+                    "start": 4,
+                    "end": 8,
+                    "text": "This is not coherent for the Chinese tutorial.",
+                },
+            ]
+        return [
+            {
+                "start": 0,
+                "end": 8,
+                "text": "Today we explain the core Git commands in a clean tutorial.",
+            }
+        ]
+
+    transcript = build_transcript(
+        metadata,
+        media,
+        tmp_path,
+        whisper_transcriber=fake_whisper,
+        mlx_whisper_transcriber=None,
+    )
+
+    assert calls == [("turbo", "zh"), ("small.en", "en")]
+    assert transcript["language"] == "en"
+    assert transcript["model"] == "small.en"
+    assert transcript["transcript_quality_check"]["status"] == "ok"
+    assert transcript["transcription_attempts"] == [
+        {
+            "model": "turbo",
+            "language": "zh",
+            "backend": "openai-whisper",
+            "quality_status": "suspect_wrong_route",
+            "selected": False,
+        },
+        {
+            "model": "small.en",
+            "language": "en",
+            "backend": "openai-whisper",
+            "quality_status": "ok",
+            "selected": True,
+        },
+    ]
+
+
+def test_build_transcript_keeps_first_attempt_when_alternate_is_not_better(tmp_path):
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"fake audio")
+    metadata = {"title": "中文教程", "description": "", "subtitles": []}
+    media = {"duration_seconds": 8, "audio_path": "audio.mp3"}
+
+    def fake_whisper(audio_file, *, model_name, language):
+        if language == "zh":
+            return [{"start": 0, "end": 8, "text": "Now I do Ay Ari's text."}]
+        return [{"start": 0, "end": 8, "text": "thank you"}]
+
+    transcript = build_transcript(
+        metadata,
+        media,
+        tmp_path,
+        whisper_transcriber=fake_whisper,
+        mlx_whisper_transcriber=None,
+    )
+
+    assert transcript["language"] == "zh"
+    assert transcript["model"] == "turbo"
+    assert transcript["transcript_quality_check"]["status"] == "suspect_wrong_route"
+    assert [attempt["selected"] for attempt in transcript["transcription_attempts"]] == [
+        True,
+        False,
+    ]
+
+
+def test_build_transcript_explicit_language_retries_only_when_unusable(tmp_path):
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"fake audio")
+    metadata = {"title": "Manual English", "description": "", "subtitles": []}
+    media = {"duration_seconds": 20, "audio_path": "audio.mp3"}
+    calls = []
+
+    def fake_whisper(audio_file, *, model_name, language):
+        calls.append((model_name, language))
+        if language == "en":
+            return [
+                {"start": index, "end": index + 1, "text": "thank you"}
+                for index in range(20)
+            ]
+        return [
+            {
+                "start": 0,
+                "end": 20,
+                "text": "今天我们讲一个中文内容 并且继续解释核心概念和操作步骤",
+            }
+        ]
+
+    transcript = build_transcript(
+        metadata,
+        media,
+        tmp_path,
+        language="en",
+        whisper_transcriber=fake_whisper,
+        mlx_whisper_transcriber=None,
+    )
+
+    assert calls == [("small.en", "en"), ("turbo", "zh")]
+    assert transcript["language"] == "zh"
+    assert transcript["transcription_attempts"][0]["quality_status"] == "unusable"
+    assert transcript["transcription_attempts"][1]["selected"] is True
+
+
+def test_build_transcript_explicit_language_does_not_retry_low_confidence(tmp_path):
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"fake audio")
+    metadata = {"title": "中文 Manual", "description": "", "subtitles": []}
+    media = {"duration_seconds": 8, "audio_path": "audio.mp3"}
+    calls = []
+
+    def fake_whisper(audio_file, *, model_name, language):
+        calls.append((model_name, language))
+        return [{"start": 0, "end": 8, "text": "中文 mixed text more"}]
+
+    transcript = build_transcript(
+        metadata,
+        media,
+        tmp_path,
+        language="zh",
+        whisper_transcriber=fake_whisper,
+        mlx_whisper_transcriber=None,
+    )
+
+    assert calls == [("turbo", "zh")]
+    assert len(transcript["transcription_attempts"]) == 1
+    assert transcript["transcription_attempts"][0]["quality_status"] == "low_confidence"
 
 
 def test_subtitle_transcript_does_not_add_whisper_routing_metadata(tmp_path):
@@ -387,7 +539,7 @@ def test_build_transcript_prefers_mlx_for_turbo_whisper(tmp_path):
 
     def fake_mlx(audio_file, *, model_name, language):
         calls.append(("mlx", audio_file, model_name, language))
-        return [{"start": 0, "end": 2, "text": "MLX 转写"}]
+        return [{"start": 0, "end": 2, "text": "这里是 MLX 完整中文转写内容 用于教程说明"}]
 
     def forbidden_openai(audio_file, *, model_name, language):
         raise AssertionError("openai-whisper should not run when MLX succeeds")
@@ -404,7 +556,7 @@ def test_build_transcript_prefers_mlx_for_turbo_whisper(tmp_path):
     assert transcript["source"] == "whisper"
     assert transcript["model"] == "turbo"
     assert transcript["backend"] == "mlx-whisper"
-    assert transcript["segments"][0]["text"] == "MLX 转写"
+    assert transcript["segments"][0]["text"] == "这里是 MLX 完整中文转写内容 用于教程说明"
 
 
 def test_build_transcript_falls_back_to_openai_when_mlx_fails(tmp_path):
@@ -421,7 +573,7 @@ def test_build_transcript_falls_back_to_openai_when_mlx_fails(tmp_path):
 
     def fake_openai(audio_file, *, model_name, language):
         calls.append(("openai", audio_file, model_name, language))
-        return [{"start": 0, "end": 2, "text": "fallback 转写"}]
+        return [{"start": 0, "end": 2, "text": "这里是 fallback 完整中文转写内容 用于教程说明"}]
 
     transcript = build_transcript(
         metadata,
@@ -438,7 +590,7 @@ def test_build_transcript_falls_back_to_openai_when_mlx_fails(tmp_path):
     assert transcript["source"] == "whisper"
     assert transcript["model"] == "turbo"
     assert transcript["backend"] == "openai-whisper"
-    assert transcript["segments"][0]["text"] == "fallback 转写"
+    assert transcript["segments"][0]["text"] == "这里是 fallback 完整中文转写内容 用于教程说明"
 
 
 def test_transcribe_with_mlx_whisper_requires_segment_list(tmp_path, monkeypatch):
@@ -496,7 +648,7 @@ def test_build_transcript_auto_falls_back_to_whisper_when_subtitle_fails(tmp_pat
 
     def fake_whisper(audio_file, *, model_name, language):
         calls.append((audio_file, model_name, language))
-        return [{"start": 0, "end": 2, "text": "fallback 转写"}]
+        return [{"start": 0, "end": 2, "text": "这里是 fallback 完整中文转写内容 用于教程说明"}]
 
     transcript = build_transcript(
         metadata,
@@ -508,7 +660,7 @@ def test_build_transcript_auto_falls_back_to_whisper_when_subtitle_fails(tmp_pat
 
     assert calls == [(audio_path, "turbo", "zh")]
     assert transcript["source"] == "whisper"
-    assert transcript["segments"][0]["text"] == "fallback 转写"
+    assert transcript["segments"][0]["text"] == "这里是 fallback 完整中文转写内容 用于教程说明"
 
 
 def test_build_transcript_subtitles_mode_does_not_fallback_to_whisper(tmp_path):
