@@ -101,6 +101,14 @@ def test_render_app_html_contains_workbench_contract():
         "batch-nabaichuan-button",
         "batch-urls",
         "batch-submit-button",
+        "collection-url",
+        "collection-preview-button",
+        "collection-mode-current",
+        "collection-mode-all",
+        "collection-submit-button",
+        "collection-preview-panel",
+        "collection-part-list",
+        "/api/bilibili/collection/preview",
         "queue-clear-completed-button",
         "queue-list",
         "任务中心",
@@ -614,6 +622,101 @@ def test_render_app_script_updates_current_options_summary_and_keeps_advanced_op
     )
 
 
+def test_render_app_script_previews_collection_and_can_submit_current_or_selected_parts():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "观点提炼" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/status") {
+            return jsonResponse({
+              ok: true,
+              service: "bilifan-web-ui",
+              started_at: "2026-06-08T12:00:00+00:00",
+              access: { token: "valid" },
+              entrypoint: { mode: "local", public_url: null },
+              current_job: { status: "idle", stage: "preflight", message: "" }
+            });
+          }
+          if (path === "/api/jobs/current") {
+            return jsonResponse({ status: "idle", stage: "preflight", message: "", progress: [], artifacts: {}, run_key: null });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 0, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+              visible_counts: { queued: 0, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+              total_items: 0,
+              items: []
+            });
+          }
+          if (path === "/api/bilibili/collection/preview") {
+            return jsonResponse({
+              ok: true,
+              platform: "bilibili",
+              bvid: "BV1abcDEF12G",
+              title: "合集标题",
+              current_part_index: 2,
+              current_url: "https://www.bilibili.com/video/BV1abcDEF12G?p=2",
+              total_parts: 3,
+              parts: [
+                { part_index: 1, title: "第一课", duration: 120, url: "https://www.bilibili.com/video/BV1abcDEF12G?p=1", is_current: false },
+                { part_index: 2, title: "第二课", duration: 150, url: "https://www.bilibili.com/video/BV1abcDEF12G?p=2", is_current: true },
+                { part_index: 3, title: "第三课", duration: null, url: "https://www.bilibili.com/video/BV1abcDEF12G?p=3", is_current: false }
+              ]
+            });
+          }
+          if (path === "/api/jobs/batch") {
+            return jsonResponse({
+              counts: { queued: 2, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+              visible_counts: { queued: 2, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+              items: []
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        elements["collection-url"].value = "https://www.bilibili.com/video/BV1abcDEF12G?p=2&spm_id_from=333.788";
+        await elements["collection-preview-button"].listeners.click();
+        await flush();
+
+        const previewCall = fetchCalls.find((call) => call.path === "/api/bilibili/collection/preview");
+        assert.equal(JSON.parse(previewCall.body).url, "https://www.bilibili.com/video/BV1abcDEF12G?p=2&spm_id_from=333.788");
+        assert(elements["collection-preview-panel"].innerHTML.includes("合集标题"));
+        assert(elements["collection-preview-panel"].innerHTML.includes("共 3 个视频"));
+        assert.equal(elements["collection-part-1"].checked, true);
+        assert.equal(elements["collection-part-2"].checked, true);
+        assert.equal(elements["collection-part-3"].checked, true);
+
+        elements["collection-part-1"].checked = false;
+        await elements["collection-submit-button"].listeners.click();
+        await flush();
+        let batchCalls = fetchCalls.filter((call) => call.path === "/api/jobs/batch");
+        let batchBody = JSON.parse(batchCalls[batchCalls.length - 1].body);
+        assert.deepEqual(batchBody.items, [
+          { url: "https://www.bilibili.com/video/BV1abcDEF12G?p=2", title: "第二课" },
+          { url: "https://www.bilibili.com/video/BV1abcDEF12G?p=3", title: "第三课" }
+        ]);
+        assert.equal(batchBody.summary_template, "观点提炼");
+
+        await elements["collection-mode-current"].listeners.click();
+        await elements["collection-submit-button"].listeners.click();
+        await flush();
+        batchCalls = fetchCalls.filter((call) => call.path === "/api/jobs/batch");
+        batchBody = JSON.parse(batchCalls[batchCalls.length - 1].body);
+        assert.deepEqual(batchBody.items, [
+          { url: "https://www.bilibili.com/video/BV1abcDEF12G?p=2", title: "第二课" }
+        ]);
+        """,
+    )
+
+
 def test_render_app_script_preserves_open_action_menu_after_refresh():
     script = _extract_inline_script(render_app_html())
 
@@ -663,6 +766,69 @@ def test_render_app_script_preserves_open_action_menu_after_refresh():
         await flush();
 
         assert(elements["history-list"].innerHTML.includes(`data-menu-key="${menuKey}" open`));
+        """,
+    )
+
+
+def test_render_app_script_history_hides_output_id_and_copies_source_url():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "学习笔记" } });
+          }
+          if (path === "/api/history") {
+            return jsonResponse({
+              items: [{
+                title: "历史视频标题",
+                source_url: "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+                output_id: "BV1abcDEF12G_p1",
+                run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
+                status: "succeeded",
+                stage: "render",
+                transcript_source_label: "B站字幕",
+                artifacts: {}
+              }]
+            });
+          }
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["history-list"].innerHTML.includes("历史视频标题"));
+        assert(elements["history-list"].innerHTML.includes("复制链接"));
+        assert(!elements["history-list"].innerHTML.includes("<span>BV1abcDEF12G_p1</span>"));
+
+        const copyTarget = {
+          closest(selector) {
+            if (selector !== "[data-copy-source-url]") return null;
+            return {
+              getAttribute(name) {
+                assert.equal(name, "data-copy-source-url");
+                return "https://www.bilibili.com/video/BV1abcDEF12G?p=1";
+              }
+            };
+          }
+        };
+        await document.listeners.click({ target: copyTarget });
+        await flush();
+
+        assert.deepEqual(clipboardWrites, ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"]);
+        assert.equal(elements["job-message"].textContent, "已复制视频链接。");
         """,
     )
 
@@ -842,6 +1008,81 @@ def test_render_app_script_queue_can_clear_completed_jobs():
     )
 
 
+def test_render_app_script_queue_can_clear_failed_and_canceled_jobs():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "学习笔记" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 0, running: 0, succeeded: 0, failed: 1, canceled: 1 },
+              visible_counts: { queued: 0, running: 0, succeeded: 0, failed: 1, canceled: 1 },
+              total_items: 2,
+              hidden_completed: 0,
+              items: [
+                {
+                  job_id: "failed-job",
+                  status: "failed",
+                  stage: "audio",
+                  message: "download failed",
+                  request: { url: "https://www.bilibili.com/video/BV1abcDEF12G?fail" },
+                  artifacts: {},
+                  friendly_error: { title: "任务失败", cause: "下载失败", next_action: "换一个公开视频重试。" }
+                },
+                {
+                  job_id: "canceled-job",
+                  status: "canceled",
+                  stage: "canceled",
+                  message: "Pending queue job canceled.",
+                  request: { url: "https://www.bilibili.com/video/BV1abcDEF12G?cancel" },
+                  artifacts: {}
+                }
+              ]
+            });
+          }
+          if (path === "/api/jobs/queue/clear-completed") {
+            return jsonResponse({
+              counts: { queued: 0, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+              visible_counts: { queued: 0, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+              total_items: 0,
+              hidden_completed: 0,
+              items: []
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        assert(elements["queue-summary"].textContent.includes("1 个失败需要处理"));
+        assert(elements["queue-summary"].textContent.includes("1 个已取消"));
+        assert.equal(elements["queue-clear-completed-button"].disabled, false);
+
+        await elements["queue-clear-completed-button"].listeners.click();
+        await flush();
+
+        assert(fetchCalls.some((call) => call.method === "POST" && call.path === "/api/jobs/queue/clear-completed"));
+        assert(elements["queue-list"].innerHTML.includes("暂无队列任务"));
+        """,
+    )
+
+
 def test_render_app_script_queue_pause_state_shows_single_resume_action():
     script = _extract_inline_script(render_app_html())
 
@@ -923,6 +1164,7 @@ def test_render_app_script_queue_item_uses_video_title_as_primary_label():
                 status: "succeeded",
                 stage: "render",
                 message: "Report ready.",
+                elapsed_seconds: 553,
                 request: { url: "https://www.bilibili.com/video/BV1abcDEF12G?p=1" },
                 run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
                 artifacts: {}
@@ -934,7 +1176,10 @@ def test_render_app_script_queue_item_uses_video_title_as_primary_label():
         """,
         assertions="""
         assert(elements["queue-list"].innerHTML.includes("真正的视频标题"));
-        assert(elements["queue-list"].innerHTML.includes("BV1abcDEF12G?p=1"));
+        assert(!elements["queue-list"].innerHTML.includes("class=\\"queue-url\\""));
+        assert(!elements["queue-list"].innerHTML.includes("<span>阶段: 生成文件</span>"));
+        assert(elements["queue-list"].innerHTML.includes("耗时 9 分 13 秒"));
+        assert(!elements["queue-list"].innerHTML.includes("已运行 9 分 13 秒"));
         assert(!elements["queue-list"].innerHTML.includes("<div class=\\"history-item-title\\">https://www.bilibili.com"));
         """,
     )
@@ -1102,7 +1347,8 @@ def test_render_app_script_task_center_shows_current_job_item():
         assertions="""
         assert(elements["queue-list"].innerHTML.includes("当前任务"));
         assert(elements["queue-list"].innerHTML.includes("单个入口视频标题"));
-        assert(elements["queue-list"].innerHTML.includes("BV1abcDEF12G?p=1"));
+        assert(!elements["queue-list"].innerHTML.includes("class=\\"queue-url\\""));
+        assert(!elements["queue-list"].innerHTML.includes("<span>阶段: 生成文件</span>"));
         assert(!elements["queue-list"].innerHTML.includes("重新排队"));
         assert.equal(elements["queue-clear-completed-button"].disabled, true);
         """,
@@ -1675,6 +1921,7 @@ def _run_node_ui_harness(
     const assert = require("assert");
     const source = {json.dumps(script)};
     const fetchCalls = [];
+    const clipboardWrites = [];
     const elements = {{}};
 
     class ClassList {{
@@ -1737,7 +1984,17 @@ def _run_node_ui_harness(
       }}
     }};
     global.location = {{ search: {json.dumps(location_search)}, origin: {json.dumps(location_origin)} }};
-    global.window = {{ location: global.location }};
+    Object.defineProperty(global, "navigator", {{
+      value: {{
+        clipboard: {{
+          async writeText(text) {{
+            clipboardWrites.push(text);
+          }}
+        }}
+      }},
+      configurable: true
+    }});
+    global.window = {{ location: global.location, navigator: global.navigator }};
     global.setInterval = (callback, interval) => {{
       global.__poll = {{ callback, interval }};
       return 1;

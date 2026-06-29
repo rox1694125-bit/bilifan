@@ -15,6 +15,7 @@ from .run_info import read_transcript_source_label
 
 QUEUE_SCHEMA_VERSION = 1
 RECENT_COMPLETED_LIMIT = 3
+TERMINAL_QUEUE_STATUSES = {"succeeded", "failed", "canceled"}
 
 
 @dataclass
@@ -60,14 +61,23 @@ class BatchQueueManager:
         self._jobs: list[QueueJob] = []
         self._load()
 
-    def submit(self, requests: list[PipelineRequest]) -> dict[str, Any]:
+    def submit(
+        self,
+        requests: list[PipelineRequest],
+        *,
+        titles: list[str | None] | None = None,
+    ) -> dict[str, Any]:
+        display_titles = titles or []
         with self._lock:
-            for request in requests:
+            for index, request in enumerate(requests):
                 self._jobs.append(
                     QueueJob(
                         job_id=uuid4().hex,
                         status="queued",
                         request=_request_to_payload(request),
+                        title=_display_title(
+                            display_titles[index] if index < len(display_titles) else None
+                        ),
                         progress=_initial_progress(),
                     )
                 )
@@ -117,6 +127,7 @@ class BatchQueueManager:
                     job_id=uuid4().hex,
                     status="queued",
                     request=dict(job.request),
+                    title=job.title,
                     progress=_initial_progress(),
                 )
             )
@@ -128,11 +139,10 @@ class BatchQueueManager:
 
     def clear_completed(self) -> dict[str, Any]:
         with self._lock:
-            replaced_attempt_ids = self._replaced_attempt_ids_locked()
             self._jobs = [
                 job
                 for job in self._jobs
-                if job.status != "succeeded" and job.job_id not in replaced_attempt_ids
+                if job.status not in TERMINAL_QUEUE_STATUSES
             ]
             self._persist_locked()
             return self._state_locked()
@@ -346,8 +356,8 @@ class BatchQueueManager:
                 started_at=raw_job.get("started_at") if isinstance(raw_job.get("started_at"), str) else None,
                 finished_at=raw_job.get("finished_at") if isinstance(raw_job.get("finished_at"), str) else None,
             )
-            if job.title is None and run_key:
-                job.title = _read_metadata_title(outputs_root / run_key)
+            if run_key:
+                job.title = _read_metadata_title(outputs_root / run_key) or job.title
             if job.transcript_source_label is None and run_key:
                 job.transcript_source_label = read_transcript_source_label(
                     outputs_root / run_key
@@ -407,7 +417,14 @@ def _read_metadata_title(run_dir: Path) -> str | None:
         return None
     if not isinstance(data, dict):
         return None
-    title = _optional_text(data.get("title")) or _optional_text(data.get("part_title"))
+    title = _optional_text(data.get("part_title")) or _optional_text(data.get("title"))
+    return redact_text(title) if title else None
+
+
+def _display_title(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    title = value.strip()
     return redact_text(title) if title else None
 
 

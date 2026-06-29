@@ -79,7 +79,8 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
                 "run_key": f"{output_id}/runs/{run_id}",
                 "output_id": output_id,
                 "run_id": run_id,
-                "title": _text(metadata.get("title")) or output_id,
+                "title": _metadata_title(metadata, output_id),
+                "source_url": _source_url(latest, metadata),
                 "status": status,
                 "stage": stage,
                 "transcript_source_label": transcript_source_label(transcript),
@@ -246,7 +247,8 @@ def _run_item(
         "run_key": f"{output_id}/runs/{run_id}",
         "output_id": output_id,
         "run_id": run_id,
-        "title": _text(metadata.get("title")) or output_id,
+        "title": _metadata_title(metadata, output_id),
+        "source_url": _source_url(metadata),
         "status": status,
         "stage": stage,
         "transcript_source_label": transcript_source_label(transcript),
@@ -291,6 +293,19 @@ def _read_json_object(path: Path | None) -> dict[str, Any]:
     except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _source_url(*sources: dict[str, Any]) -> str:
+    for source in sources:
+        for key in ["input_url_sanitized", "canonical_url", "url"]:
+            value = _text(source.get(key))
+            if value:
+                return value
+    return ""
+
+
+def _metadata_title(metadata: dict[str, Any], fallback: str) -> str:
+    return _text(metadata.get("part_title")) or _text(metadata.get("title")) or fallback
 
 
 def _artifact_links(

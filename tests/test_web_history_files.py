@@ -86,6 +86,10 @@ def test_list_latest_runs_reads_outputs_latest_json(tmp_path):
     assert len(items) == 1
     assert items[0]["output_id"] == "BV1abcDEF12G_p1"
     assert items[0]["title"] == "Mock title"
+    assert (
+        items[0]["source_url"]
+        == "https://www.bilibili.com/video/BV1abcDEF12G?p=1"
+    )
     assert items[0]["status"] == "succeeded"
     assert items[0]["stage"] == "render"
     assert items[0]["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120000"
@@ -111,6 +115,21 @@ def test_list_latest_runs_includes_transcript_source_label(tmp_path):
 
     assert latest_items[0]["transcript_source_label"] == "Whisper turbo"
     assert all_items[0]["transcript_source_label"] == "Whisper turbo"
+
+
+def test_list_runs_prefer_part_title_for_collection_episodes(tmp_path):
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    (run_dir / "metadata.json").write_text(
+        json.dumps({"title": "合集标题", "part_title": "第二课"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    latest_items = list_latest_runs(outputs)
+    all_items = list_all_runs(outputs)
+
+    assert latest_items[0]["title"] == "第二课"
+    assert all_items[0]["title"] == "第二课"
 
 
 def test_list_latest_runs_accepts_youtube_output_id(tmp_path):

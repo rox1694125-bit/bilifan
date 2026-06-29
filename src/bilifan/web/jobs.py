@@ -146,7 +146,7 @@ class JobManager:
                 if item["stage"] == stage:
                     item["status"] = status
                     break
-            self._refresh_elapsed_locked()
+            self._refresh_elapsed_locked(force=status == "failed")
             if self._current.cancel_requested:
                 raise JobCanceled
 
@@ -192,7 +192,7 @@ class JobManager:
                     if item["stage"] == failed_stage:
                         item["status"] = "failed"
                         break
-                self._refresh_elapsed_locked()
+                self._refresh_elapsed_locked(force=True)
             return
         except Exception as exc:
             message = redact_text(str(exc))
@@ -215,7 +215,7 @@ class JobManager:
                     if item["stage"] == failed_stage:
                         item["status"] = "failed"
                         break
-                self._refresh_elapsed_locked()
+                self._refresh_elapsed_locked(force=True)
             return
 
         artifacts = _artifact_links(result.run_key, result.artifact_paths)
@@ -237,7 +237,7 @@ class JobManager:
             self._current.retry_actions = []
             for item in self._current.progress:
                 item["status"] = "done"
-            self._refresh_elapsed_locked()
+            self._refresh_elapsed_locked(force=True)
 
     def _mark_canceled(self, job_id: str) -> None:
         with self._lock:
@@ -254,9 +254,11 @@ class JobManager:
             if item["stage"] == self._current.stage:
                 item["status"] = "canceled"
                 break
-        self._refresh_elapsed_locked()
+        self._refresh_elapsed_locked(force=True)
 
-    def _refresh_elapsed_locked(self) -> None:
+    def _refresh_elapsed_locked(self, *, force: bool = False) -> None:
+        if not force and self._current.status not in {"running", "canceling"}:
+            return
         now = monotonic()
         if self._current._job_started_monotonic is not None:
             self._current.elapsed_seconds = round(

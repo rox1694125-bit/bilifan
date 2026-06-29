@@ -8,10 +8,12 @@ from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from bilifan.bilibili_collection import preview_bilibili_collection
 from bilifan.config import default_config_path, read_config, write_consent
 from bilifan.exports import ExportError, write_nabaichuan_jsonl
+from bilifan.metadata import MetadataIngestError
 from bilifan.pipeline import (
     PipelineRequest,
     PipelineRunError,
@@ -72,8 +74,14 @@ class RetryCreatePayload(BaseModel):
     require_pdf: bool = WEB_DEFAULTS["require_pdf"]
 
 
+class BatchJobItemPayload(BaseModel):
+    url: str
+    title: str | None = None
+
+
 class BatchJobCreatePayload(BaseModel):
-    urls: list[str]
+    urls: list[str] = Field(default_factory=list)
+    items: list[BatchJobItemPayload] = Field(default_factory=list)
     format: str = WEB_DEFAULTS["format"]
     force_whisper: bool = WEB_DEFAULTS["force_whisper"]
     language: str = WEB_DEFAULTS["language"]
@@ -84,6 +92,10 @@ class BatchJobCreatePayload(BaseModel):
     allow_long_video: bool = WEB_DEFAULTS["allow_long_video"]
 
 
+class BilibiliCollectionPreviewPayload(BaseModel):
+    url: str
+
+
 def create_app(
     outputs: Path,
     token: str,
@@ -91,6 +103,7 @@ def create_app(
     public_url: str | None = None,
     pipeline_runner=run_summarize_pipeline,
     retry_runner=retry_run,
+    collection_previewer=preview_bilibili_collection,
     run_jobs_inline: bool = False,
 ) -> FastAPI:
     auth = TokenAuth(token)
@@ -168,6 +181,25 @@ def create_app(
     def history(_: None = Depends(require_token)) -> dict[str, object]:
         return {"items": _add_token_to_artifact_links(list_latest_runs(outputs), token)}
 
+    @app.post("/api/bilibili/collection/preview")
+    def preview_collection(
+        payload: BilibiliCollectionPreviewPayload,
+        _: None = Depends(require_token),
+    ) -> dict[str, object]:
+        _require_local_processing_consent(
+            "Local processing consent is required before previewing a Bilibili collection."
+        )
+        try:
+            result = collection_previewer(payload.url, work_dir=outputs)
+        except (MetadataIngestError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not isinstance(result, dict):
+            raise HTTPException(
+                status_code=500,
+                detail="Bilibili collection preview returned invalid data.",
+            )
+        return result
+
     @app.post("/api/jobs")
     def create_job(
         payload: JobCreatePayload,
@@ -214,34 +246,23 @@ def create_app(
         payload: BatchJobCreatePayload,
         _: None = Depends(require_token),
     ) -> dict[str, object]:
-        config = read_config(default_config_path())
-        if config.local_processing_notice_accepted_at is None:
-            raise HTTPException(
-                status_code=409,
-                detail="Local processing consent is required before starting a batch.",
-            )
-        urls = [url.strip() for url in payload.urls if url.strip()]
-        if not urls:
+        _require_local_processing_consent(
+            "Local processing consent is required before starting a batch."
+        )
+        batch_items = _batch_items_from_payload(payload)
+        if not batch_items:
             raise HTTPException(status_code=400, detail="Batch requires at least one URL.")
         summary_template = _validated_summary_template(payload.summary_template)
         requests = [
-            PipelineRequest(
-                url=url,
-                out=outputs,
-                output_format=payload.format,
-                force_whisper=payload.force_whisper,
-                language=payload.language,
+            _pipeline_request_from_defaults(
+                url=item["url"],
+                outputs=outputs,
+                defaults=payload,
                 summary_template=summary_template,
-                with_frames=payload.with_frames,
-                with_diagrams=payload.with_diagrams,
-                require_pdf=payload.require_pdf,
-                allow_long_video=payload.allow_long_video,
-                yes_i_understand=True,
-                overwrite=False,
             )
-            for url in urls
+            for item in batch_items
         ]
-        return queue.submit(requests)
+        return queue.submit(requests, titles=[item["title"] for item in batch_items])
 
     @app.post("/api/jobs/queue/pause")
     def pause_queue(_: None = Depends(require_token)) -> dict[str, object]:
@@ -577,6 +598,54 @@ def _validated_summary_template(value: str) -> str:
         return validate_summary_style(value)
     except SummarizationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _require_local_processing_consent(detail: str) -> None:
+    config = read_config(default_config_path())
+    if config.local_processing_notice_accepted_at is None:
+        raise HTTPException(status_code=409, detail=detail)
+
+
+def _batch_items_from_payload(payload: BatchJobCreatePayload) -> list[dict[str, str | None]]:
+    if payload.items:
+        return [
+            {
+                "url": item.url.strip(),
+                "title": item.title.strip()
+                if isinstance(item.title, str) and item.title.strip()
+                else None,
+            }
+            for item in payload.items
+            if item.url.strip()
+        ]
+    return [
+        {"url": url.strip(), "title": None}
+        for url in payload.urls
+        if url.strip()
+    ]
+
+
+def _pipeline_request_from_defaults(
+    *,
+    url: str,
+    outputs: Path,
+    defaults: BatchJobCreatePayload,
+    summary_template: str,
+) -> PipelineRequest:
+    return PipelineRequest(
+        url=url,
+        out=outputs,
+        output_format=defaults.format,
+        force_whisper=defaults.force_whisper,
+        language=defaults.language,
+        summary_template=summary_template,
+        with_frames=defaults.with_frames,
+        with_diagrams=defaults.with_diagrams,
+        require_pdf=defaults.require_pdf,
+        allow_long_video=defaults.allow_long_video,
+        yes_i_understand=True,
+        overwrite=False,
+    )
 
 
 def _is_successful_run_dir(run_dir: Path) -> bool:

@@ -1,4 +1,7 @@
 import json
+import threading
+
+import pytest
 
 from bilifan.pipeline import PipelineRequest, PipelineResult
 from bilifan.web.queue import BatchQueueManager
@@ -47,7 +50,7 @@ def test_batch_queue_runs_jobs_sequentially_and_persists_state(tmp_path):
     assert persisted["jobs"][0]["status"] == "succeeded"
 
 
-def test_batch_queue_uses_metadata_title_for_completed_job_label(tmp_path):
+def test_batch_queue_prefers_metadata_part_title_for_completed_job_label(tmp_path):
     def fake_runner(request, *, progress_callback):
         run_key = "BV1abcDEF12G_p1/runs/2026-06-08_120000"
         run_dir = request.out / run_key
@@ -72,9 +75,9 @@ def test_batch_queue_uses_metadata_title_for_completed_job_label(tmp_path):
 
     state = manager.submit([_request(tmp_path)])
 
-    assert state["items"][0]["title"] == "真正的视频标题"
+    assert state["items"][0]["title"] == "第一 P"
     persisted = json.loads((tmp_path / "outputs" / "_jobs" / "jobs.json").read_text())
-    assert persisted["jobs"][0]["title"] == "真正的视频标题"
+    assert persisted["jobs"][0]["title"] == "第一 P"
 
 
 def test_batch_queue_backfills_title_for_existing_persisted_job(tmp_path):
@@ -121,6 +124,51 @@ def test_batch_queue_backfills_title_for_existing_persisted_job(tmp_path):
     assert persisted["jobs"][0]["title"] == "历史任务标题"
 
 
+def test_batch_queue_refreshes_existing_persisted_job_title_from_part_title(tmp_path):
+    storage_path = tmp_path / "outputs" / "_jobs" / "jobs.json"
+    run_key = "BV1abcDEF12G_p2/runs/2026-06-08_120000"
+    run_dir = tmp_path / "outputs" / run_key
+    run_dir.mkdir(parents=True)
+    (run_dir / "metadata.json").write_text(
+        json.dumps({"title": "合集标题", "part_title": "第二课"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    storage_path.parent.mkdir(parents=True)
+    storage_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "paused": False,
+                "jobs": [
+                    {
+                        "job_id": "job-1",
+                        "status": "succeeded",
+                        "request": {"url": "https://www.bilibili.com/video/BV1abcDEF12G?p=2"},
+                        "run_key": run_key,
+                        "title": "合集标题",
+                        "stage": "render",
+                        "progress": [],
+                        "artifacts": {},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager = BatchQueueManager(
+        runner=lambda request, *, progress_callback: None,
+        storage_path=storage_path,
+        run_jobs_inline=True,
+    )
+
+    state = manager.state()
+
+    assert state["items"][0]["title"] == "第二课"
+    persisted = json.loads(storage_path.read_text(encoding="utf-8"))
+    assert persisted["jobs"][0]["title"] == "第二课"
+
+
 def test_batch_queue_state_shows_only_recent_completed_jobs(tmp_path):
     def fake_runner(request, *, progress_callback):
         run_key = request.url.rsplit("=", 1)[-1]
@@ -151,7 +199,7 @@ def test_batch_queue_state_shows_only_recent_completed_jobs(tmp_path):
     ]
 
 
-def test_batch_queue_clear_completed_removes_successful_jobs_only(tmp_path):
+def test_batch_queue_clear_completed_removes_terminal_jobs(tmp_path):
     calls = []
 
     def fake_runner(request, *, progress_callback):
@@ -181,14 +229,22 @@ def test_batch_queue_clear_completed_removes_successful_jobs_only(tmp_path):
             _request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?fail"),
         ]
     )
+    manager.pause()
+    queued_job_id = manager.submit(
+        [_request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?cancel")]
+    )["items"][-1]["job_id"]
+    manager.cancel_pending(queued_job_id)
+    manager.submit([_request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?queued")])
 
     state = manager.clear_completed()
 
     assert state["counts"]["succeeded"] == 0
-    assert state["counts"]["failed"] == 1
-    assert [item["status"] for item in state["items"]] == ["failed"]
+    assert state["counts"]["failed"] == 0
+    assert state["counts"]["canceled"] == 0
+    assert state["counts"]["queued"] == 1
+    assert [item["status"] for item in state["items"]] == ["queued"]
     persisted = json.loads((tmp_path / "outputs" / "_jobs" / "jobs.json").read_text())
-    assert [job["status"] for job in persisted["jobs"]] == ["failed"]
+    assert [job["status"] for job in persisted["jobs"]] == ["queued"]
 
 
 def test_batch_queue_hides_failed_attempt_after_same_url_retry_succeeds(tmp_path):

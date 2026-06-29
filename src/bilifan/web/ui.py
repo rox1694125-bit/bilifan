@@ -299,6 +299,54 @@ def render_app_html(token: str = "") -> str:
               color: var(--text);
               font-weight: 700;
             }
+            .collection-preview {
+              display: grid;
+              gap: 10px;
+              padding: 12px;
+              border: 1px solid var(--border);
+              border-radius: 6px;
+              background: var(--panel-muted);
+            }
+            .collection-preview[hidden] {
+              display: none;
+            }
+            .segmented {
+              display: flex;
+              gap: 6px;
+              align-items: center;
+            }
+            .segmented button.active {
+              border-color: var(--accent);
+              background: var(--accent-soft);
+              color: var(--accent-strong);
+              font-weight: 700;
+            }
+            .part-list {
+              display: grid;
+              gap: 6px;
+              max-height: 220px;
+              overflow: auto;
+              padding-right: 2px;
+            }
+            .part-row {
+              display: grid;
+              grid-template-columns: auto minmax(0, 1fr) auto;
+              gap: 8px;
+              align-items: center;
+              min-height: 34px;
+              padding: 7px 8px;
+              border: 1px solid var(--border);
+              border-radius: 6px;
+              background: #fffefa;
+              font-size: 12px;
+              color: var(--text);
+            }
+            .part-row input {
+              margin: 0;
+            }
+            .part-title {
+              overflow-wrap: anywhere;
+            }
             .task-liveness {
               display: grid;
               gap: 6px;
@@ -406,10 +454,6 @@ def render_app_html(token: str = "") -> str:
             .stage-meta span {
               overflow-wrap: anywhere;
             }
-            .queue-url {
-              font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-              font-size: 11px;
-            }
             .action-groups {
               display: flex;
               flex-wrap: wrap;
@@ -444,7 +488,8 @@ def render_app_html(token: str = "") -> str:
               color: #fff;
               font-weight: 700;
             }
-            .action-link.secondary-action {
+            .action-link.secondary-action,
+            .link-button.secondary-action {
               border-color: #b7d3dc;
               background: var(--accent-soft);
               color: var(--accent-strong);
@@ -568,7 +613,7 @@ def render_app_html(token: str = "") -> str:
                   <div class="history-tools">
                     <label class="history-search-label">
                       <span>搜索历史</span>
-                      <input id="history-search" type="search" placeholder="标题、BV 号、逐字稿来源">
+                      <input id="history-search" type="search" placeholder="标题、逐字稿来源">
                     </label>
                     <div class="history-toolbar">
                       <span id="history-summary" class="subtle">正在读取历史...</span>
@@ -684,6 +729,26 @@ def render_app_html(token: str = "") -> str:
                     <p class="subtle">批量处理</p>
                   </div>
                   <div class="panel-body stack">
+                    <div class="stack">
+                      <label for="collection-url">
+                        B 站合集 URL
+                        <input id="collection-url" name="collection_url" type="url" autocomplete="off" spellcheck="false" placeholder="粘贴任意一个分 P 视频 URL">
+                      </label>
+                      <div class="actions">
+                        <div class="segmented">
+                          <button id="collection-mode-all" class="compact secondary active" type="button">整个合集</button>
+                          <button id="collection-mode-current" class="compact secondary" type="button">仅当前 URL</button>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                          <button id="collection-preview-button" class="compact secondary" type="button">预览合集</button>
+                          <button id="collection-submit-button" class="compact primary" type="button">加入选中</button>
+                        </div>
+                      </div>
+                      <div id="collection-preview-panel" class="collection-preview" hidden>
+                        <div class="subtle">输入合集 URL 后先预览。</div>
+                      </div>
+                    </div>
+
                     <label for="batch-urls">
                       批量 URL
                       <textarea id="batch-urls" name="batch_urls" rows="4" autocomplete="off" spellcheck="false" placeholder="每行一个 B 站或 YouTube URL…"></textarea>
@@ -693,7 +758,7 @@ def render_app_html(token: str = "") -> str:
                       <div style="display:flex; gap:8px; align-items:center;">
                         <button id="queue-pause-button" class="compact secondary" type="button">暂停队列</button>
                         <button id="queue-resume-button" class="compact secondary" type="button">恢复队列</button>
-                        <button id="queue-clear-completed-button" class="compact secondary" type="button">清除已完成</button>
+                        <button id="queue-clear-completed-button" class="compact secondary" type="button">清除已结束</button>
                         <button id="batch-submit-button" class="primary" type="button">加入队列</button>
                       </div>
                     </div>
@@ -756,6 +821,8 @@ def render_app_html(token: str = "") -> str:
               historyItems: [],
               historyExpanded: false,
               historyQuery: "",
+              collectionPreview: null,
+              collectionMode: "all",
               openMenus: new Set(),
               pollingTimer: null,
             };
@@ -779,6 +846,12 @@ def render_app_html(token: str = "") -> str:
               startButton: document.getElementById("start-button"),
               cancelButton: document.getElementById("cancel-button"),
               batchNabaichuanButton: document.getElementById("batch-nabaichuan-button"),
+              collectionUrl: document.getElementById("collection-url"),
+              collectionPreviewButton: document.getElementById("collection-preview-button"),
+              collectionModeCurrent: document.getElementById("collection-mode-current"),
+              collectionModeAll: document.getElementById("collection-mode-all"),
+              collectionSubmitButton: document.getElementById("collection-submit-button"),
+              collectionPreviewPanel: document.getElementById("collection-preview-panel"),
               batchUrls: document.getElementById("batch-urls"),
               batchSubmitButton: document.getElementById("batch-submit-button"),
               queuePauseButton: document.getElementById("queue-pause-button"),
@@ -861,13 +934,14 @@ def render_app_html(token: str = "") -> str:
               const isRemote = entrypoint.mode === "remote";
               const jobStatus = statusLabel(currentJob.status || "idle");
               const stage = stageLabel(currentJob.stage || "preflight");
-              const activeJob = currentJob.status && currentJob.status !== "idle";
+              const activeJob = ["running", "failed", "canceling"].includes(currentJob.status);
+              const hasCurrentJob = currentJob.status && currentJob.status !== "idle";
               const publicUrl = isRemote && typeof entrypoint.public_url === "string" ? entrypoint.public_url : "";
               const remoteMeta = publicUrl
                 ? `<span>远程入口：<a href="${escapeAttr(publicUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(publicUrl)}</a></span><span>隧道状态由本机脚本检查</span>`
                 : "";
-              const activity = activeJob
-                ? `当前任务：${jobStatus} · ${stage}`
+              const activity = hasCurrentJob
+                ? `当前任务：${activeJob ? `${jobStatus} · ${stage}` : jobStatus}`
                 : "当前没有运行中的任务";
               elements.serviceStatus.className = "service-status";
               elements.serviceStatus.innerHTML = `
@@ -894,6 +968,10 @@ def render_app_html(token: str = "") -> str:
               elements.startButton.disabled = state.authExpired || !state.consentAccepted || ["running", "canceling"].includes(state.currentStatus);
               elements.cancelButton.disabled = state.authExpired || state.currentStatus !== "running";
               elements.batchNabaichuanButton.disabled = state.authExpired || !state.consentAccepted;
+              elements.collectionPreviewButton.disabled = state.authExpired || !state.consentAccepted;
+              elements.collectionModeCurrent.disabled = state.authExpired || !state.consentAccepted || !state.collectionPreview;
+              elements.collectionModeAll.disabled = state.authExpired || !state.consentAccepted || !state.collectionPreview;
+              elements.collectionSubmitButton.disabled = state.authExpired || !state.consentAccepted || !state.collectionPreview;
               elements.batchSubmitButton.disabled = state.authExpired || !state.consentAccepted;
               elements.queuePauseButton.disabled = state.authExpired || !state.consentAccepted;
               elements.queueResumeButton.disabled = state.authExpired || !state.consentAccepted;
@@ -1051,6 +1129,10 @@ def render_app_html(token: str = "") -> str:
               return `<button class="${escapeAttr(classes)}" type="button" data-nabaichuan-run-key="${escapeAttr(runKey)}">${escapeHtml(label)}</button>`;
             }
 
+            function copySourceButton(label, sourceUrl) {
+              return `<button class="link-button secondary-action" type="button" data-copy-source-url="${escapeAttr(sourceUrl)}">${escapeHtml(label)}</button>`;
+            }
+
             function renderFailure(stage, message, diagnostics, runKey, friendlyError, retryActions) {
               const friendly = friendlyError && typeof friendlyError === "object" ? friendlyError : null;
               const title = friendly && friendly.title ? friendly.title : "任务失败";
@@ -1110,6 +1192,10 @@ def render_app_html(token: str = "") -> str:
                 const retryButtons = retryActions.length && item.run_key
                   ? `<div class="action-groups">${retryActions.map((retryStage) => `<button class="link-button warning-action" type="button" data-retry-stage="${escapeAttr(retryStage)}" data-retry-run-key="${escapeAttr(item.run_key)}">${escapeHtml(retryLabel(retryStage))}</button>`).join("")}</div>`
                   : "";
+                const sourceUrl = historySourceUrl(item);
+                const copyAction = sourceUrl
+                  ? `<div class="action-groups"><div class="primary-actions">${copySourceButton("复制链接", sourceUrl)}</div></div>`
+                  : "";
                 const failureDetail = friendly
                   ? `<div class="history-meta"><span>${escapeHtml(friendly.title || "任务失败")}</span><span>${escapeHtml(friendly.cause || "")}</span><span>${escapeHtml(friendly.next_action || "")}</span></div>`
                   : "";
@@ -1119,15 +1205,15 @@ def render_app_html(token: str = "") -> str:
                 const transcriptMeta = transcriptSourceMeta(item);
                 return `
                   <li class="history-item">
-                    <div class="history-item-title">${escapeHtml(item.title || item.output_id || "-")}</div>
+                    <div class="history-item-title">${escapeHtml(historyDisplayTitle(item))}</div>
                     <div class="history-meta">
-                      <span>${escapeHtml(item.output_id || "-")}</span>
                       <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(statusLabel(item.status))}</span>
                       ${stageMeta}
                       ${transcriptMeta}
                     </div>
                     ${failureDetail}
                     ${retryButtons}
+                    ${copyAction}
                     ${actionMarkup}
                   </li>
                 `;
@@ -1165,6 +1251,7 @@ def render_app_html(token: str = "") -> str:
                 item.title,
                 item.output_id,
                 item.run_key,
+                item.source_url,
                 item.status,
                 item.stage,
                 item.transcript_source_label,
@@ -1177,11 +1264,27 @@ def render_app_html(token: str = "") -> str:
                 .toLowerCase();
             }
 
+            function historyDisplayTitle(item) {
+              const title = item && typeof item.title === "string" ? item.title.trim() : "";
+              if (title && title !== item.output_id) return title;
+              return "未命名视频";
+            }
+
+            function historySourceUrl(item) {
+              const sourceUrl = item && typeof item.source_url === "string" ? item.source_url.trim() : "";
+              return sourceUrl;
+            }
+
+            function queueSourceLabel(item) {
+              if (item && item.source === "current") return "当前任务";
+              return "队列任务";
+            }
+
             function renderQueue(queue) {
               const totalCounts = queue && queue.queue_counts ? queue.queue_counts : (queue && queue.counts ? queue.counts : {});
               const counts = queue && queue.visible_counts ? queue.visible_counts : totalCounts;
               elements.queueSummary.textContent = queueSummaryText(queue, counts);
-              elements.queueClearCompletedButton.disabled = state.authExpired || !state.consentAccepted || !(totalCounts.succeeded || 0);
+              elements.queueClearCompletedButton.disabled = state.authExpired || !state.consentAccepted || !hasFinishedQueueItems(totalCounts);
               updateQueueControls(queue, totalCounts);
               const items = queue && Array.isArray(queue.items) ? queue.items : [];
               if (!items.length) {
@@ -1201,10 +1304,10 @@ def render_app_html(token: str = "") -> str:
                 const request = item.request && typeof item.request === "object" ? item.request : {};
                 const requestUrl = typeof request.url === "string" ? request.url : "";
                 const displayTitle = queueDisplayTitle(item, requestUrl);
-                const compactUrl = compactSourceUrl(requestUrl);
-                const sourceLabel = item.source === "current" ? "当前任务" : "队列任务";
+                const sourceLabel = queueSourceLabel(item);
                 const transcriptMeta = transcriptSourceMeta(item);
                 const timingMeta = taskTimingMeta(item);
+                const stageMeta = queueStageMeta(item);
                 const friendly = item.friendly_error && typeof item.friendly_error === "object" ? item.friendly_error : null;
                 const failureDetail = friendly
                   ? `<div class="history-meta"><span>${escapeHtml(friendly.title || "任务失败")}</span><span>${escapeHtml(friendly.cause || "")}</span><span>${escapeHtml(friendly.next_action || "")}</span></div>`
@@ -1218,10 +1321,9 @@ def render_app_html(token: str = "") -> str:
                     <div class="history-meta">
                       <span>${escapeHtml(sourceLabel)}</span>
                       <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(statusLabel(item.status))}</span>
-                      <span>阶段: ${escapeHtml(stageLabel(item.stage))}</span>
+                      ${stageMeta}
                       ${transcriptMeta}
                       ${timingMeta}
-                      ${compactUrl ? `<span class="queue-url">${escapeHtml(compactUrl)}</span>` : ""}
                     </div>
                     ${messageMarkup}
                     ${failureDetail}
@@ -1237,13 +1339,24 @@ def render_app_html(token: str = "") -> str:
               const queued = Number(safeCounts.queued || 0);
               const running = Number(safeCounts.running || 0);
               const failed = Number(safeCounts.failed || 0);
+              const canceled = Number(safeCounts.canceled || 0);
               const paused = Boolean(queue && queue.paused);
               const parts = [];
               if (paused) parts.push("队列已暂停");
               if (running > 0) parts.push(`正在处理 ${running} 个`);
               if (queued > 0) parts.push(`排队 ${queued} 个`);
               if (failed > 0) parts.push(`${failed} 个失败需要处理`);
+              if (canceled > 0) parts.push(`${canceled} 个已取消`);
               return parts.length ? parts.join(" · ") : "队列空闲";
+            }
+
+            function hasFinishedQueueItems(counts) {
+              const safeCounts = counts && typeof counts === "object" ? counts : {};
+              return Boolean(
+                Number(safeCounts.succeeded || 0) +
+                Number(safeCounts.failed || 0) +
+                Number(safeCounts.canceled || 0)
+              );
             }
 
             function updateQueueControls(queue, totalCounts) {
@@ -1270,11 +1383,24 @@ def render_app_html(token: str = "") -> str:
               const elapsed = readableDuration(item && item.elapsed_seconds);
               const stageElapsed = readableDuration(item && item.stage_elapsed_seconds);
               const parts = [];
-              if (elapsed) parts.push(`已运行 ${elapsed}`);
-              if (stageElapsed && ["running", "canceling"].includes(item && item.status)) {
+              const active = ["running", "canceling"].includes(item && item.status);
+              if (elapsed) parts.push(`${active ? "已运行" : "耗时"} ${elapsed}`);
+              if (stageElapsed && active) {
                 parts.push(`当前步骤 ${stageElapsed}`);
               }
               return parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("");
+            }
+
+            function queueStageMeta(item) {
+              const status = item && item.status;
+              const stage = item && item.stage;
+              if (status === "failed") {
+                return `<span>失败阶段: ${escapeHtml(stageLabel(stage))}</span>`;
+              }
+              if (["running", "canceling"].includes(status)) {
+                return `<span>阶段: ${escapeHtml(stageLabel(stage))}</span>`;
+              }
+              return "";
             }
 
             function stageDescription(stage) {
@@ -1335,30 +1461,7 @@ def render_app_html(token: str = "") -> str:
               if (item && ["queued", "running"].includes(item.status)) {
                 return "待读取标题";
               }
-              return compactSourceUrl(requestUrl) || (item && item.job_id) || "-";
-            }
-
-            function compactSourceUrl(url) {
-              if (!url) return "";
-              try {
-                const parsed = new URL(url);
-                const pathParts = parsed.pathname.split("/").filter(Boolean);
-                const lastPath = pathParts[pathParts.length - 1] || parsed.hostname;
-                if (parsed.hostname.includes("bilibili.com")) {
-                  const page = parsed.searchParams.get("p");
-                  return page ? `${lastPath}?p=${page}` : lastPath;
-                }
-                if (parsed.hostname.includes("youtube.com")) {
-                  const videoId = parsed.searchParams.get("v");
-                  return videoId ? `YouTube ${videoId}` : `YouTube ${lastPath}`;
-                }
-                if (parsed.hostname.includes("youtu.be")) {
-                  return `YouTube ${lastPath}`;
-                }
-                return `${parsed.hostname}${parsed.pathname}`;
-              } catch (error) {
-                return url;
-              }
+              return "未命名视频";
             }
 
             function updateOptionsSummary() {
@@ -1583,6 +1686,143 @@ def render_app_html(token: str = "") -> str:
               };
             }
 
+            function collectionPartInputId(partIndex) {
+              return `collection-part-${partIndex}`;
+            }
+
+            function setCollectionMode(mode) {
+              state.collectionMode = mode === "current" ? "current" : "all";
+              elements.collectionModeCurrent.className = state.collectionMode === "current"
+                ? "compact secondary active"
+                : "compact secondary";
+              elements.collectionModeAll.className = state.collectionMode === "all"
+                ? "compact secondary active"
+                : "compact secondary";
+            }
+
+            function renderCollectionPreview(preview) {
+              state.collectionPreview = preview && typeof preview === "object" ? preview : null;
+              setCollectionMode("all");
+              if (!state.collectionPreview) {
+                elements.collectionPreviewPanel.hidden = true;
+                elements.collectionPreviewPanel.innerHTML = '<div class="subtle">输入合集 URL 后先预览。</div>';
+                updateStartButton();
+                return;
+              }
+              const parts = Array.isArray(state.collectionPreview.parts)
+                ? state.collectionPreview.parts
+                : [];
+              const total = Number(state.collectionPreview.total_parts || parts.length || 0);
+              const title = state.collectionPreview.title || state.collectionPreview.bvid || "未命名合集";
+              const currentPart = Number(state.collectionPreview.current_part_index || 1);
+              const rows = parts.map((part) => {
+                const partIndex = Number(part.part_index || 0);
+                const partTitle = part.title || `P${partIndex}`;
+                const duration = readableDuration(part.duration);
+                const current = part.is_current ? "当前 URL" : `P${partIndex}`;
+                return `
+                  <label class="part-row" for="${escapeAttr(collectionPartInputId(partIndex))}">
+                    <input id="${escapeAttr(collectionPartInputId(partIndex))}" type="checkbox">
+                    <span class="part-title">${escapeHtml(partTitle)}</span>
+                    <span class="subtle">${escapeHtml(duration || current)}</span>
+                  </label>
+                `;
+              }).join("");
+              elements.collectionPreviewPanel.hidden = false;
+              elements.collectionPreviewPanel.innerHTML = `
+                <div>
+                  <h2>${escapeHtml(title)}</h2>
+                  <p class="subtle">共 ${escapeHtml(total)} 个视频 · 当前 URL: P${escapeHtml(currentPart)}</p>
+                </div>
+                <div id="collection-part-list" class="part-list">${rows || '<div class="subtle">未读取到分 P 列表。</div>'}</div>
+              `;
+              parts.forEach((part) => {
+                const input = document.getElementById(collectionPartInputId(Number(part.part_index || 0)));
+                if (input) input.checked = true;
+              });
+              updateStartButton();
+            }
+
+            async function previewCollection() {
+              if (state.authExpired) {
+                markAuthExpired();
+                return;
+              }
+              if (!state.consentAccepted) {
+                setJobMessage("请先接受本地处理告知。", true);
+                return;
+              }
+              const url = elements.collectionUrl.value.trim();
+              if (!url) {
+                setJobMessage("请输入 B 站合集 URL。", true);
+                elements.collectionUrl.focus();
+                return;
+              }
+              const data = await apiFetch("/api/bilibili/collection/preview", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ url }),
+              });
+              renderCollectionPreview(data);
+              const total = Number(data.total_parts || 0);
+              setJobMessage(`已读取合集: 共 ${total} 个视频。`);
+            }
+
+            function collectionItemPayload(url, title) {
+              const item = { url };
+              if (typeof title === "string" && title.trim()) item.title = title.trim();
+              return item;
+            }
+
+            function collectionItemFromPart(part) {
+              if (!part || typeof part !== "object" || typeof part.url !== "string" || !part.url) return null;
+              return collectionItemPayload(part.url, typeof part.title === "string" ? part.title : "");
+            }
+
+            function collectionSelectedItems() {
+              const preview = state.collectionPreview;
+              if (!preview || typeof preview !== "object") return [];
+              const parts = Array.isArray(preview.parts) ? preview.parts : [];
+              if (state.collectionMode === "current") {
+                const currentUrl = typeof preview.current_url === "string" ? preview.current_url : "";
+                const currentPartIndex = Number(preview.current_part_index || 0);
+                const currentPart = parts.find((part) => part && part.is_current)
+                  || parts.find((part) => part && part.url === currentUrl)
+                  || parts.find((part) => Number(part && part.part_index || 0) === currentPartIndex);
+                if (currentPart) {
+                  const item = collectionItemFromPart(currentPart);
+                  return item ? [item] : [];
+                }
+                return currentUrl ? [collectionItemPayload(currentUrl, preview.title || "")] : [];
+              }
+              return parts
+                .filter((part) => {
+                  const input = document.getElementById(collectionPartInputId(Number(part.part_index || 0)));
+                  return input ? input.checked : false;
+                })
+                .map(collectionItemFromPart)
+                .filter(Boolean);
+            }
+
+            async function submitCollectionSelection() {
+              if (state.authExpired) {
+                markAuthExpired();
+                return;
+              }
+              const items = collectionSelectedItems();
+              if (!items.length) {
+                setJobMessage("请选择至少一个合集视频。", true);
+                return;
+              }
+              const data = await apiFetch("/api/jobs/batch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ items, ...currentOptionsPayload() }),
+              });
+              renderQueue(data);
+              setJobMessage(`已加入队列: ${items.length} 个视频。`);
+            }
+
             async function submitBatch() {
               if (state.authExpired) {
                 markAuthExpired();
@@ -1612,7 +1852,7 @@ def render_app_html(token: str = "") -> str:
             async function clearCompletedQueue() {
               const data = await apiFetch("/api/jobs/queue/clear-completed", { method: "POST" });
               renderQueue(data);
-              setJobMessage("已清除已完成的队列任务。");
+              setJobMessage("已清除已结束的队列任务。");
             }
 
             async function cancelJob() {
@@ -1695,6 +1935,16 @@ def render_app_html(token: str = "") -> str:
               );
             }
 
+            async function copySourceUrl(sourceUrl) {
+              if (!sourceUrl) return;
+              if (typeof navigator === "undefined" || !navigator.clipboard || !navigator.clipboard.writeText) {
+                setJobMessage("当前浏览器不支持自动复制，请手动复制链接。", true);
+                return;
+              }
+              await navigator.clipboard.writeText(sourceUrl);
+              setJobMessage("已复制视频链接。");
+            }
+
             function init() {
               renderStageList([], "preflight", "idle");
               renderLinks({}, "");
@@ -1729,6 +1979,18 @@ def render_app_html(token: str = "") -> str:
                   setJobMessage(error.message || "批量导出失败。", true);
                 });
               });
+              elements.collectionPreviewButton.addEventListener("click", () => {
+                previewCollection().catch((error) => {
+                  setJobMessage(error.message || "合集预览失败。", true);
+                });
+              });
+              elements.collectionModeAll.addEventListener("click", () => setCollectionMode("all"));
+              elements.collectionModeCurrent.addEventListener("click", () => setCollectionMode("current"));
+              elements.collectionSubmitButton.addEventListener("click", () => {
+                submitCollectionSelection().catch((error) => {
+                  setJobMessage(error.message || "合集加入队列失败。", true);
+                });
+              });
               elements.batchSubmitButton.addEventListener("click", () => {
                 submitBatch().catch((error) => {
                   setJobMessage(error.message || "批量加入队列失败。", true);
@@ -1746,7 +2008,7 @@ def render_app_html(token: str = "") -> str:
               });
               elements.queueClearCompletedButton.addEventListener("click", () => {
                 clearCompletedQueue().catch((error) => {
-                  setJobMessage(error.message || "清除已完成失败。", true);
+                  setJobMessage(error.message || "清除已结束失败。", true);
                 });
               });
               document.addEventListener("toggle", (event) => {
@@ -1803,6 +2065,15 @@ def render_app_html(token: str = "") -> str:
                     resummarizeTarget.getAttribute("data-resummarize-run-key"),
                   ).catch((error) => {
                     setJobMessage(error.message || "重总结失败。", true);
+                  });
+                  return;
+                }
+                const copyTarget = event.target && event.target.closest
+                  ? event.target.closest("[data-copy-source-url]")
+                  : null;
+                if (copyTarget) {
+                  copySourceUrl(copyTarget.getAttribute("data-copy-source-url")).catch((error) => {
+                    setJobMessage(error.message || "复制链接失败。", true);
                   });
                   return;
                 }
