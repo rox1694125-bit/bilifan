@@ -27,7 +27,11 @@ fi
 if tmux has-session -t "$WEB_SESSION" 2>/dev/null; then
   echo "tmux session already running: $WEB_SESSION"
 else
-  tmux new-session -d -s "$WEB_SESSION" \
+  WEB_TMUX_ENV=()
+  if [[ -n "${BILIFAN_WEB_TOKEN:-}" ]]; then
+    WEB_TMUX_ENV=(-e "BILIFAN_WEB_TOKEN=$BILIFAN_WEB_TOKEN")
+  fi
+  tmux new-session -d "${WEB_TMUX_ENV[@]}" -s "$WEB_SESSION" \
     "cd '$ROOT' && exec .venv/bin/python -m bilifan serve --no-open --port '$PORT' --strict-port --public-url '$PUBLIC_URL'"
   echo "started tmux session: $WEB_SESSION"
 fi

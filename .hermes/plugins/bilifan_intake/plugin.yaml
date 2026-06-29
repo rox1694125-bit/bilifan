@@ -1,0 +1,5 @@
+name: bilifan_intake
+version: "0.1.0"
+description: "Route Feishu video URL messages into the local Bilifan intake API."
+hooks:
+  - pre_gateway_dispatch

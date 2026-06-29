@@ -1,3 +1,4 @@
+import os
 import socket
 import threading
 import time
@@ -50,6 +51,7 @@ COOKIES_NOTICE = (
 OPEN_BROWSER_DELAY_SECONDS = 0.5
 OPEN_BROWSER_READY_TIMEOUT_SECONDS = 10.0
 OPEN_BROWSER_RETRY_SECONDS = 0.1
+BILIFAN_WEB_TOKEN_ENV = "BILIFAN_WEB_TOKEN"
 
 
 @app.callback()
@@ -188,7 +190,7 @@ def serve(
     selected_port = _find_available_port(host, port)
     if strict_port and selected_port != port:
         raise typer.BadParameter(f"--port {port} is already in use.")
-    token = generate_token()
+    token = _resolve_web_token()
     app_instance = create_app(
         outputs=Path("./outputs"),
         token=token,
@@ -202,6 +204,16 @@ def serve(
     if not no_open:
         _schedule_browser_open(url)
     uvicorn.run(app_instance, host=host, port=selected_port, log_level="info")
+
+
+def _resolve_web_token() -> str:
+    env_token = os.environ.get(BILIFAN_WEB_TOKEN_ENV)
+    if env_token is None:
+        return generate_token()
+    token = env_token.strip()
+    if not token:
+        raise typer.BadParameter(f"{BILIFAN_WEB_TOKEN_ENV} must not be blank.")
+    return token
 
 
 def _ensure_consent(*, uses_cookies: bool, yes_i_understand: bool) -> None:

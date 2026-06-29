@@ -1307,6 +1307,62 @@ def test_serve_prints_url_and_starts_uvicorn(monkeypatch):
     }
 
 
+def test_serve_uses_bilifan_web_token_from_env(monkeypatch):
+    calls: dict[str, object] = {}
+
+    def fail_generate_token():
+        raise AssertionError("generate_token should not be called")
+
+    def fake_create_app(*, outputs, token, open_browser, public_url=None):
+        calls["create_app"] = {
+            "outputs": outputs,
+            "token": token,
+            "open_browser": open_browser,
+            "public_url": public_url,
+        }
+        return "app-instance"
+
+    monkeypatch.setattr(cli, "generate_token", fail_generate_token)
+    monkeypatch.setattr(cli, "create_app", fake_create_app)
+    monkeypatch.setattr(cli, "_find_available_port", lambda host, preferred_port: 8765)
+    monkeypatch.setattr(cli.uvicorn, "run", lambda *args, **kwargs: calls.update(kwargs))
+
+    result = runner.invoke(
+        app,
+        ["serve", "--no-open"],
+        env={"BILIFAN_WEB_TOKEN": "stable-local-token"},
+    )
+
+    assert result.exit_code == 0
+    assert calls["create_app"] == {
+        "outputs": cli.Path("./outputs"),
+        "token": "stable-local-token",
+        "open_browser": False,
+        "public_url": None,
+    }
+
+
+def test_serve_rejects_blank_bilifan_web_token(monkeypatch):
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(cli, "generate_token", lambda: "generated-token")
+    monkeypatch.setattr(
+        cli,
+        "create_app",
+        lambda **kwargs: calls.setdefault("create_app", kwargs),
+    )
+
+    result = runner.invoke(
+        app,
+        ["serve", "--no-open"],
+        env={"BILIFAN_WEB_TOKEN": "   "},
+    )
+
+    assert result.exit_code == 2
+    assert "BILIFAN_WEB_TOKEN must not be blank" in result.output
+    assert calls == {}
+
+
 def test_serve_no_open_does_not_open_browser(monkeypatch):
     calls: dict[str, object] = {}
 

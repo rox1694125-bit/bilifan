@@ -66,3 +66,13 @@ external system.
 The converter does not import Nabaichuan code and does not depend on Bilifan run
 directory internals. It reads only the bundle file passed on the command line
 and writes JSONL to the requested output path.
+
+## Bilifan Feishu Runtime Boundary
+
+Bilifan follows the same Hermes-owned Feishu runtime pattern as the Nabaichuan
+integration, but it does not write to Nabaichuan and does not copy Nabaichuan's
+archive workflow.
+
+For Bilifan, Hermes owns the Feishu app, profile, credentials, gateway hook, and
+outbound chat replies. Bilifan owns only the local intake API, queue, processing
+state, and Web UI task center.
