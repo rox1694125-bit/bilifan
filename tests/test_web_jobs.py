@@ -641,6 +641,393 @@ def test_bilibili_collection_preview_requires_local_processing_consent(
     )
 
 
+def test_feishu_intake_accepts_valid_urls_rejects_unsupported_and_skips_duplicates(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    calls = []
+
+    def fake_pipeline(request, *, progress_callback):
+        calls.append(request)
+        progress_callback("metadata", "running", f"metadata {len(calls)}")
+        run_key = f"intake_{len(calls)}/runs/2026-06-08_120000"
+        return PipelineResult(
+            run_key=run_key,
+            run_dir=request.out / run_key,
+            diagnostics_path=request.out / run_key / "diagnostics.json",
+            artifact_paths=["diagnostics.json", "report.html"],
+            warnings=[],
+        )
+
+    outputs = tmp_path / "outputs"
+    app = create_app(
+        outputs=outputs,
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    bilibili_url = "https://www.bilibili.com/video/BV1abcDEF12G?p=1"
+    youtube_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    response = client.post(
+        "/api/intake/feishu",
+        headers=_headers(),
+        json={
+            "external_batch_id": " fs-batch-1 ",
+            "submitted_by": {"display_name": "Alice"},
+            "reply_target": {
+                "chat_id_ref": "chat-1",
+                "thread_id_ref": "thread-1",
+                "message_id_ref": "message-1",
+            },
+            "urls": [
+                f" {bilibili_url} ",
+                "notaurl",
+                bilibili_url,
+                youtube_url,
+            ],
+            "defaults": {
+                "format": "html",
+                "summary_template": "教程步骤",
+                "with_diagrams": True,
+                "allow_long_video": True,
+            },
+        },
+    )
+    queue_state = client.get("/api/jobs/queue", headers=_headers()).json()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["batch_id"] == "fs-batch-1"
+    assert body["idempotent"] is False
+    assert [item["url"] for item in body["accepted"]] == [bilibili_url, youtube_url]
+    assert body["rejected"] == [
+        {"url": "notaurl", "index": 2, "reason": "unsupported_url"}
+    ]
+    assert body["duplicates"] == [
+        {
+            "url": bilibili_url,
+            "index": 3,
+            "first_index": 1,
+            "reason": "duplicate_in_batch",
+        }
+    ]
+    assert [call.url for call in calls] == [bilibili_url, youtube_url]
+    assert calls[0].summary_template == "教程步骤"
+    assert calls[0].output_format == "html"
+    assert calls[0].with_diagrams is True
+    assert calls[0].allow_long_video is True
+
+    origins = [item["origin"] for item in queue_state["items"]]
+    assert [origin["source"] for origin in origins] == ["feishu", "feishu"]
+    assert [origin["label"] for origin in origins] == ["来自飞书", "来自飞书"]
+    assert [origin["external_batch_id"] for origin in origins] == [
+        "fs-batch-1",
+        "fs-batch-1",
+    ]
+    assert [origin["reply_target_ref"] for origin in origins] == ["message-1", "message-1"]
+    assert [origin["submitted_by"] for origin in origins] == ["Alice", "Alice"]
+    assert [origin["external_item_id"] for origin in origins] == [
+        "fs-batch-1:1",
+        "fs-batch-1:4",
+    ]
+
+
+def test_feishu_intake_requires_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    app = create_app(outputs=tmp_path / "outputs", token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/intake/feishu",
+        json={
+            "external_batch_id": "fs-batch-1",
+            "urls": ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"],
+        },
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("payload", "detail"),
+    [
+        (
+            {
+                "external_batch_id": "   ",
+                "urls": ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"],
+            },
+            "external_batch_id is required.",
+        ),
+        (
+            {
+                "external_batch_id": "fs-batch-1",
+                "urls": [],
+            },
+            "At least one URL is required.",
+        ),
+    ],
+)
+def test_feishu_intake_rejects_invalid_payloads(
+    tmp_path,
+    monkeypatch,
+    payload,
+    detail,
+):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    app = create_app(outputs=tmp_path / "outputs", token="test-token", open_browser=False)
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post("/api/intake/feishu", headers=_headers(), json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == detail
+
+
+def test_feishu_intake_requires_local_processing_consent(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    app = create_app(outputs=tmp_path / "outputs", token="test-token", open_browser=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/intake/feishu",
+        headers=_headers(),
+        json={
+            "external_batch_id": "fs-batch-1",
+            "urls": ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"],
+        },
+    )
+
+    assert response.status_code == 409
+    assert (
+        response.json()["detail"]
+        == "Local processing consent is required before starting a Feishu intake."
+    )
+
+
+def test_feishu_intake_rejects_empty_url_and_accepts_valid_urls(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    calls = []
+
+    def fake_pipeline(request, *, progress_callback):
+        calls.append(request)
+        progress_callback("metadata", "running", f"metadata {len(calls)}")
+        run_key = f"intake_{len(calls)}/runs/2026-06-08_120000"
+        return PipelineResult(
+            run_key=run_key,
+            run_dir=request.out / run_key,
+            diagnostics_path=request.out / run_key / "diagnostics.json",
+            artifact_paths=["diagnostics.json", "report.html"],
+            warnings=[],
+        )
+
+    bilibili_url = "https://www.bilibili.com/video/BV1abcDEF12G?p=1"
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/intake/feishu",
+        headers=_headers(),
+        json={
+            "external_batch_id": "fs-batch-1",
+            "urls": ["   ", bilibili_url],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rejected"] == [{"url": "", "index": 1, "reason": "empty_url"}]
+    assert [item["url"] for item in body["accepted"]] == [bilibili_url]
+    assert [call.url for call in calls] == [bilibili_url]
+
+
+def test_feishu_intake_deduplicates_youtube_urls_by_video_identity(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    calls = []
+
+    def fake_pipeline(request, *, progress_callback):
+        calls.append(request)
+        progress_callback("metadata", "running", f"metadata {len(calls)}")
+        run_key = f"intake_{len(calls)}/runs/2026-06-08_120000"
+        return PipelineResult(
+            run_key=run_key,
+            run_dir=request.out / run_key,
+            diagnostics_path=request.out / run_key / "diagnostics.json",
+            artifact_paths=["diagnostics.json", "report.html"],
+            warnings=[],
+        )
+
+    short_url = "https://youtu.be/dQw4w9WgXcQ"
+    watch_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/intake/feishu",
+        headers=_headers(),
+        json={
+            "external_batch_id": "fs-batch-1",
+            "urls": [short_url, watch_url],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["url"] for item in body["accepted"]] == [short_url]
+    assert body["duplicates"] == [
+        {
+            "url": watch_url,
+            "index": 2,
+            "first_index": 1,
+            "reason": "duplicate_in_batch",
+        }
+    ]
+    assert [call.url for call in calls] == [short_url]
+
+
+def test_feishu_intake_is_idempotent_by_external_batch_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    calls = []
+
+    def fake_pipeline(request, *, progress_callback):
+        calls.append(request)
+        progress_callback("metadata", "running", f"metadata {len(calls)}")
+        run_key = f"intake_{len(calls)}/runs/2026-06-08_120000"
+        return PipelineResult(
+            run_key=run_key,
+            run_dir=request.out / run_key,
+            diagnostics_path=request.out / run_key / "diagnostics.json",
+            artifact_paths=["diagnostics.json", "report.html"],
+            warnings=[],
+        )
+
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+    payload = {
+        "external_batch_id": "fs-batch-1",
+        "urls": ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"],
+    }
+
+    first = client.post("/api/intake/feishu", headers=_headers(), json=payload)
+    second = client.post("/api/intake/feishu", headers=_headers(), json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(calls) == 1
+    assert second.json()["idempotent"] is True
+    assert second.json()["accepted"][0]["job_id"] == first.json()["accepted"][0]["job_id"]
+
+
+@pytest.mark.parametrize(
+    ("reply_target", "expected_ref"),
+    [
+        (
+            {
+                "chat_id_ref": "chat-1",
+                "thread_id_ref": "thread-1",
+            },
+            "thread-1",
+        ),
+        (
+            {
+                "chat_id_ref": "chat-1",
+            },
+            "chat-1",
+        ),
+    ],
+)
+def test_feishu_intake_reply_target_falls_back_to_thread_then_chat(
+    tmp_path,
+    monkeypatch,
+    reply_target,
+    expected_ref,
+):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+
+    def fake_pipeline(request, *, progress_callback):
+        progress_callback("metadata", "running", "metadata")
+        return PipelineResult(
+            run_key="intake/runs/2026-06-08_120000",
+            run_dir=request.out / "intake/runs/2026-06-08_120000",
+            diagnostics_path=request.out / "intake/runs/2026-06-08_120000/diagnostics.json",
+            artifact_paths=["diagnostics.json", "report.html"],
+            warnings=[],
+        )
+
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/intake/feishu",
+        headers=_headers(),
+        json={
+            "external_batch_id": "fs-batch-1",
+            "reply_target": reply_target,
+            "urls": ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"],
+        },
+    )
+    queue_state = client.get("/api/jobs/queue", headers=_headers()).json()
+
+    assert response.status_code == 200
+    assert queue_state["items"][0]["origin"]["reply_target_ref"] == expected_ref
+
+
+def test_feishu_intake_rejects_non_feishu_source(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    app = create_app(outputs=tmp_path / "outputs", token="test-token", open_browser=False)
+    client = TestClient(app)
+    _accept_consent(client)
+
+    response = client.post(
+        "/api/intake/feishu",
+        headers=_headers(),
+        json={
+            "source": "slack",
+            "external_batch_id": "fs-batch-1",
+            "urls": ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Only source=feishu is supported."
+
+
 def test_batch_jobs_endpoint_still_uses_existing_shape_without_origin(
     tmp_path,
     monkeypatch,

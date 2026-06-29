@@ -50,6 +50,18 @@ def test_batch_queue_runs_jobs_sequentially_and_persists_state(tmp_path):
     assert persisted["jobs"][0]["status"] == "succeeded"
 
 
+def test_batch_queue_submit_items_omit_empty_origin(tmp_path):
+    manager = BatchQueueManager(
+        runner=lambda request, *, progress_callback: None,
+        storage_path=tmp_path / "outputs" / "_jobs" / "jobs.json",
+        paused=True,
+    )
+
+    state = manager.submit([_request(tmp_path)])
+
+    assert "origin" not in state["items"][0]
+
+
 def test_batch_queue_prefers_metadata_part_title_for_completed_job_label(tmp_path):
     def fake_runner(request, *, progress_callback):
         run_key = "BV1abcDEF12G_p1/runs/2026-06-08_120000"
@@ -380,3 +392,598 @@ def test_batch_queue_can_pause_cancel_pending_and_retry_failed(tmp_path):
     resumed = manager.resume()
     assert resumed["items"][1]["status"] == "failed"
     assert calls == ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"]
+
+
+def test_intake_batch_persists_origin_metadata_and_replays_idempotent_result(tmp_path):
+    storage_path = tmp_path / "outputs" / "_jobs" / "jobs.json"
+    manager = BatchQueueManager(
+        runner=lambda request, *, progress_callback: None,
+        storage_path=storage_path,
+        paused=True,
+    )
+    requests = [
+        _request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?p=1"),
+        _request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?p=2"),
+    ]
+    origins = [
+        {"label": "Alpha", "external_item_id": "item-1"},
+        {"label": "Beta", "external_item_id": "item-2"},
+    ]
+    rejected = [{"url": "https://example.com/rejected", "reason": "unsupported"}]
+    duplicates = [{"url": "https://example.com/duplicate", "external_item_id": "item-0"}]
+
+    first = manager.submit_intake_batch(
+        batch_id="batch-1",
+        requests=requests,
+        origins=origins,
+        rejected=rejected,
+        duplicates=duplicates,
+    )
+    second = manager.submit_intake_batch(
+        batch_id="batch-1",
+        requests=requests,
+        origins=origins,
+    )
+
+    assert first["ok"] is True
+    assert first["batch_id"] == "batch-1"
+    assert first["idempotent"] is False
+    assert second["idempotent"] is True
+    assert [item["job_id"] for item in second["accepted"]] == [
+        item["job_id"] for item in first["accepted"]
+    ]
+    assert second["rejected"] == rejected
+    assert second["duplicates"] == duplicates
+    assert first["accepted"] == [
+        {
+            "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+            "job_id": first["accepted"][0]["job_id"],
+            "status": "queued",
+        },
+        {
+            "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=2",
+            "job_id": first["accepted"][1]["job_id"],
+            "status": "queued",
+        },
+    ]
+    assert first["rejected"] == rejected
+    assert first["duplicates"] == duplicates
+    assert manager.state()["total_items"] == 2
+
+    reloaded = BatchQueueManager(
+        runner=lambda request, *, progress_callback: None,
+        storage_path=storage_path,
+        paused=True,
+    )
+    items = reloaded.state()["items"]
+
+    assert len(items) == 2
+    assert items[0]["origin"]["label"] == "Alpha"
+    assert items[0]["origin"]["external_batch_id"] == "batch-1"
+    assert items[0]["origin"]["external_item_id"] == "item-1"
+    assert items[1]["origin"]["label"] == "Beta"
+    assert items[1]["origin"]["external_batch_id"] == "batch-1"
+    assert items[1]["origin"]["external_item_id"] == "item-2"
+
+    replayed_after_reload = reloaded.submit_intake_batch(
+        batch_id="batch-1",
+        requests=requests,
+        origins=origins,
+    )
+
+    assert replayed_after_reload["idempotent"] is True
+    assert [item["job_id"] for item in replayed_after_reload["accepted"]] == [
+        item["job_id"] for item in first["accepted"]
+    ]
+    assert reloaded.state()["total_items"] == 2
+
+
+def test_intake_batch_run_inline_completes_and_preserves_origin(tmp_path):
+    def fake_runner(request, *, progress_callback):
+        run_key = "BV1abcDEF12G_p1/runs/2026-06-08_120000"
+        return PipelineResult(
+            run_key=run_key,
+            run_dir=request.out / run_key,
+            diagnostics_path=request.out / run_key / "diagnostics.json",
+            artifact_paths=[],
+            warnings=[],
+        )
+
+    manager = BatchQueueManager(
+        runner=fake_runner,
+        storage_path=tmp_path / "outputs" / "_jobs" / "jobs.json",
+        run_jobs_inline=True,
+    )
+
+    manager.submit_intake_batch(
+        batch_id="batch-inline",
+        requests=[_request(tmp_path)],
+        origins=[
+            {
+                "external_batch_id": "batch-inline",
+                "external_item_id": "item-inline",
+                "label": "Inline source",
+            }
+        ],
+    )
+    state = manager.state()
+
+    assert state["counts"]["succeeded"] == 1
+    assert state["items"][0]["status"] == "succeeded"
+    assert state["items"][0]["origin"] == {
+        "external_batch_id": "batch-inline",
+        "external_item_id": "item-inline",
+        "label": "Inline source",
+    }
+
+
+def test_intake_batch_existing_replay_starts_persisted_queued_job_inline(tmp_path):
+    storage_path = tmp_path / "outputs" / "_jobs" / "jobs.json"
+    storage_path.parent.mkdir(parents=True)
+    storage_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "paused": False,
+                "intake_batches": {
+                    "batch-replay-start": {
+                        "ok": True,
+                        "batch_id": "batch-replay-start",
+                        "idempotent": False,
+                        "accepted": [
+                            {
+                                "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+                                "job_id": "job-replay-start",
+                                "status": "queued",
+                            }
+                        ],
+                        "rejected": [],
+                        "duplicates": [],
+                    }
+                },
+                "jobs": [
+                    {
+                        "job_id": "job-replay-start",
+                        "status": "queued",
+                        "request": {
+                            "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+                            "out": str(tmp_path / "outputs"),
+                            "yes_i_understand": True,
+                        },
+                        "origin": {
+                            "external_batch_id": "batch-replay-start",
+                            "external_item_id": "item-replay-start",
+                        },
+                        "progress": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_runner(request, *, progress_callback):
+        calls.append(request.url)
+        run_key = "BV1abcDEF12G_p1/runs/2026-06-08_120000"
+        return PipelineResult(
+            run_key=run_key,
+            run_dir=request.out / run_key,
+            diagnostics_path=request.out / run_key / "diagnostics.json",
+            artifact_paths=[],
+            warnings=[],
+        )
+
+    manager = BatchQueueManager(
+        runner=fake_runner,
+        storage_path=storage_path,
+        run_jobs_inline=True,
+    )
+
+    replay = manager.submit_intake_batch(
+        batch_id="batch-replay-start",
+        requests=[_request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?p=1")],
+        origins=[
+            {
+                "external_batch_id": "batch-replay-start",
+                "external_item_id": "item-replay-start",
+            }
+        ],
+    )
+    state = manager.state()
+
+    assert replay["idempotent"] is True
+    assert calls == ["https://www.bilibili.com/video/BV1abcDEF12G?p=1"]
+    assert state["counts"]["queued"] == 0
+    assert state["counts"]["succeeded"] == 1
+    assert state["items"][0]["status"] == "succeeded"
+
+
+def test_intake_batch_jobs_only_replay_after_batch_index_loss(tmp_path):
+    storage_path = tmp_path / "outputs" / "_jobs" / "jobs.json"
+    manager = BatchQueueManager(
+        runner=lambda request, *, progress_callback: None,
+        storage_path=storage_path,
+        paused=True,
+    )
+    first = manager.submit_intake_batch(
+        batch_id="batch-index-loss",
+        requests=[
+            _request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?p=1"),
+            _request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?p=2"),
+        ],
+        origins=[
+            {"label": "Missing external ids"},
+            {"label": "Explicit item", "external_item_id": "given-item"},
+        ],
+    )
+    persisted = json.loads(storage_path.read_text(encoding="utf-8"))
+
+    assert persisted["jobs"][0]["origin"]["external_batch_id"] == "batch-index-loss"
+    assert persisted["jobs"][0]["origin"]["external_item_id"] == "batch-index-loss:1"
+    assert persisted["jobs"][1]["origin"]["external_batch_id"] == "batch-index-loss"
+    assert persisted["jobs"][1]["origin"]["external_item_id"] == "given-item"
+
+    persisted.pop("intake_batches")
+    storage_path.write_text(json.dumps(persisted), encoding="utf-8")
+    reloaded = BatchQueueManager(
+        runner=lambda request, *, progress_callback: None,
+        storage_path=storage_path,
+        paused=True,
+    )
+
+    replay = reloaded.submit_intake_batch(
+        batch_id="batch-index-loss",
+        requests=[
+            _request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?p=1"),
+            _request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?p=2"),
+        ],
+        origins=[
+            {"label": "Missing external ids"},
+            {"label": "Explicit item", "external_item_id": "given-item"},
+        ],
+    )
+
+    assert replay["idempotent"] is True
+    assert [item["job_id"] for item in replay["accepted"]] == [
+        item["job_id"] for item in first["accepted"]
+    ]
+    assert reloaded.state()["total_items"] == 2
+    repaired = json.loads(storage_path.read_text(encoding="utf-8"))
+    assert "batch-index-loss" in repaired["intake_batches"]
+
+
+def test_intake_batch_rejects_mismatched_request_and_origin_lengths(tmp_path):
+    manager = BatchQueueManager(
+        runner=lambda request, *, progress_callback: None,
+        storage_path=tmp_path / "outputs" / "_jobs" / "jobs.json",
+        paused=True,
+    )
+
+    with pytest.raises(ValueError, match="requests and origins must have the same length"):
+        manager.submit_intake_batch(
+            batch_id="batch-1",
+            requests=[_request(tmp_path)],
+            origins=[],
+        )
+
+
+def test_retry_job_preserves_origin_metadata(tmp_path):
+    manager = BatchQueueManager(
+        runner=lambda request, *, progress_callback: None,
+        storage_path=tmp_path / "outputs" / "_jobs" / "jobs.json",
+        paused=True,
+    )
+    submitted = manager.submit_intake_batch(
+        batch_id="batch-retry",
+        requests=[_request(tmp_path)],
+        origins=[
+            {
+                "external_batch_id": "batch-retry",
+                "external_item_id": "item-retry",
+                "label": "Retry source",
+            }
+        ],
+    )
+    job_id = submitted["accepted"][0]["job_id"]
+
+    manager.cancel_pending(job_id)
+    retried = manager.retry(job_id)
+
+    assert retried["items"][1]["origin"] == {
+        "external_batch_id": "batch-retry",
+        "external_item_id": "item-retry",
+        "label": "Retry source",
+    }
+
+
+def test_intake_batch_copies_inputs_and_replay_result(tmp_path):
+    manager = BatchQueueManager(
+        runner=lambda request, *, progress_callback: None,
+        storage_path=tmp_path / "outputs" / "_jobs" / "jobs.json",
+        paused=True,
+    )
+    origins = [
+        {
+            "external_batch_id": "caller-supplied-wrong-batch",
+            "external_item_id": "item-copy",
+            "label": "Original",
+            "nested": {"value": "kept"},
+        }
+    ]
+    rejected = [{"url": "https://example.com/rejected", "reason": "unsupported"}]
+    duplicates = [{"url": "https://example.com/duplicate", "meta": {"source": "sheet"}}]
+
+    first = manager.submit_intake_batch(
+        batch_id="batch-copy",
+        requests=[_request(tmp_path)],
+        origins=origins,
+        rejected=rejected,
+        duplicates=duplicates,
+    )
+    original_job_id = first["accepted"][0]["job_id"]
+    origins[0]["label"] = "Mutated"
+    origins[0]["nested"]["value"] = "changed"
+    rejected[0]["reason"] = "changed"
+    duplicates[0]["meta"]["source"] = "changed"
+    first["accepted"][0]["job_id"] = "mutated-job"
+    first["rejected"][0]["reason"] = "mutated"
+    first["duplicates"][0]["meta"]["source"] = "mutated"
+
+    replay = manager.submit_intake_batch(
+        batch_id="batch-copy",
+        requests=[_request(tmp_path)],
+        origins=origins,
+    )
+
+    assert replay["accepted"][0]["job_id"] == original_job_id
+    assert replay["rejected"] == [
+        {"url": "https://example.com/rejected", "reason": "unsupported"}
+    ]
+    assert replay["duplicates"] == [
+        {"url": "https://example.com/duplicate", "meta": {"source": "sheet"}}
+    ]
+    assert manager.state()["items"][0]["origin"] == {
+        "external_batch_id": "batch-copy",
+        "external_item_id": "item-copy",
+        "label": "Original",
+        "nested": {"value": "kept"},
+    }
+
+
+def test_intake_batch_replays_from_persisted_jobs_when_batch_index_missing(tmp_path):
+    storage_path = tmp_path / "outputs" / "_jobs" / "jobs.json"
+    storage_path.parent.mkdir(parents=True)
+    storage_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "paused": True,
+                "jobs": [
+                    {
+                        "job_id": "job-1",
+                        "status": "queued",
+                        "request": {
+                            "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+                            "out": str(tmp_path / "outputs"),
+                        },
+                        "origin": {
+                            "external_batch_id": "batch-persisted",
+                            "external_item_id": "item-1",
+                        },
+                        "progress": [],
+                    },
+                    {
+                        "job_id": "job-2",
+                        "status": "queued",
+                        "request": {
+                            "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=2",
+                            "out": str(tmp_path / "outputs"),
+                        },
+                        "origin": {
+                            "external_batch_id": "batch-persisted",
+                            "external_item_id": "item-2",
+                        },
+                        "progress": [],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = BatchQueueManager(
+        runner=lambda request, *, progress_callback: None,
+        storage_path=storage_path,
+        paused=True,
+    )
+
+    replay = manager.submit_intake_batch(
+        batch_id="batch-persisted",
+        requests=[
+            _request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?p=1"),
+            _request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?p=2"),
+        ],
+        origins=[
+            {"external_batch_id": "batch-persisted", "external_item_id": "item-1"},
+            {"external_batch_id": "batch-persisted", "external_item_id": "item-2"},
+        ],
+    )
+
+    assert replay["idempotent"] is True
+    assert replay["accepted"] == [
+        {
+            "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+            "job_id": "job-1",
+            "status": "queued",
+        },
+        {
+            "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=2",
+            "job_id": "job-2",
+            "status": "queued",
+        },
+    ]
+    assert manager.state()["total_items"] == 2
+    persisted = json.loads(storage_path.read_text(encoding="utf-8"))
+    assert persisted["intake_batches"]["batch-persisted"]["accepted"] == replay["accepted"]
+
+
+def test_intake_batch_jobs_only_replay_keeps_accepted_status_queued_for_terminal_jobs(tmp_path):
+    storage_path = tmp_path / "outputs" / "_jobs" / "jobs.json"
+    storage_path.parent.mkdir(parents=True)
+    storage_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "paused": True,
+                "jobs": [
+                    {
+                        "job_id": "job-succeeded",
+                        "status": "succeeded",
+                        "request": {
+                            "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+                            "out": str(tmp_path / "outputs"),
+                        },
+                        "origin": {
+                            "external_batch_id": "batch-terminal",
+                            "external_item_id": "item-succeeded",
+                        },
+                        "progress": [],
+                    },
+                    {
+                        "job_id": "job-failed",
+                        "status": "failed",
+                        "request": {
+                            "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=2",
+                            "out": str(tmp_path / "outputs"),
+                        },
+                        "origin": {
+                            "external_batch_id": "batch-terminal",
+                            "external_item_id": "item-failed",
+                        },
+                        "progress": [],
+                    },
+                    {
+                        "job_id": "job-canceled",
+                        "status": "canceled",
+                        "request": {
+                            "url": "https://www.bilibili.com/video/BV1abcDEF12G?p=3",
+                            "out": str(tmp_path / "outputs"),
+                        },
+                        "origin": {
+                            "external_batch_id": "batch-terminal",
+                            "external_item_id": "item-canceled",
+                        },
+                        "progress": [],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = BatchQueueManager(
+        runner=lambda request, *, progress_callback: None,
+        storage_path=storage_path,
+        paused=True,
+    )
+
+    replay = manager.submit_intake_batch(
+        batch_id="batch-terminal",
+        requests=[
+            _request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?p=1"),
+            _request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?p=2"),
+            _request(tmp_path, "https://www.bilibili.com/video/BV1abcDEF12G?p=3"),
+        ],
+        origins=[
+            {"external_batch_id": "batch-terminal", "external_item_id": "item-succeeded"},
+            {"external_batch_id": "batch-terminal", "external_item_id": "item-failed"},
+            {"external_batch_id": "batch-terminal", "external_item_id": "item-canceled"},
+        ],
+    )
+
+    assert replay["idempotent"] is True
+    assert [item["job_id"] for item in replay["accepted"]] == [
+        "job-succeeded",
+        "job-failed",
+        "job-canceled",
+    ]
+    assert [item["status"] for item in replay["accepted"]] == ["queued", "queued", "queued"]
+    assert manager.state()["total_items"] == 3
+
+
+def test_worker_exit_window_starts_replacement_for_queued_intake_job(tmp_path):
+    class GateLock:
+        def __init__(self):
+            self._lock = threading.Lock()
+            self._guard = threading.Lock()
+            self._blocked_thread_id = None
+            self.finalizer_waiting = threading.Event()
+            self.release_finalizer = threading.Event()
+
+        def block_next_acquire_for_thread(self, thread_id):
+            with self._guard:
+                self._blocked_thread_id = thread_id
+
+        def acquire(self):
+            with self._guard:
+                should_block = self._blocked_thread_id == threading.get_ident()
+                if should_block:
+                    self._blocked_thread_id = None
+            if should_block:
+                self.finalizer_waiting.set()
+                self.release_finalizer.wait(timeout=2)
+            self._lock.acquire()
+            return True
+
+        def release(self):
+            self._lock.release()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self.release()
+
+    consumed = threading.Event()
+
+    def fake_runner(request, *, progress_callback):
+        consumed.set()
+        run_key = "BV1abcDEF12G_p1/runs/2026-06-08_120000"
+        return PipelineResult(
+            run_key=run_key,
+            run_dir=request.out / run_key,
+            diagnostics_path=request.out / run_key / "diagnostics.json",
+            artifact_paths=[],
+            warnings=[],
+        )
+
+    manager = BatchQueueManager(
+        runner=fake_runner,
+        storage_path=tmp_path / "outputs" / "_jobs" / "jobs.json",
+    )
+    gate_lock = GateLock()
+    manager._lock = gate_lock
+    original_next_queued = manager._next_queued_locked
+
+    def gated_next_queued():
+        job = original_next_queued()
+        if job is None:
+            gate_lock.block_next_acquire_for_thread(threading.get_ident())
+        return job
+
+    manager._next_queued_locked = gated_next_queued
+
+    try:
+        manager._start_worker()
+        assert gate_lock.finalizer_waiting.wait(timeout=2)
+
+        manager.submit_intake_batch(
+            batch_id="batch-race",
+            requests=[_request(tmp_path)],
+            origins=[{"external_batch_id": "batch-race", "external_item_id": "item-race"}],
+        )
+        gate_lock.release_finalizer.set()
+
+        assert consumed.wait(timeout=2)
+    finally:
+        gate_lock.release_finalizer.set()

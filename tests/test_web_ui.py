@@ -1185,6 +1185,108 @@ def test_render_app_script_queue_item_uses_video_title_as_primary_label():
     )
 
 
+def test_render_app_script_queue_item_uses_origin_label_for_source():
+    script = _extract_inline_script(render_app_html())
+
+    _run_node_ui_harness(
+        script,
+        fetch_logic="""
+        async function fetchMock(path, options = {}) {
+          fetchCalls.push({ path, method: options.method || "GET", body: options.body || "" });
+          if (path === "/api/config") {
+            return jsonResponse({ consent: { local_processing: true }, defaults: { format: "html,pdf", language: "auto", summary_template: "AI 自动判断" } });
+          }
+          if (path === "/api/history") return jsonResponse({ items: [] });
+          if (path === "/api/jobs/current") {
+            return jsonResponse({
+              status: "idle",
+              stage: "preflight",
+              message: "",
+              progress: [],
+              artifacts: {},
+              run_key: null
+            });
+          }
+          if (path === "/api/jobs/queue") {
+            return jsonResponse({
+              counts: { queued: 2, running: 1, succeeded: 1, failed: 0, canceled: 0 },
+              visible_counts: { queued: 2, running: 1, succeeded: 1, failed: 0, canceled: 0 },
+              total_items: 4,
+              hidden_completed: 0,
+              hidden_replaced: 0,
+              items: [
+                {
+                  source: "current",
+                  job_id: "current-1",
+                  title: "当前入口视频",
+                  status: "running",
+                  stage: "summarization",
+                  message: "Summarizing.",
+                  request: { url: "https://www.bilibili.com/video/BV1current111" },
+                  artifacts: {}
+                },
+                {
+                  source: "queue",
+                  origin: { label: " 来自飞书 " },
+                  job_id: "job-feishu",
+                  title: "飞书入口视频",
+                  status: "queued",
+                  stage: "preflight",
+                  message: "Waiting.",
+                  request: { url: "https://www.bilibili.com/video/BV1feishu1111" },
+                  artifacts: {}
+                },
+                {
+                  source: "queue",
+                  job_id: "job-plain",
+                  title: "普通队列视频",
+                  status: "succeeded",
+                  stage: "render",
+                  message: "Report ready.",
+                  request: { url: "https://www.bilibili.com/video/BV1plain11111" },
+                  artifacts: {}
+                },
+                {
+                  source: "queue",
+                  origin: { label: "   " },
+                  job_id: "job-blank-origin",
+                  title: "空白来源视频",
+                  status: "queued",
+                  stage: "preflight",
+                  message: "Waiting.",
+                  request: { url: "https://www.bilibili.com/video/BV1blank11111" },
+                  artifacts: {}
+                }
+              ]
+            });
+          }
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        """,
+        assertions="""
+        const html = elements["queue-list"].innerHTML;
+        function itemMarkup(title) {
+          const start = html.indexOf(`<div class="history-item-title">${title}</div>`);
+          assert(start >= 0, `missing queue item ${title}`);
+          const end = html.indexOf("</li>", start);
+          assert(end > start, `missing queue item close for ${title}`);
+          return html.slice(start, end);
+        }
+
+        const currentMarkup = itemMarkup("当前入口视频");
+        const feishuMarkup = itemMarkup("飞书入口视频");
+        const plainMarkup = itemMarkup("普通队列视频");
+        const blankOriginMarkup = itemMarkup("空白来源视频");
+
+        assert(currentMarkup.includes("<span>当前任务</span>"));
+        assert(feishuMarkup.includes("<span>来自飞书</span>"));
+        assert(!feishuMarkup.includes("<span> 来自飞书 </span>"));
+        assert(plainMarkup.includes("<span>队列任务</span>"));
+        assert(blankOriginMarkup.includes("<span>队列任务</span>"));
+        """,
+    )
+
+
 def test_render_app_script_queue_failed_item_shows_friendly_error():
     script = _extract_inline_script(render_app_html())
 

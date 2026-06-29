@@ -1277,6 +1277,9 @@ def render_app_html(token: str = "") -> str:
 
             function queueSourceLabel(item) {
               if (item && item.source === "current") return "当前任务";
+              if (item && item.origin && typeof item.origin.label === "string" && item.origin.label.trim()) {
+                return item.origin.label.trim();
+              }
               return "队列任务";
             }
 

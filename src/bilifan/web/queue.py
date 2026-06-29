@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from threading import Lock, Thread
@@ -23,6 +24,7 @@ class QueueJob:
     job_id: str
     status: str
     request: dict[str, Any]
+    origin: dict[str, Any] = field(default_factory=dict)
     title: str | None = None
     transcript_source_label: str | None = None
     stage: str = "preflight"
@@ -38,6 +40,8 @@ class QueueJob:
 
     def as_dict(self) -> dict[str, Any]:
         data = asdict(self)
+        if not self.origin:
+            data.pop("origin", None)
         if self.friendly_error is None:
             data.pop("friendly_error", None)
         return data
@@ -59,6 +63,7 @@ class BatchQueueManager:
         self._paused = paused
         self._worker_running = False
         self._jobs: list[QueueJob] = []
+        self._intake_batches: dict[str, dict[str, Any]] = {}
         self._load()
 
     def submit(
@@ -86,6 +91,91 @@ class BatchQueueManager:
         if should_start:
             self._start_worker()
         return self.state()
+
+    def submit_intake_batch(
+        self,
+        *,
+        batch_id: str,
+        requests: list[PipelineRequest],
+        origins: list[dict[str, Any]],
+        rejected: list[dict[str, Any]] | None = None,
+        duplicates: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        if len(requests) != len(origins):
+            raise ValueError("requests and origins must have the same length")
+
+        should_start = False
+        with self._lock:
+            existing = self._intake_batches.get(batch_id)
+            if existing is not None:
+                response = deepcopy(existing)
+                response["idempotent"] = True
+                should_start = self._should_start_worker_locked()
+            else:
+                recovered = self._intake_batch_from_jobs_locked(batch_id)
+                if recovered is not None:
+                    self._intake_batches[batch_id] = deepcopy(recovered)
+                    self._persist_locked()
+                    should_start = bool(recovered["accepted"]) and self._should_start_worker_locked()
+                    response = deepcopy(recovered)
+                    response["idempotent"] = True
+                else:
+                    accepted: list[dict[str, Any]] = []
+                    for index, (request, origin) in enumerate(
+                        zip(requests, origins, strict=True),
+                        start=1,
+                    ):
+                        job = QueueJob(
+                            job_id=uuid4().hex,
+                            status="queued",
+                            request=_request_to_payload(request),
+                            origin=_intake_origin_payload(
+                                origin,
+                                batch_id=batch_id,
+                                index=index,
+                            ),
+                            progress=_initial_progress(),
+                        )
+                        self._jobs.append(job)
+                        accepted.append(
+                            {
+                                "url": request.url,
+                                "job_id": job.job_id,
+                                "status": job.status,
+                            }
+                        )
+
+                    result = {
+                        "ok": True,
+                        "batch_id": batch_id,
+                        "idempotent": False,
+                        "accepted": accepted,
+                        "rejected": deepcopy(rejected) if rejected is not None else [],
+                        "duplicates": deepcopy(duplicates) if duplicates is not None else [],
+                    }
+                    self._intake_batches[batch_id] = deepcopy(result)
+                    self._persist_locked()
+                    should_start = bool(accepted) and self._should_start_worker_locked()
+                    response = deepcopy(result)
+        if should_start:
+            self._start_worker()
+        return response
+
+    def _intake_batch_from_jobs_locked(self, batch_id: str) -> dict[str, Any] | None:
+        accepted: list[dict[str, Any]] = []
+        for job in self._jobs:
+            if job.origin.get("external_batch_id") == batch_id:
+                accepted.append(_accepted_job_payload(job))
+        if not accepted:
+            return None
+        return {
+            "ok": True,
+            "batch_id": batch_id,
+            "idempotent": False,
+            "accepted": accepted,
+            "rejected": [],
+            "duplicates": [],
+        }
 
     def state(self) -> dict[str, Any]:
         with self._lock:
@@ -127,6 +217,7 @@ class BatchQueueManager:
                     job_id=uuid4().hex,
                     status="queued",
                     request=dict(job.request),
+                    origin=deepcopy(job.origin),
                     title=job.title,
                     progress=_initial_progress(),
                 )
@@ -174,9 +265,13 @@ class BatchQueueManager:
 
                 self._run_job(job.job_id)
         finally:
+            should_start = False
             with self._lock:
                 self._worker_running = False
                 self._persist_locked()
+                should_start = self._should_start_worker_locked()
+            if should_start:
+                self._start_worker()
 
     def _run_job(self, job_id: str) -> None:
         def progress_callback(stage: str, status: str, message: str) -> None:
@@ -330,6 +425,9 @@ class BatchQueueManager:
         if not isinstance(data, dict):
             return
         self._paused = bool(data.get("paused", self._paused))
+        raw_intake_batches = data.get("intake_batches")
+        if isinstance(raw_intake_batches, dict):
+            self._intake_batches = deepcopy(raw_intake_batches)
         raw_jobs = data.get("jobs")
         if not isinstance(raw_jobs, list):
             return
@@ -343,6 +441,7 @@ class BatchQueueManager:
                 job_id=str(raw_job.get("job_id") or uuid4().hex),
                 status=str(raw_job.get("status") or "queued"),
                 request=raw_job.get("request") if isinstance(raw_job.get("request"), dict) else {},
+                origin=deepcopy(raw_job.get("origin")) if isinstance(raw_job.get("origin"), dict) else {},
                 title=_optional_text(raw_job.get("title")),
                 transcript_source_label=_optional_text(raw_job.get("transcript_source_label")),
                 stage=str(raw_job.get("stage") or "preflight"),
@@ -378,6 +477,7 @@ class BatchQueueManager:
                 {
                     "schema_version": QUEUE_SCHEMA_VERSION,
                     "paused": self._paused,
+                    "intake_batches": self._intake_batches,
                     "jobs": [job.as_dict() for job in self._jobs],
                 },
                 ensure_ascii=False,
@@ -432,6 +532,28 @@ def _queue_request_key(job: QueueJob) -> str:
     request = job.request if isinstance(job.request, dict) else {}
     url = request.get("url")
     return str(url).strip() if url is not None else ""
+
+
+def _accepted_job_payload(job: QueueJob) -> dict[str, Any]:
+    request = job.request if isinstance(job.request, dict) else {}
+    return {
+        "url": str(request.get("url") or ""),
+        "job_id": job.job_id,
+        "status": "queued",
+    }
+
+
+def _intake_origin_payload(
+    origin: dict[str, Any],
+    *,
+    batch_id: str,
+    index: int,
+) -> dict[str, Any]:
+    payload = deepcopy(origin)
+    payload["external_batch_id"] = batch_id
+    if not payload.get("external_item_id"):
+        payload["external_item_id"] = f"{batch_id}:{index}"
+    return payload
 
 
 def _payload_to_request(payload: dict[str, Any]) -> PipelineRequest:

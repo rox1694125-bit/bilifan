@@ -21,6 +21,7 @@ from bilifan.pipeline import (
     validate_output_format,
 )
 from bilifan.retry import RETRY_STAGES, RetryError, retry_run
+from bilifan.sources import SourceAdapterError, resolve_source_adapter
 from bilifan.summarizer import SummarizationError, validate_summary_style
 
 from .files import (
@@ -94,6 +95,39 @@ class BatchJobCreatePayload(BaseModel):
 
 class BilibiliCollectionPreviewPayload(BaseModel):
     url: str
+
+
+class FeishuIntakeSubmittedByPayload(BaseModel):
+    display_name: str | None = None
+
+
+class FeishuIntakeReplyTargetPayload(BaseModel):
+    platform: str = "feishu"
+    chat_id_ref: str | None = None
+    thread_id_ref: str | None = None
+    message_id_ref: str | None = None
+
+
+class FeishuIntakeDefaultsPayload(BaseModel):
+    format: str = WEB_DEFAULTS["format"]
+    force_whisper: bool = WEB_DEFAULTS["force_whisper"]
+    language: str = WEB_DEFAULTS["language"]
+    summary_template: str = WEB_DEFAULTS["summary_template"]
+    with_frames: bool = WEB_DEFAULTS["with_frames"]
+    with_diagrams: bool = WEB_DEFAULTS["with_diagrams"]
+    require_pdf: bool = WEB_DEFAULTS["require_pdf"]
+    allow_long_video: bool = WEB_DEFAULTS["allow_long_video"]
+
+
+class FeishuIntakePayload(BaseModel):
+    source: str = "feishu"
+    external_batch_id: str
+    submitted_by: FeishuIntakeSubmittedByPayload | None = None
+    reply_target: FeishuIntakeReplyTargetPayload | None = None
+    urls: list[str]
+    defaults: FeishuIntakeDefaultsPayload = Field(
+        default_factory=FeishuIntakeDefaultsPayload
+    )
 
 
 def create_app(
@@ -263,6 +297,92 @@ def create_app(
             for item in batch_items
         ]
         return queue.submit(requests, titles=[item["title"] for item in batch_items])
+
+    @app.post("/api/intake/feishu")
+    def create_feishu_intake(
+        payload: FeishuIntakePayload,
+        _: None = Depends(require_token),
+    ) -> dict[str, object]:
+        if payload.source != "feishu":
+            raise HTTPException(
+                status_code=400,
+                detail="Only source=feishu is supported.",
+            )
+        batch_id = payload.external_batch_id.strip()
+        if not batch_id:
+            raise HTTPException(status_code=400, detail="external_batch_id is required.")
+        _require_local_processing_consent(
+            "Local processing consent is required before starting a Feishu intake."
+        )
+        if not payload.urls:
+            raise HTTPException(status_code=400, detail="At least one URL is required.")
+
+        summary_template = _validated_summary_template(payload.defaults.summary_template)
+        requests: list[PipelineRequest] = []
+        origins: list[dict[str, object]] = []
+        rejected: list[dict[str, object]] = []
+        duplicates: list[dict[str, object]] = []
+        seen_video_keys: dict[str, int] = {}
+
+        for index, raw_url in enumerate(payload.urls, start=1):
+            url = raw_url.strip()
+            if not url:
+                rejected.append({"url": "", "index": index, "reason": "empty_url"})
+                continue
+
+            try:
+                adapter = resolve_source_adapter(url)
+                ref = adapter.parse_url(url)
+            except (SourceAdapterError, ValueError):
+                rejected.append(
+                    {"url": url, "index": index, "reason": "unsupported_url"}
+                )
+                continue
+
+            video_key = f"{ref.platform}:{ref.source_id}:{ref.part_id}"
+            first_index = seen_video_keys.get(video_key)
+            if first_index is not None:
+                duplicates.append(
+                    {
+                        "url": url,
+                        "index": index,
+                        "first_index": first_index,
+                        "reason": "duplicate_in_batch",
+                    }
+                )
+                continue
+            seen_video_keys[video_key] = index
+
+            requests.append(
+                _pipeline_request_from_defaults(
+                    url=url,
+                    outputs=outputs,
+                    defaults=payload.defaults,
+                    summary_template=summary_template,
+                )
+            )
+            origins.append(
+                {
+                    "source": "feishu",
+                    "label": "来自飞书",
+                    "external_batch_id": batch_id,
+                    "external_item_id": f"{batch_id}:{index}",
+                    "submitted_by": (
+                        payload.submitted_by.display_name
+                        if payload.submitted_by is not None
+                        else None
+                    ),
+                    "reply_target_ref": _feishu_reply_target_ref(payload.reply_target),
+                }
+            )
+
+        return queue.submit_intake_batch(
+            batch_id=batch_id,
+            requests=requests,
+            origins=origins,
+            rejected=rejected,
+            duplicates=duplicates,
+        )
 
     @app.post("/api/jobs/queue/pause")
     def pause_queue(_: None = Depends(require_token)) -> dict[str, object]:
@@ -611,9 +731,7 @@ def _batch_items_from_payload(payload: BatchJobCreatePayload) -> list[dict[str, 
         return [
             {
                 "url": item.url.strip(),
-                "title": item.title.strip()
-                if isinstance(item.title, str) and item.title.strip()
-                else None,
+                "title": item.title.strip() if isinstance(item.title, str) and item.title.strip() else None,
             }
             for item in payload.items
             if item.url.strip()
@@ -629,7 +747,7 @@ def _pipeline_request_from_defaults(
     *,
     url: str,
     outputs: Path,
-    defaults: BatchJobCreatePayload,
+    defaults: BatchJobCreatePayload | FeishuIntakeDefaultsPayload,
     summary_template: str,
 ) -> PipelineRequest:
     return PipelineRequest(
@@ -645,6 +763,18 @@ def _pipeline_request_from_defaults(
         allow_long_video=defaults.allow_long_video,
         yes_i_understand=True,
         overwrite=False,
+    )
+
+
+def _feishu_reply_target_ref(
+    reply_target: FeishuIntakeReplyTargetPayload | None,
+) -> str | None:
+    if reply_target is None:
+        return None
+    return (
+        reply_target.message_id_ref
+        or reply_target.thread_id_ref
+        or reply_target.chat_id_ref
     )
 
 
