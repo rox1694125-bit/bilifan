@@ -34,6 +34,23 @@ directly.
   tasks.
 - **Completion Notification**: the final reply sent back to the originating
   Feishu chat or thread after each external job succeeds, fails, or is canceled.
+- **Transcription Routing**: the decision step that chooses transcript source,
+  Whisper language, and Whisper model before audio transcription. It should be
+  explainable from recorded signals, not only inferred from the final artifact
+  label.
+- **Routing Decision**: the structured record of why Transcription Routing chose
+  a model and language. It includes the selected route, confidence, reason, and
+  relevant metadata signals.
+- **Transcript Quality Check**: the post-transcription validation step that
+  checks whether the transcript looks compatible with the expected language and
+  normal speech, separate from completeness checks such as segment coverage.
+- **Auto-Correction Retry**: one automatic retry with the alternate Whisper
+  language/model route when the first Whisper transcript likely used the wrong
+  route.
+- **Succeeded With Warning**: a terminal user-visible outcome where Bilifan has
+  produced artifacts, but the transcript quality or route confidence still needs
+  user attention. Queue accounting may remain `succeeded`, but the Task Center
+  and completion notification must not present it as an ordinary clean success.
 
 ## Confirmed Feishu Intake Semantics
 
@@ -44,3 +61,15 @@ send completion notifications back to the same Feishu conversation.
 This authorization does not cover batch configuration changes, Hermes profile
 or gateway changes, credential changes, service restarts, external publishing,
 or cross-project writes.
+
+## Confirmed Transcription Routing Semantics
+
+When Bilifan uses Whisper fallback and the selected model appears wrong after
+transcription, Bilifan should automatically try one alternate Whisper
+language/model route once before surfacing the result.
+
+If the alternate route passes quality checks, Bilifan should use the corrected
+transcript and record that an auto-correction retry happened. If the alternate
+route is still suspicious, Bilifan should not silently present the task as an
+ordinary clean success. It should finish as Succeeded With Warning or fail with
+a plain-language diagnostic, depending on how usable the artifacts are.
