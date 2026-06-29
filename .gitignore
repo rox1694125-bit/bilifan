@@ -5,6 +5,7 @@
 .worktrees/
 outputs/
 .bilifan/
+data/runtime/
 __pycache__/
 *.py[cod]
 *.egg-info/
