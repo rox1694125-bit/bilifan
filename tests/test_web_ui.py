@@ -1476,7 +1476,7 @@ def test_render_app_script_shows_transcript_source_labels():
                 run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
                 status: "succeeded",
                 stage: "render",
-                transcript_source_label: "B站字幕",
+                transcript_source_label: "Whisper turbo · 已自动纠偏",
                 artifacts: {}
               }]
             });
@@ -1506,7 +1506,7 @@ def test_render_app_script_shows_transcript_source_labels():
                 status: "succeeded",
                 stage: "render",
                 message: "Report ready.",
-                transcript_source_label: "Whisper turbo",
+                transcript_source_label: "Whisper turbo · 需复查",
                 request: { url: "https://www.bilibili.com/video/BV1abcDEF12H?p=1" },
                 run_key: "BV1abcDEF12H_p1/runs/2026-06-08_120000",
                 artifacts: {}
@@ -1517,8 +1517,8 @@ def test_render_app_script_shows_transcript_source_labels():
         }
         """,
         assertions="""
-        assert(elements["history-list"].innerHTML.includes("逐字稿：B站字幕"));
-        assert(elements["queue-list"].innerHTML.includes("逐字稿：Whisper turbo"));
+        assert(elements["history-list"].innerHTML.includes("逐字稿：Whisper turbo · 已自动纠偏"));
+        assert(elements["queue-list"].innerHTML.includes("逐字稿：Whisper turbo · 需复查"));
         """,
     )
 

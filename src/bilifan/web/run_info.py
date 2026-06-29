@@ -6,6 +6,12 @@ from typing import Any
 
 from bilifan.diagnostics import redact_text
 
+REVIEW_TRANSCRIPT_QUALITY_STATUSES = {
+    "low_confidence",
+    "suspect_wrong_route",
+    "unusable",
+}
+
 
 def read_metadata_title(run_dir: Path) -> str | None:
     data = _read_json_object(run_dir / "metadata.json")
@@ -19,6 +25,17 @@ def read_transcript_source_label(run_dir: Path) -> str | None:
 
 
 def transcript_source_label(transcript: dict[str, Any]) -> str:
+    label = _base_transcript_source_label(transcript)
+    if not label:
+        return label
+    if _was_auto_corrected(transcript):
+        return f"{label} · 已自动纠偏"
+    if _transcript_quality_status(transcript) in REVIEW_TRANSCRIPT_QUALITY_STATUSES:
+        return f"{label} · 需复查"
+    return label
+
+
+def _base_transcript_source_label(transcript: dict[str, Any]) -> str:
     source = _text(transcript.get("source"))
     model = _text(transcript.get("model"))
     if source == "whisper":
@@ -30,6 +47,23 @@ def transcript_source_label(transcript: dict[str, Any]) -> str:
     if source.endswith("-subtitle"):
         return "平台字幕"
     return source
+
+
+def _was_auto_corrected(transcript: dict[str, Any]) -> bool:
+    attempts = transcript.get("transcription_attempts")
+    if not isinstance(attempts, list) or len(attempts) < 2:
+        return False
+    for index, attempt in enumerate(attempts):
+        if isinstance(attempt, dict) and attempt.get("selected") is True:
+            return index > 0
+    return False
+
+
+def _transcript_quality_status(transcript: dict[str, Any]) -> str:
+    quality_check = transcript.get("transcript_quality_check")
+    if not isinstance(quality_check, dict):
+        return ""
+    return _text(quality_check.get("status"))
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:
