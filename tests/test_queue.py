@@ -181,6 +181,51 @@ def test_batch_queue_refreshes_existing_persisted_job_title_from_part_title(tmp_
     assert persisted["jobs"][0]["title"] == "第二课"
 
 
+def test_batch_queue_refreshes_existing_persisted_transcript_source_label(tmp_path):
+    storage_path = tmp_path / "outputs" / "_jobs" / "jobs.json"
+    run_key = "BV1abcDEF12G_p1/runs/2026-06-08_120000"
+    run_dir = tmp_path / "outputs" / run_key
+    run_dir.mkdir(parents=True)
+    (run_dir / "transcript.json").write_text(
+        json.dumps({"source": "whisper", "model": "turbo"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    storage_path.parent.mkdir(parents=True)
+    storage_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "paused": False,
+                "jobs": [
+                    {
+                        "job_id": "job-1",
+                        "status": "succeeded",
+                        "request": {"url": "https://www.bilibili.com/video/BV1abcDEF12G"},
+                        "run_key": run_key,
+                        "transcript_source_label": "Whisper small.en",
+                        "stage": "render",
+                        "progress": [],
+                        "artifacts": {},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager = BatchQueueManager(
+        runner=lambda request, *, progress_callback: None,
+        storage_path=storage_path,
+        run_jobs_inline=True,
+    )
+
+    state = manager.state()
+
+    assert state["items"][0]["transcript_source_label"] == "Whisper turbo"
+    persisted = json.loads(storage_path.read_text(encoding="utf-8"))
+    assert persisted["jobs"][0]["transcript_source_label"] == "Whisper turbo"
+
+
 def test_batch_queue_state_shows_only_recent_completed_jobs(tmp_path):
     def fake_runner(request, *, progress_callback):
         run_key = request.url.rsplit("=", 1)[-1]

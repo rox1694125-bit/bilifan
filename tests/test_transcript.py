@@ -102,6 +102,23 @@ def test_choose_whisper_model_auto_keeps_chinese_when_only_tags_are_english():
     assert choose_whisper_model(metadata) == ("turbo", "zh")
 
 
+def test_choose_whisper_model_keeps_chinese_when_description_has_reference_links():
+    metadata = {
+        "title": "给傻子的Git教程",
+        "part_title": "给傻子的Git教程",
+        "description": (
+            "Git官网: https://git-scm.com/\n\n"
+            "Git第一步配置: "
+            "https://git-scm.com/book/en/v2/Getting-Started-First-Time-Git-Setup\n\n"
+            "Git Pro在线阅读: https://git-scm.com/book/en/v2"
+        ),
+        "tags": ["软件", "学习", "计算机", "编程", "教程", "github", "git", "vscode"],
+        "subtitles": [],
+    }
+
+    assert choose_whisper_model(metadata) == ("turbo", "zh")
+
+
 def test_choose_whisper_model_auto_uses_explicit_english_audio_signal():
     metadata = {
         "title": "Andrew Ng 访谈精华",

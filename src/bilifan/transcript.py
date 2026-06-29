@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -15,6 +16,7 @@ MAX_SUBTITLE_BYTES = 20 * 1024 * 1024
 MIN_TRANSCRIPT_TOLERANCE_SECONDS = 10
 TRANSCRIPT_TOLERANCE_RATIO = 0.05
 MLX_WHISPER_TURBO_MODEL = "mlx-community/whisper-large-v3-turbo"
+URL_TEXT_RE = re.compile(r"https?://\S+")
 
 
 class TranscriptError(RuntimeError):
@@ -115,10 +117,11 @@ def choose_whisper_model(
     descriptive_text = _metadata_text(metadata, ("part_title", "description"))
     tags_text = _metadata_text(metadata, ("tags",))
     subtitle_text = _subtitle_metadata_text(metadata.get("subtitles"))
+    descriptive_signal_text = _strip_urls(descriptive_text)
     support_text = " ".join(
         text
         for text in (
-            descriptive_text,
+            descriptive_signal_text,
             tags_text,
             subtitle_text,
         )
@@ -128,7 +131,7 @@ def choose_whisper_model(
     if _explicit_english_audio_signal(combined_text):
         return "small.en", "en"
     if _contains_cjk(title_text):
-        if descriptive_text and _english_signal(descriptive_text):
+        if descriptive_signal_text and _english_signal(descriptive_signal_text):
             return "small.en", "en"
         return "turbo", "zh"
     if support_text and _english_signal(support_text):
@@ -433,6 +436,10 @@ def _contains_cjk(text: str) -> bool:
 
 def _english_signal(text: str) -> bool:
     return _ascii_letter_count(text) >= 20 and _ascii_letter_ratio(text) >= 0.75
+
+
+def _strip_urls(text: str) -> str:
+    return URL_TEXT_RE.sub(" ", text)
 
 
 def _explicit_english_audio_signal(text: str) -> bool:

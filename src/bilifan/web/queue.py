@@ -456,10 +456,10 @@ class BatchQueueManager:
                 finished_at=raw_job.get("finished_at") if isinstance(raw_job.get("finished_at"), str) else None,
             )
             if run_key:
-                job.title = _read_metadata_title(outputs_root / run_key) or job.title
-            if job.transcript_source_label is None and run_key:
-                job.transcript_source_label = read_transcript_source_label(
-                    outputs_root / run_key
+                run_dir = outputs_root / run_key
+                job.title = _read_metadata_title(run_dir) or job.title
+                job.transcript_source_label = (
+                    read_transcript_source_label(run_dir) or job.transcript_source_label
                 )
             if job.status in {"running", "canceling"}:
                 job.status = "failed"
