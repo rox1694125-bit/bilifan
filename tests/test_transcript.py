@@ -314,6 +314,69 @@ def test_build_transcript_uses_whisper_when_no_subtitles(tmp_path):
     ]
 
 
+def test_build_transcript_adds_routing_and_quality_metadata_for_whisper(tmp_path):
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"fake audio")
+    metadata = {"title": "中文教程", "description": "", "subtitles": []}
+    media = {"duration_seconds": 4, "audio_path": "audio.mp3"}
+
+    def fake_whisper(audio_file, *, model_name, language):
+        return [{"start": 0, "end": 4, "text": "嗨 这里是中文教程 今天讲 Git"}]
+
+    transcript = build_transcript(
+        metadata,
+        media,
+        tmp_path,
+        whisper_transcriber=fake_whisper,
+        mlx_whisper_transcriber=None,
+    )
+
+    assert transcript["routing_decision"]["selected_model"] == "turbo"
+    assert transcript["routing_decision"]["selected_language"] == "zh"
+    assert transcript["transcript_quality_check"]["status"] == "ok"
+    assert transcript["transcript_quality_check"]["expected_language"] == "zh"
+    assert transcript["transcript_quality_check"]["expected_language"] != "auto"
+    assert transcript["transcription_attempts"] == [
+        {
+            "model": "turbo",
+            "language": "zh",
+            "backend": "openai-whisper",
+            "quality_status": "ok",
+            "selected": True,
+        }
+    ]
+
+
+def test_subtitle_transcript_does_not_add_whisper_routing_metadata(tmp_path):
+    metadata = {
+        "subtitles": [
+            {
+                "language": "zh-Hans",
+                "name": "中文",
+                "url": "https://example.test/subtitle.json",
+                "ext": "json",
+            }
+        ]
+    }
+    media = {"duration_seconds": 3, "audio_path": "audio.mp3"}
+
+    def fake_fetcher(url):
+        return json.dumps({"body": [{"from": 0, "to": 3, "content": "字幕内容"}]}).encode(
+            "utf-8"
+        )
+
+    transcript = build_transcript(
+        metadata,
+        media,
+        tmp_path,
+        subtitle_fetcher=fake_fetcher,
+    )
+
+    assert "routing_decision" not in transcript
+    assert "transcript_quality_check" not in transcript
+    assert "transcription_attempts" not in transcript
+
+
 def test_build_transcript_prefers_mlx_for_turbo_whisper(tmp_path):
     audio_path = tmp_path / ".bilifan" / "cache" / "audio.mp3"
     audio_path.parent.mkdir(parents=True)

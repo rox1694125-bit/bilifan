@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 
 from .diagnostics import redact_text
 from .sources.youtube import parse_youtube_vtt
+from .transcript_quality import check_transcript_quality
 from .transcription_routing import choose_whisper_route
 
 
@@ -75,7 +76,9 @@ def build_transcript(
         if transcriber == "subtitles":
             raise TranscriptError("No usable Bilibili subtitle was found.")
 
-    model_name, whisper_language = choose_whisper_model(metadata, language=language)
+    routing_decision = choose_whisper_route(metadata, language=language)
+    model_name = str(routing_decision["selected_model"])
+    whisper_language = str(routing_decision["selected_language"])
     audio_path = run_dir / _first_text(media.get("audio_path"))
     if not audio_path.is_file():
         raise TranscriptError(
@@ -90,6 +93,17 @@ def build_transcript(
         whisper_transcriber=whisper_transcriber,
         mlx_whisper_transcriber=mlx_whisper_transcriber,
     )
+    normalized_segments = _normalize_segments(
+        segments,
+        language=whisper_language,
+        source="whisper",
+    )
+    quality_check = check_transcript_quality(
+        normalized_segments,
+        expected_language=whisper_language,
+        metadata=metadata,
+        audio_seconds=_float_value(media.get("duration_seconds")),
+    )
     transcript = _transcript_payload(
         source="whisper",
         language=whisper_language,
@@ -97,6 +111,17 @@ def build_transcript(
         backend=backend,
         segments=segments,
         media=media,
+        routing_decision=routing_decision,
+        transcript_quality_check=quality_check,
+        transcription_attempts=[
+            {
+                "model": model_name,
+                "language": whisper_language,
+                "backend": backend,
+                "quality_status": quality_check["status"],
+                "selected": True,
+            }
+        ],
     )
     _raise_if_incomplete(transcript)
     return transcript
@@ -279,6 +304,9 @@ def _transcript_payload(
     segments: list[dict[str, Any]],
     media: dict[str, Any],
     backend: str | None = None,
+    routing_decision: dict[str, Any] | None = None,
+    transcript_quality_check: dict[str, Any] | None = None,
+    transcription_attempts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     normalized_segments = _normalize_segments(
         segments,
@@ -297,6 +325,12 @@ def _transcript_payload(
     }
     if backend:
         payload["backend"] = backend
+    if routing_decision is not None:
+        payload["routing_decision"] = routing_decision
+    if transcript_quality_check is not None:
+        payload["transcript_quality_check"] = transcript_quality_check
+    if transcription_attempts is not None:
+        payload["transcription_attempts"] = transcription_attempts
     return payload
 
 
