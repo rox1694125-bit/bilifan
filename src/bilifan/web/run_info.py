@@ -28,11 +28,12 @@ def transcript_source_label(transcript: dict[str, Any]) -> str:
     label = _base_transcript_source_label(transcript)
     if not label:
         return label
+    suffixes = []
     if _was_auto_corrected(transcript):
-        return f"{label} · 已自动纠偏"
+        suffixes.append("已自动纠偏")
     if _transcript_quality_status(transcript) in REVIEW_TRANSCRIPT_QUALITY_STATUSES:
-        return f"{label} · 需复查"
-    return label
+        suffixes.append("需复查")
+    return " · ".join([label, *suffixes])
 
 
 def _base_transcript_source_label(transcript: dict[str, Any]) -> str:

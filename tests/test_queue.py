@@ -226,7 +226,16 @@ def test_batch_queue_refreshes_existing_persisted_transcript_source_label(tmp_pa
     assert persisted["jobs"][0]["transcript_source_label"] == "Whisper turbo"
 
 
-def test_batch_queue_refreshes_corrected_transcript_source_label(tmp_path):
+@pytest.mark.parametrize(
+    ("quality_status", "expected_label"),
+    [
+        ("ok", "Whisper turbo · 已自动纠偏"),
+        ("low_confidence", "Whisper turbo · 已自动纠偏 · 需复查"),
+    ],
+)
+def test_batch_queue_refreshes_corrected_transcript_source_label(
+    tmp_path, quality_status, expected_label
+):
     storage_path = tmp_path / "outputs" / "_jobs" / "jobs.json"
     run_key = "BV1abcDEF12G_p1/runs/2026-06-08_120000"
     run_dir = tmp_path / "outputs" / run_key
@@ -240,7 +249,7 @@ def test_batch_queue_refreshes_corrected_transcript_source_label(tmp_path):
                     {"model": "small.en", "language": "en", "selected": False},
                     {"model": "turbo", "language": "zh", "selected": True},
                 ],
-                "transcript_quality_check": {"status": "ok"},
+                "transcript_quality_check": {"status": quality_status},
             },
             ensure_ascii=False,
         ),
@@ -279,12 +288,12 @@ def test_batch_queue_refreshes_corrected_transcript_source_label(tmp_path):
 
     assert (
         state["items"][0]["transcript_source_label"]
-        == "Whisper turbo · 已自动纠偏"
+        == expected_label
     )
     persisted = json.loads(storage_path.read_text(encoding="utf-8"))
     assert (
         persisted["jobs"][0]["transcript_source_label"]
-        == "Whisper turbo · 已自动纠偏"
+        == expected_label
     )
 
 
