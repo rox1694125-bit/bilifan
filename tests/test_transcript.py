@@ -119,6 +119,12 @@ def test_choose_whisper_model_keeps_chinese_when_description_has_reference_links
     assert choose_whisper_model(metadata) == ("turbo", "zh")
 
 
+def test_choose_whisper_model_wraps_structured_route():
+    metadata = {"title": "给傻子的Git教程", "description": "Git官网: https://git-scm.com/"}
+
+    assert choose_whisper_model(metadata) == ("turbo", "zh")
+
+
 def test_choose_whisper_model_auto_uses_explicit_english_audio_signal():
     metadata = {
         "title": "Andrew Ng 访谈精华",

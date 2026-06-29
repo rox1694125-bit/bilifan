@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 
 from .diagnostics import redact_text
 from .sources.youtube import parse_youtube_vtt
+from .transcription_routing import choose_whisper_route
 
 
 SUBTITLE_TIMEOUT_SECONDS = 60
@@ -106,43 +107,8 @@ def choose_whisper_model(
     *,
     language: str = "auto",
 ) -> tuple[str, str]:
-    if language == "zh":
-        return "turbo", "zh"
-    if language == "en":
-        return "small.en", "en"
-    if language != "auto":
-        raise ValueError(f"Unsupported Whisper language: {language}")
-
-    title_text = _metadata_text(metadata, ("title",))
-    descriptive_text = _metadata_text(metadata, ("part_title", "description"))
-    tags_text = _metadata_text(metadata, ("tags",))
-    subtitle_text = _subtitle_metadata_text(metadata.get("subtitles"))
-    descriptive_signal_text = _strip_urls(descriptive_text)
-    support_text = " ".join(
-        text
-        for text in (
-            descriptive_signal_text,
-            tags_text,
-            subtitle_text,
-        )
-        if text
-    )
-    combined_text = " ".join(text for text in (title_text, support_text) if text)
-    if _explicit_english_audio_signal(combined_text):
-        return "small.en", "en"
-    if _contains_cjk(title_text):
-        if descriptive_signal_text and _english_signal(descriptive_signal_text):
-            return "small.en", "en"
-        return "turbo", "zh"
-    if support_text and _english_signal(support_text):
-        return "small.en", "en"
-    if (
-        combined_text
-        and not _contains_cjk(combined_text)
-        and _ascii_letter_ratio(combined_text) >= 0.8
-    ):
-        return "small.en", "en"
-    return "turbo", "zh"
+    route = choose_whisper_route(metadata, language=language)
+    return str(route["selected_model"]), str(route["selected_language"])
 
 
 def transcribe_with_whisper(
