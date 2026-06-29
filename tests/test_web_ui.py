@@ -1476,7 +1476,7 @@ def test_render_app_script_shows_transcript_source_labels():
                 run_key: "BV1abcDEF12G_p1/runs/2026-06-08_120000",
                 status: "succeeded",
                 stage: "render",
-                transcript_source_label: "Whisper turbo · 已自动纠偏",
+                transcript_source_label: "B站字幕",
                 artifacts: {}
               }]
             });
@@ -1493,31 +1493,46 @@ def test_render_app_script_shows_transcript_source_labels():
           }
           if (path === "/api/jobs/queue") {
             return jsonResponse({
-              counts: { queued: 0, running: 0, succeeded: 1, failed: 0, canceled: 0 },
-              visible_counts: { queued: 0, running: 0, succeeded: 1, failed: 0, canceled: 0 },
-              queue_counts: { queued: 0, running: 0, succeeded: 1, failed: 0, canceled: 0 },
-              total_items: 1,
+              counts: { queued: 0, running: 0, succeeded: 2, failed: 0, canceled: 0 },
+              visible_counts: { queued: 0, running: 0, succeeded: 2, failed: 0, canceled: 0 },
+              queue_counts: { queued: 0, running: 0, succeeded: 2, failed: 0, canceled: 0 },
+              total_items: 2,
               hidden_completed: 0,
               hidden_replaced: 0,
-              items: [{
-                source: "queue",
-                job_id: "job-1",
-                title: "队列视频",
-                status: "succeeded",
-                stage: "render",
-                message: "Report ready.",
-                transcript_source_label: "Whisper turbo · 需复查",
-                request: { url: "https://www.bilibili.com/video/BV1abcDEF12H?p=1" },
-                run_key: "BV1abcDEF12H_p1/runs/2026-06-08_120000",
-                artifacts: {}
-              }]
+              items: [
+                {
+                  source: "queue",
+                  job_id: "job-1",
+                  title: "纠偏队列视频",
+                  status: "succeeded",
+                  stage: "render",
+                  message: "Report ready.",
+                  transcript_source_label: "Whisper turbo · 已自动纠偏",
+                  request: { url: "https://www.bilibili.com/video/BV1abcDEF12H?p=1" },
+                  run_key: "BV1abcDEF12H_p1/runs/2026-06-08_120000",
+                  artifacts: {}
+                },
+                {
+                  source: "queue",
+                  job_id: "job-2",
+                  title: "复查队列视频",
+                  status: "succeeded",
+                  stage: "render",
+                  message: "Report ready.",
+                  transcript_source_label: "Whisper turbo · 需复查",
+                  request: { url: "https://www.bilibili.com/video/BV1abcDEF12J?p=1" },
+                  run_key: "BV1abcDEF12J_p1/runs/2026-06-08_120000",
+                  artifacts: {}
+                }
+              ]
             });
           }
           throw new Error(`unexpected fetch ${path}`);
         }
         """,
         assertions="""
-        assert(elements["history-list"].innerHTML.includes("逐字稿：Whisper turbo · 已自动纠偏"));
+        assert(elements["history-list"].innerHTML.includes("逐字稿：B站字幕"));
+        assert(elements["queue-list"].innerHTML.includes("逐字稿：Whisper turbo · 已自动纠偏"));
         assert(elements["queue-list"].innerHTML.includes("逐字稿：Whisper turbo · 需复查"));
         """,
     )
