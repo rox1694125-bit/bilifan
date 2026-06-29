@@ -373,6 +373,62 @@ def test_single_job_is_visible_in_task_center_queue_endpoint(tmp_path, monkeypat
     assert isinstance(task_center["items"][0]["stage_elapsed_seconds"], float)
 
 
+def test_queue_endpoint_exposes_transcript_quality_warnings(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+
+    def fake_pipeline(request, *, progress_callback):
+        run_dir = request.out / "BV1abcDEF12G_p1" / "runs" / "2026-06-08_120000"
+        run_dir.mkdir(parents=True)
+        (run_dir / "metadata.json").write_text(
+            json.dumps({"title": "给傻子的Git教程"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (run_dir / "transcript.json").write_text(
+            json.dumps(
+                {
+                    "source": "whisper",
+                    "model": "turbo",
+                    "transcript_quality_check": {"status": "suspect_wrong_route"},
+                    "transcription_attempts": [
+                        {"model": "turbo", "language": "zh", "selected": True}
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return PipelineResult(
+            run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
+            run_dir=run_dir,
+            diagnostics_path=run_dir / "diagnostics.json",
+            artifact_paths=["metadata.json", "transcript.json"],
+            warnings=["transcript_quality_suspect_wrong_route"],
+        )
+
+    app = create_app(
+        outputs=tmp_path / "outputs",
+        token="test-token",
+        open_browser=False,
+        pipeline_runner=fake_pipeline,
+        run_jobs_inline=True,
+    )
+    client = TestClient(app)
+    _accept_consent(client)
+
+    start_response = client.post(
+        "/api/jobs",
+        headers=_headers(),
+        json={"url": "https://www.bilibili.com/video/BV1abcDEF12G?p=1"},
+    )
+    task_center = client.get("/api/jobs/queue", headers=_headers()).json()
+
+    assert start_response.status_code == 200
+    assert task_center["items"][0]["warnings"] == [
+        "transcript_quality_suspect_wrong_route"
+    ]
+    assert task_center["items"][0]["transcript_source_label"] == "Whisper turbo · 需复查"
+
+
 def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
     calls = []
