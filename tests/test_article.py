@@ -124,6 +124,21 @@ def test_build_article_prompt_uses_light_cleaning_for_subtitles():
     assert "少改词" in prompt
 
 
+def test_article_schema_declares_type_for_const_schema_version():
+    assert article_module.ARTICLE_SCHEMA["properties"]["schema_version"] == {
+        "type": "integer",
+        "const": ARTICLE_SCHEMA_VERSION,
+    }
+
+
+def test_article_output_schema_excludes_normalized_section_fields():
+    section_schema = article_module.ARTICLE_OUTPUT_SCHEMA["properties"]["sections"]["items"]
+
+    assert "timestamp_url" not in section_schema["properties"]
+    assert "cleaning_level" not in section_schema["properties"]
+    assert set(section_schema["required"]) == set(section_schema["properties"])
+
+
 def test_normalize_transcript_article_adds_timestamp_urls_and_validates_ranges():
     article = normalize_transcript_article(
         _article_payload(),
@@ -154,6 +169,55 @@ def test_normalize_transcript_article_rejects_timestamps_outside_source_segment_
 
     with pytest.raises(ArticleError, match="timestamp.*source segment"):
         normalize_transcript_article(payload, ref=REF, transcript=_transcript(), chunks=_chunks())
+
+
+def test_normalize_transcript_article_repairs_source_segment_range_from_valid_timestamps():
+    payload = _article_payload()
+    payload["sections"][0]["start"] = 0
+    payload["sections"][0]["end"] = 90
+    payload["sections"][0]["source_segment_start_index"] = 1
+    payload["sections"][0]["source_segment_end_index"] = 1
+
+    article = normalize_transcript_article(
+        payload,
+        ref=REF,
+        transcript=_transcript(),
+        chunks=_chunks(),
+    )
+
+    section = article["sections"][0]
+    assert section["start"] == 0
+    assert section["end"] == 90
+    assert section["source_segment_start_index"] == 0
+    assert section["source_segment_end_index"] == 2
+
+
+def test_normalize_transcript_article_snaps_section_boundary_out_of_segment_gap():
+    chunks = _chunks()
+    chunks["chunks"][0]["end"] = 13.04
+    chunks["chunks"][0]["segment_end_index"] = 1
+    chunks["chunks"][0]["segments"] = [
+        {"source_index": 0, "start": 0.0, "end": 7.62, "text": "第一段"},
+        {"source_index": 1, "start": 8.26, "end": 13.04, "text": "第二段"},
+    ]
+    payload = _article_payload()
+    payload["sections"][0]["start"] = 8.0
+    payload["sections"][0]["end"] = 13.04
+    payload["sections"][0]["source_segment_start_index"] = 1
+    payload["sections"][0]["source_segment_end_index"] = 1
+
+    article = normalize_transcript_article(
+        payload,
+        ref=REF,
+        transcript=_transcript(),
+        chunks=chunks,
+    )
+
+    section = article["sections"][0]
+    assert section["start"] == 8.26
+    assert section["end"] == 13.04
+    assert section["source_segment_start_index"] == 1
+    assert section["source_segment_end_index"] == 1
 
 
 def test_run_codex_article_generation_invokes_codex_exec(tmp_path):

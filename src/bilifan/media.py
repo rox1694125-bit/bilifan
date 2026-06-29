@@ -375,6 +375,7 @@ def download_bilibili_audio_stream(
     total = 0
     try:
         with urlopen(request, timeout=STREAM_READ_TIMEOUT_SECONDS) as response:
+            expected_length = _content_length(response)
             with raw_audio_path.open("wb") as output:
                 while True:
                     chunk = response.read(STREAM_CHUNK_SIZE)
@@ -384,6 +385,11 @@ def download_bilibili_audio_stream(
                     if total > MAX_AUDIO_BYTES:
                         raise MediaDownloadError("Bilibili audio stream was too large.")
                     output.write(chunk)
+            if expected_length is not None and total != expected_length:
+                raise MediaDownloadError(
+                    "Bilibili audio stream was incomplete: "
+                    f"downloaded {total}/{expected_length} bytes."
+                )
     except MediaDownloadError:
         raise
     except (OSError, URLError, ValueError) as exc:
@@ -507,40 +513,63 @@ def _run_playurl_audio_download_with_duration_check(
     stream_downloader: StreamDownloader,
     ffmpeg_runner: Runner,
 ) -> dict[str, Any]:
-    _remove_existing_audio_outputs(cache_dir, ref.output_id)
-    audio_source = _run_playurl_audio_download(
-        ref,
-        metadata,
-        cache_dir,
-        playurl_fetcher=playurl_fetcher,
-        stream_downloader=stream_downloader,
-        ffmpeg_runner=ffmpeg_runner,
-    )
-    audio_path = cache_dir / f"{ref.output_id}.mp3"
-    if not audio_path.is_file():
-        raise MediaDownloadError(
-            "Bilibili playurl fallback did not produce expected file: "
-            f"{_relative_audio_path(ref)}"
-        )
+    raw_audio_path = cache_dir / f"{ref.output_id}.source.m4s"
+    mp3_path = cache_dir / f"{ref.output_id}.mp3"
+    audio_urls = _normalize_audio_urls(playurl_fetcher(ref, metadata))
+    last_error: MediaDownloadError | None = None
+    last_duration_check: dict[str, Any] | None = None
+    for audio_url in audio_urls:
+        _remove_existing_audio_outputs(cache_dir, ref.output_id)
+        try:
+            stream_downloader(audio_url, ref, raw_audio_path)
+            convert_audio_to_mp3(raw_audio_path, mp3_path, runner=ffmpeg_runner)
+            if not mp3_path.is_file():
+                raise MediaDownloadError(
+                    "Bilibili playurl fallback did not produce expected file: "
+                    f"{_relative_audio_path(ref)}"
+                )
+            audio_seconds = ffprobe_duration_seconds(mp3_path, runner=probe_runner)
+            duration_check = check_duration_match(
+                metadata_seconds=metadata_duration,
+                audio_seconds=audio_seconds,
+                attempts=attempts,
+            )
+            if duration_check["status"] != "duration_mismatch":
+                return {
+                    "audio_path": _relative_audio_path(ref),
+                    "audio_source": "bilibili-playurl-api",
+                    "duration_seconds": audio_seconds,
+                    "duration_check": duration_check,
+                }
+            last_duration_check = duration_check
+            last_error = MediaDownloadError(
+                "audio duration differs from metadata for Bilibili playurl candidate.",
+                duration_check=duration_check,
+            )
+        except MediaDownloadError as exc:
+            last_error = exc
+            if exc.duration_check is not None:
+                last_duration_check = exc.duration_check
+        finally:
+            if raw_audio_path.exists():
+                raw_audio_path.unlink()
+            if last_error is not None and mp3_path.exists():
+                mp3_path.unlink()
 
-    audio_seconds = ffprobe_duration_seconds(audio_path, runner=probe_runner)
-    duration_check = check_duration_match(
-        metadata_seconds=metadata_duration,
-        audio_seconds=audio_seconds,
-        attempts=attempts,
-    )
-    if duration_check["status"] == "duration_mismatch":
+    if last_duration_check is not None:
         raise MediaDownloadError(
             "audio duration differs from metadata after yt-dlp retry and playurl "
             "fallback.",
-            duration_check=duration_check,
+            duration_check=last_duration_check,
+            source_exit_code=last_error.source_exit_code if last_error else None,
         )
-    return {
-        "audio_path": _relative_audio_path(ref),
-        "audio_source": audio_source,
-        "duration_seconds": audio_seconds,
-        "duration_check": duration_check,
-    }
+    if last_error is not None:
+        raise MediaDownloadError(
+            "Bilibili audio stream download failed for all playurl candidates: "
+            f"{last_error}",
+            source_exit_code=last_error.source_exit_code,
+        ) from last_error
+    raise MediaDownloadError("Bilibili playurl API returned no usable audio URLs.")
 
 
 def _metadata_duration(metadata: dict[str, Any]) -> int | float | None:
@@ -556,6 +585,16 @@ def _metadata_duration(metadata: dict[str, Any]) -> int | float | None:
             return None
         return int(parsed) if parsed.is_integer() else parsed
     return None
+
+
+def _content_length(response: Any) -> int | None:
+    headers = getattr(response, "headers", None)
+    raw_value = headers.get("Content-Length") if headers is not None else None
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
 
 
 def _metadata_cid(metadata: dict[str, Any]) -> str:

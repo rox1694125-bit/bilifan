@@ -28,7 +28,7 @@ ARTICLE_SCHEMA: dict[str, Any] = {
     "required": ["schema_version", "source", "cleaning_level", "sections", "warnings"],
     "additionalProperties": False,
     "properties": {
-        "schema_version": {"const": ARTICLE_SCHEMA_VERSION},
+        "schema_version": {"type": "integer", "const": ARTICLE_SCHEMA_VERSION},
         "source": {"type": "string"},
         "cleaning_level": {"type": "string", "enum": ["strong", "light"]},
         "sections": {
@@ -101,6 +101,12 @@ ARTICLE_SCHEMA: dict[str, Any] = {
         },
     },
 }
+ARTICLE_OUTPUT_SCHEMA = copy.deepcopy(ARTICLE_SCHEMA)
+_ARTICLE_OUTPUT_SECTION_SCHEMA = ARTICLE_OUTPUT_SCHEMA["properties"]["sections"]["items"]
+for _field in ("timestamp_url", "cleaning_level"):
+    _ARTICLE_OUTPUT_SECTION_SCHEMA["properties"].pop(_field, None)
+    if _field in _ARTICLE_OUTPUT_SECTION_SCHEMA["required"]:
+        _ARTICLE_OUTPUT_SECTION_SCHEMA["required"].remove(_field)
 
 
 class ArticleError(RuntimeError):
@@ -156,7 +162,7 @@ def build_article_prompt(
             "transcript_segments": _prompt_segments(chunk),
             "text": _first_text(chunk.get("text")),
         },
-        "output_schema": ARTICLE_SCHEMA,
+        "output_schema": ARTICLE_OUTPUT_SCHEMA,
     }
     return (
         "你是 Bilifan 的逐字稿文章生成器。请只根据输入 transcript 内容，把视频逐字稿"
@@ -191,7 +197,7 @@ def run_codex_article_generation(
         tmp_path = Path(tmp_dir)
         schema_path = tmp_path / "transcript_article.schema.json"
         output_path = tmp_path / "transcript_article.json"
-        _write_json(schema_path, ARTICLE_SCHEMA)
+        _write_json(schema_path, ARTICLE_OUTPUT_SCHEMA)
         try:
             codex_executable = resolve_codex_executable()
         except SummarizationError as exc:
@@ -285,6 +291,11 @@ def normalize_transcript_article(
             source_end,
             transcript_segment_count=transcript_segment_count,
             covered_source_indices=covered_source_indices,
+        )
+        start, end, source_start, source_end = _section_anchor_for_timestamp_span(
+            start,
+            end,
+            source_segment_spans=source_segment_spans,
         )
         _validate_section_timestamp_span(
             start,
@@ -499,6 +510,72 @@ def _validate_section_timestamp_span(
         raise ArticleError(
             "transcript article section timestamp was outside source segment time span."
         )
+
+
+def _section_anchor_for_timestamp_span(
+    start: float,
+    end: float,
+    *,
+    source_segment_spans: dict[int, tuple[float, float]],
+) -> tuple[float, float, int | None, int | None]:
+    if not source_segment_spans:
+        return start, end, None, None
+
+    transcript_start = min(span[0] for span in source_segment_spans.values())
+    transcript_end = max(span[1] for span in source_segment_spans.values())
+    if (
+        start < transcript_start - TIMESTAMP_EPSILON_SECONDS
+        or end > transcript_end + TIMESTAMP_EPSILON_SECONDS
+    ):
+        raise ArticleError(
+            "transcript article section timestamp was outside source segment time span."
+        )
+
+    overlapping_indices = [
+        source_index
+        for source_index, (segment_start, segment_end) in source_segment_spans.items()
+        if (
+            segment_end > start + TIMESTAMP_EPSILON_SECONDS
+            and segment_start < end - TIMESTAMP_EPSILON_SECONDS
+        )
+    ]
+    if not overlapping_indices:
+        containing_index = _source_index_containing_timestamp(
+            start,
+            source_segment_spans=source_segment_spans,
+        )
+        if containing_index is None:
+            raise ArticleError(
+                "transcript article section timestamp was outside source segment time span."
+            )
+        return start, end, containing_index, containing_index
+
+    source_start = min(overlapping_indices)
+    source_end = max(overlapping_indices)
+    span_start = min(source_segment_spans[index][0] for index in overlapping_indices)
+    span_end = max(source_segment_spans[index][1] for index in overlapping_indices)
+    normalized_start = max(start, span_start)
+    normalized_end = min(end, span_end)
+    if normalized_end < normalized_start:
+        raise ArticleError(
+            "transcript article section timestamp was outside source segment time span."
+        )
+    return normalized_start, normalized_end, source_start, source_end
+
+
+def _source_index_containing_timestamp(
+    timestamp: float,
+    *,
+    source_segment_spans: dict[int, tuple[float, float]],
+) -> int | None:
+    for source_index, (start, end) in source_segment_spans.items():
+        if (
+            start - TIMESTAMP_EPSILON_SECONDS
+            <= timestamp
+            <= end + TIMESTAMP_EPSILON_SECONDS
+        ):
+            return source_index
+    return None
 
 
 def _normalized_paragraphs(value: Any) -> list[dict[str, Any]]:
