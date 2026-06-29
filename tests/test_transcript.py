@@ -1,4 +1,6 @@
 import json
+import sys
+import types
 
 import pytest
 
@@ -8,6 +10,7 @@ from bilifan.transcript import (
     check_transcript_complete,
     choose_whisper_model,
     parse_bilibili_subtitle_json,
+    transcribe_with_mlx_whisper,
 )
 
 
@@ -286,6 +289,82 @@ def test_build_transcript_uses_whisper_when_no_subtitles(tmp_path):
             "source": "whisper",
         }
     ]
+
+
+def test_build_transcript_prefers_mlx_for_turbo_whisper(tmp_path):
+    audio_path = tmp_path / ".bilifan" / "cache" / "audio.mp3"
+    audio_path.parent.mkdir(parents=True)
+    audio_path.write_bytes(b"audio")
+    metadata = {"title": "中文教程", "description": "", "subtitles": []}
+    media = {"duration_seconds": 2, "audio_path": ".bilifan/cache/audio.mp3"}
+    calls = []
+
+    def fake_mlx(audio_file, *, model_name, language):
+        calls.append(("mlx", audio_file, model_name, language))
+        return [{"start": 0, "end": 2, "text": "MLX 转写"}]
+
+    def forbidden_openai(audio_file, *, model_name, language):
+        raise AssertionError("openai-whisper should not run when MLX succeeds")
+
+    transcript = build_transcript(
+        metadata,
+        media,
+        tmp_path,
+        whisper_transcriber=forbidden_openai,
+        mlx_whisper_transcriber=fake_mlx,
+    )
+
+    assert calls == [("mlx", audio_path, "turbo", "zh")]
+    assert transcript["source"] == "whisper"
+    assert transcript["model"] == "turbo"
+    assert transcript["backend"] == "mlx-whisper"
+    assert transcript["segments"][0]["text"] == "MLX 转写"
+
+
+def test_build_transcript_falls_back_to_openai_when_mlx_fails(tmp_path):
+    audio_path = tmp_path / ".bilifan" / "cache" / "audio.mp3"
+    audio_path.parent.mkdir(parents=True)
+    audio_path.write_bytes(b"audio")
+    metadata = {"title": "中文教程", "description": "", "subtitles": []}
+    media = {"duration_seconds": 2, "audio_path": ".bilifan/cache/audio.mp3"}
+    calls = []
+
+    def failing_mlx(audio_file, *, model_name, language):
+        calls.append(("mlx", audio_file, model_name, language))
+        raise TranscriptError("mlx-whisper failed")
+
+    def fake_openai(audio_file, *, model_name, language):
+        calls.append(("openai", audio_file, model_name, language))
+        return [{"start": 0, "end": 2, "text": "fallback 转写"}]
+
+    transcript = build_transcript(
+        metadata,
+        media,
+        tmp_path,
+        whisper_transcriber=fake_openai,
+        mlx_whisper_transcriber=failing_mlx,
+    )
+
+    assert calls == [
+        ("mlx", audio_path, "turbo", "zh"),
+        ("openai", audio_path, "turbo", "zh"),
+    ]
+    assert transcript["source"] == "whisper"
+    assert transcript["model"] == "turbo"
+    assert transcript["backend"] == "openai-whisper"
+    assert transcript["segments"][0]["text"] == "fallback 转写"
+
+
+def test_transcribe_with_mlx_whisper_requires_segment_list(tmp_path, monkeypatch):
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"audio")
+    fake_mlx_whisper = types.SimpleNamespace(
+        transcribe=lambda *args, **kwargs: {"text": "missing segments"}
+    )
+    monkeypatch.setitem(sys.modules, "mlx_whisper", fake_mlx_whisper)
+
+    with pytest.raises(TranscriptError, match="invalid transcript segments"):
+        transcribe_with_mlx_whisper(audio_path, model_name="turbo", language="zh")
 
 
 def test_build_transcript_passes_explicit_language_to_whisper_transcriber(tmp_path):

@@ -14,6 +14,7 @@ SUBTITLE_TIMEOUT_SECONDS = 60
 MAX_SUBTITLE_BYTES = 20 * 1024 * 1024
 MIN_TRANSCRIPT_TOLERANCE_SECONDS = 10
 TRANSCRIPT_TOLERANCE_RATIO = 0.05
+MLX_WHISPER_TURBO_MODEL = "mlx-community/whisper-large-v3-turbo"
 
 
 class TranscriptError(RuntimeError):
@@ -40,6 +41,7 @@ def build_transcript(
     transcriber: str = "auto",
     subtitle_fetcher=None,
     whisper_transcriber=None,
+    mlx_whisper_transcriber=None,
 ) -> dict[str, Any]:
     if transcriber not in {"auto", "whisper", "subtitles"}:
         raise TranscriptError(f"Unsupported transcriber: {transcriber}")
@@ -78,12 +80,18 @@ def build_transcript(
             f"{_first_text(media.get('audio_path'))}"
         )
 
-    transcribe = whisper_transcriber or transcribe_with_whisper
-    segments = transcribe(audio_path, model_name=model_name, language=whisper_language)
+    segments, backend = _transcribe_with_preferred_whisper(
+        audio_path,
+        model_name=model_name,
+        language=whisper_language,
+        whisper_transcriber=whisper_transcriber,
+        mlx_whisper_transcriber=mlx_whisper_transcriber,
+    )
     transcript = _transcript_payload(
         source="whisper",
         language=whisper_language,
         model=model_name,
+        backend=backend,
         segments=segments,
         media=media,
     )
@@ -154,6 +162,33 @@ def transcribe_with_whisper(
     raw_segments = result.get("segments") if isinstance(result, dict) else None
     if not isinstance(raw_segments, list):
         raise TranscriptError("Whisper returned invalid transcript segments.")
+    return raw_segments
+
+
+def transcribe_with_mlx_whisper(
+    audio_path: Path,
+    *,
+    model_name: str,
+    language: str,
+) -> list[dict[str, Any]]:
+    try:
+        import mlx_whisper
+    except Exception as exc:
+        raise TranscriptError("mlx-whisper is not installed or unavailable.") from exc
+
+    try:
+        result = mlx_whisper.transcribe(
+            str(audio_path),
+            path_or_hf_repo=_mlx_whisper_model_path(model_name),
+            language=language,
+            verbose=False,
+        )
+    except Exception as exc:
+        raise TranscriptError(f"MLX Whisper transcription failed: {exc}") from exc
+
+    raw_segments = result.get("segments") if isinstance(result, dict) else None
+    if not isinstance(raw_segments, list):
+        raise TranscriptError("MLX Whisper returned invalid transcript segments.")
     return raw_segments
 
 
@@ -274,13 +309,14 @@ def _transcript_payload(
     model: str | None,
     segments: list[dict[str, Any]],
     media: dict[str, Any],
+    backend: str | None = None,
 ) -> dict[str, Any]:
     normalized_segments = _normalize_segments(
         segments,
         language=language,
         source=source,
     )
-    return {
+    payload = {
         "source": source,
         "language": language,
         "model": model,
@@ -290,6 +326,50 @@ def _transcript_payload(
             audio_seconds=_float_value(media.get("duration_seconds")),
         ),
     }
+    if backend:
+        payload["backend"] = backend
+    return payload
+
+
+def _transcribe_with_preferred_whisper(
+    audio_path: Path,
+    *,
+    model_name: str,
+    language: str,
+    whisper_transcriber,
+    mlx_whisper_transcriber,
+) -> tuple[list[dict[str, Any]], str]:
+    openai_transcriber = whisper_transcriber or transcribe_with_whisper
+    if whisper_transcriber is not None and mlx_whisper_transcriber is None:
+        return (
+            openai_transcriber(audio_path, model_name=model_name, language=language),
+            "openai-whisper",
+        )
+
+    if _prefers_mlx_whisper(model_name):
+        mlx_transcriber = mlx_whisper_transcriber or transcribe_with_mlx_whisper
+        try:
+            return (
+                mlx_transcriber(audio_path, model_name=model_name, language=language),
+                "mlx-whisper",
+            )
+        except TranscriptError:
+            pass
+
+    return (
+        openai_transcriber(audio_path, model_name=model_name, language=language),
+        "openai-whisper",
+    )
+
+
+def _prefers_mlx_whisper(model_name: str) -> bool:
+    return model_name in {"turbo", "large-v3-turbo"}
+
+
+def _mlx_whisper_model_path(model_name: str) -> str:
+    if _prefers_mlx_whisper(model_name):
+        return MLX_WHISPER_TURBO_MODEL
+    return model_name
 
 
 def _raise_if_incomplete(transcript: dict[str, Any]) -> None:
