@@ -936,14 +936,12 @@ def _append_unique(items: list[str], item: str) -> list[str]:
 
 
 def _transcript_pipeline_warnings(transcript: dict[str, Any]) -> list[str]:
-    quality_check = transcript.get("transcript_quality_check")
-    if not isinstance(quality_check, dict):
-        return []
-
     warnings: list[str] = []
-    status = quality_check.get("status")
-    if status in {"low_confidence", "suspect_wrong_route", "unusable"}:
-        warnings = _append_unique(warnings, f"transcript_quality_{status}")
+    quality_check = transcript.get("transcript_quality_check")
+    if isinstance(quality_check, dict):
+        status = quality_check.get("status")
+        if status in {"low_confidence", "suspect_wrong_route", "unusable"}:
+            warnings = _append_unique(warnings, f"transcript_quality_{status}")
 
     attempts = transcript.get("transcription_attempts")
     if isinstance(attempts, list) and len(attempts) > 1:

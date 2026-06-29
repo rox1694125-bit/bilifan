@@ -606,6 +606,19 @@ def test_pipeline_promotes_transcript_quality_warning_to_diagnostics(
     assert diagnostics["transcript_check"]["status"] == "ok"
 
 
+def test_transcript_pipeline_warnings_flags_auto_corrected_without_quality_check():
+    transcript = {
+        "transcription_attempts": [
+            {"selected": False, "quality_status": "unusable"},
+            {"selected": True, "quality_status": "ok"},
+        ]
+    }
+
+    assert pipeline._transcript_pipeline_warnings(transcript) == [
+        "transcript_auto_corrected"
+    ]
+
+
 def test_pipeline_pdf_failure_warns_when_not_required(tmp_path, monkeypatch):
     _install_minimal_successful_pipeline_fakes(monkeypatch)
 
