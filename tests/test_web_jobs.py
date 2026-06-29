@@ -397,11 +397,21 @@ def test_queue_endpoint_exposes_transcript_quality_warnings(tmp_path, monkeypatc
             ),
             encoding="utf-8",
         )
+        (run_dir / "diagnostics.json").write_text(
+            json.dumps(
+                {
+                    "error_type": None,
+                    "stage": "render",
+                    "warnings": ["transcript_quality_suspect_wrong_route"],
+                }
+            ),
+            encoding="utf-8",
+        )
         return PipelineResult(
             run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
             run_dir=run_dir,
             diagnostics_path=run_dir / "diagnostics.json",
-            artifact_paths=["metadata.json", "transcript.json"],
+            artifact_paths=["metadata.json", "transcript.json", "diagnostics.json"],
             warnings=["transcript_quality_suspect_wrong_route"],
         )
 
@@ -423,10 +433,10 @@ def test_queue_endpoint_exposes_transcript_quality_warnings(tmp_path, monkeypatc
     task_center = client.get("/api/jobs/queue", headers=_headers()).json()
 
     assert start_response.status_code == 200
-    assert task_center["items"][0]["warnings"] == [
-        "transcript_quality_suspect_wrong_route"
-    ]
-    assert task_center["items"][0]["transcript_source_label"] == "Whisper turbo · 需复查"
+    item = task_center["items"][0]
+    assert item["source"] == "current"
+    assert item["warnings"] == ["transcript_quality_suspect_wrong_route"]
+    assert item["transcript_source_label"] == "Whisper turbo · 需复查"
 
 
 def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
