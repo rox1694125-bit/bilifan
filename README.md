@@ -66,8 +66,11 @@ Known video duration is checked immediately after metadata, before subtitles,
 audio download, Whisper, or AI generation. Videos over 180 minutes require
 `--allow-long-video` (Web: Advanced settings → allow long videos). Videos from
 90 through 180 minutes retain the existing explicit confirmation behavior;
-`--yes-i-understand` supplies that confirmation. Unknown or inaccurate metadata
-still has a second duration check when the actual transcript/audio is chunked.
+`--yes-i-understand` supplies that confirmation. The chunking stage also checks
+the measured audio duration when audio was downloaded. On the subtitle-only
+path it uses metadata duration, or the last subtitle timestamp if duration is
+missing. Incorrect metadata on a subtitle-only run is not independently
+verified by this duration gate.
 For an old over-limit failure, change the option and submit the URL again:
 the queue's requeue action retains the original options.
 
