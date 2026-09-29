@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -f "$ROOT/.bilifan/launchd-installed.json" ]]; then
+  exec "$ROOT/.venv/bin/python" "$ROOT/scripts/bilifan-service.py" stop
+fi
+
 WEB_SESSION="${BILIFAN_WEB_TMUX_SESSION:-bilifan-web}"
 TUNNEL_SESSION="${BILIFAN_TUNNEL_TMUX_SESSION:-bilifan-tunnel}"
 

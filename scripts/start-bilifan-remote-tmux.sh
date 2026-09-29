@@ -9,6 +9,10 @@ CONFIG_PATH="${BILIFAN_CLOUDFLARED_CONFIG:-.bilifan/cloudflared-bilifan.yml}"
 WEB_SESSION="${BILIFAN_WEB_TMUX_SESSION:-bilifan-web}"
 TUNNEL_SESSION="${BILIFAN_TUNNEL_TMUX_SESSION:-bilifan-tunnel}"
 
+if [[ -f "$ROOT/.bilifan/launchd-installed.json" ]]; then
+  exec "$ROOT/.venv/bin/python" "$ROOT/scripts/bilifan-service.py" start
+fi
+
 if ! command -v tmux >/dev/null 2>&1; then
   echo "tmux is not installed or not on PATH." >&2
   exit 1
@@ -27,12 +31,13 @@ fi
 if tmux has-session -t "$WEB_SESSION" 2>/dev/null; then
   echo "tmux session already running: $WEB_SESSION"
 else
-  WEB_TMUX_ENV=()
   if [[ -n "${BILIFAN_WEB_TOKEN:-}" ]]; then
-    WEB_TMUX_ENV=(-e "BILIFAN_WEB_TOKEN=$BILIFAN_WEB_TOKEN")
+    tmux new-session -d -e "BILIFAN_WEB_TOKEN=$BILIFAN_WEB_TOKEN" -s "$WEB_SESSION" \
+      "cd '$ROOT' && exec .venv/bin/python -m bilifan serve --no-open --port '$PORT' --strict-port --public-url '$PUBLIC_URL'"
+  else
+    tmux new-session -d -s "$WEB_SESSION" \
+      "cd '$ROOT' && exec .venv/bin/python -m bilifan serve --no-open --port '$PORT' --strict-port --public-url '$PUBLIC_URL'"
   fi
-  tmux new-session -d "${WEB_TMUX_ENV[@]}" -s "$WEB_SESSION" \
-    "cd '$ROOT' && exec .venv/bin/python -m bilifan serve --no-open --port '$PORT' --strict-port --public-url '$PUBLIC_URL'"
   echo "started tmux session: $WEB_SESSION"
 fi
 

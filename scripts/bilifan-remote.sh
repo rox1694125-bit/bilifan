@@ -10,6 +10,10 @@ WEB_SESSION="${BILIFAN_WEB_TMUX_SESSION:-bilifan-web}"
 TUNNEL_SESSION="${BILIFAN_TUNNEL_TMUX_SESSION:-bilifan-tunnel}"
 COMMAND="${1:-status}"
 
+if [[ -f "$ROOT/.bilifan/launchd-installed.json" ]]; then
+  exec "$ROOT/.venv/bin/python" "$ROOT/scripts/bilifan-service.py" "$COMMAND"
+fi
+
 usage() {
   cat <<'USAGE'
 Usage: scripts/bilifan-remote.sh start|stop|restart|status|logs

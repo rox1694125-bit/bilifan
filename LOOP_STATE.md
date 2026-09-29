@@ -40,7 +40,13 @@ Out of scope：整套架构重写、模型替换、真实历史资料批量重�
 - 实时远端默认分支仍为 codex/bilifan-foundation=b500633；本地领先 37 个提交，无远端独有提交。
 - 独立审查分工：现存运维改动；成果保护设计；长视频准入兼容性。
 - 现存运维/路径改动独立 review：无 P0/P1，40 项 focused tests 通过；发现 launchd 固定参数与环境变量文档不一致，批次 1 将澄清 legacy 适用范围。
-- 尚未执行 commit/push，尚未修改业务源码。
+- 批次 0 已提交 51dfdb3 并推送 origin/main：旧有 37 个提交和方案/进度均已同步，本地 main 已跟踪 origin/main。
+
+### 1 - 既有运维/路径改动（审查完成）
+
+- 运维独立 review 的 P2 文档误导已修：明确环境变量仅适用 foreground/legacy，launchd 使用固定部署参数。
+- 服务管理、脚本与路径兼容 40 项 focused tests 通过；无实际凭据进入待提交内容。
+- 运维与路径兼容将分两批提交；不重启现有服务。
 
 ## Current Status
 
