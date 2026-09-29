@@ -211,3 +211,45 @@ def test_export_feedback_does_not_render_untrusted_download_protocol():
         assert(!elements["export-feedback"].innerHTML.includes("href="));
         ''',
     )
+
+
+def test_same_run_retry_refreshes_history_once_for_the_new_successful_task():
+    _run_node_ui_harness(
+        _extract_inline_script(render_app_html()),
+        fetch_logic='''
+        let phase = "original_done";
+        let historyRequests = 0;
+        const runKey = "BV1sameTEST_p1/runs/2026-09-29_120000";
+        async function fetchMock(path, options = {}) {
+          if (path === "/api/config") return jsonResponse({consent:{local_processing:true},defaults:{format:"html",language:"zh"}});
+          if (path === "/api/history") {
+            historyRequests++;
+            return jsonResponse({items:[{run_key:runKey,title:"同一份逐字稿",status:"succeeded",artifacts:{},
+              quality:phase === "retry_done" ? {status:"clean",review_required:false,reasons:[]} :
+                {status:"needs_review",review_required:true,reasons:[{message:"旧版内容需要核对"}]}}],legacy_reports:[]});
+          }
+          if (path === "/api/jobs/current") return jsonResponse({
+            job_id:phase === "original_done" ? "original-job" : "retry-job",
+            run_key:runKey, status:phase === "retry_running" ? "running" : "succeeded",
+            finished_at:phase === "original_done" ? "2026-09-29T12:00:00Z" : phase === "retry_done" ? "2026-09-29T12:05:00Z" : null,
+            stage:phase === "retry_running" ? "summarization" : "render", progress:[],artifacts:{}});
+          if (path === "/api/jobs/queue") return jsonResponse({counts:{},items:[]});
+          if (path === "/api/status") return jsonResponse({ok:true,service:"bilifan-web-ui"});
+          throw new Error(`unexpected fetch ${path}`);
+        }
+        ''',
+        assertions='''
+        assert(elements["history-list"].innerHTML.includes("质量：需复查"));
+        const beforeRetry = historyRequests;
+        phase = "retry_running";
+        await loadCurrentJob(); await flush();
+        assert.equal(historyRequests, beforeRetry);
+        phase = "retry_done";
+        await loadCurrentJob(); await flush();
+        assert(elements["history-list"].innerHTML.includes("自动检查未发现明显异常"));
+        assert(!elements["history-list"].innerHTML.includes("质量：需复查"));
+        assert.equal(historyRequests, beforeRetry + 1);
+        for (let poll = 0; poll < 3; poll++) {await loadCurrentJob(); await flush();}
+        assert.equal(historyRequests, beforeRetry + 1);
+        ''',
+    )

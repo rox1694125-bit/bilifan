@@ -826,6 +826,7 @@ def render_app_html(token: str = "") -> str:
               collectionPreview: null,
               collectionMode: "all",
               openMenus: new Set(),
+              historyCompletionKeys: new Set(),
               pollingTimer: null,
               exportBusy: false,
               exportAction: null,
@@ -1633,8 +1634,12 @@ def render_app_html(token: str = "") -> str:
                     setJobMessage("任务因服务中断而停止，已完成内容保留，请在任务中心恢复。", true);
                   } else if (data.status === "succeeded") {
                     setJobMessage(data.message || "Report ready.");
-                    if (state.lastCompletedRun !== data.run_key) {
-                      state.lastCompletedRun = data.run_key;
+                    const completionKey = JSON.stringify([
+                      data.job_id || state.followedJobId || data.run_key,
+                      data.finished_at || null,
+                    ]);
+                    if (!state.historyCompletionKeys.has(completionKey)) {
+                      state.historyCompletionKeys.add(completionKey);
                       loadHistory();
                       loadQueue();
                     }
