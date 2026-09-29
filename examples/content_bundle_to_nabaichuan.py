@@ -7,24 +7,26 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from bilifan.exports import ExportError, build_nabaichuan_records
+    from bilifan.exports import ExportError, build_nabaichuan_records, prepare_export_bundle
 except ModuleNotFoundError as exc:
     if exc.name != "bilifan":
         raise
     src_dir = Path(__file__).resolve().parents[1] / "src"
     if src_dir.is_dir():
         sys.path.insert(0, str(src_dir))
-    from bilifan.exports import ExportError, build_nabaichuan_records
+    from bilifan.exports import ExportError, build_nabaichuan_records, prepare_export_bundle
 
 
 def convert_bundle(
     bundle: dict[str, Any],
     *,
     include_transcript: bool = True,
+    include_review_required: bool = False,
 ) -> list[dict[str, Any]]:
     return build_nabaichuan_records(
         bundle,
         include_transcript=include_transcript,
+        include_review_required=include_review_required,
     )
 
 
@@ -48,6 +50,7 @@ def main() -> int:
         action="store_false",
         help="Omit transcript segment records.",
     )
+    parser.add_argument("--include-review-required", action="store_true", help="Explicitly include flagged content while keeping all quality warnings.")
     args = parser.parse_args()
 
     bundle = json.loads(Path(args.bundle).read_text(encoding="utf-8"))
@@ -55,7 +58,8 @@ def main() -> int:
         parser.error("bundle must be a JSON object")
 
     try:
-        rows = convert_bundle(bundle, include_transcript=args.include_transcript)
+        bundle = prepare_export_bundle(Path(args.bundle).parent, bundle)
+        rows = convert_bundle(bundle, include_transcript=args.include_transcript, include_review_required=args.include_review_required)
     except ExportError as exc:
         parser.error(str(exc))
     Path(args.out).write_text(

@@ -28,7 +28,8 @@ from .pipeline import (
     validate_output_format,
 )
 from .renderer import PdfExportError
-from .retry import RetryError, retry_run
+from .retry import RetryError, retry_run, retry_outputs_root
+from .execution import execution_lock, ExecutionBusy, ExecutionUncertain, OperationCanceled
 from .summarizer import SummarizationError, validate_summary_style
 from .transcript import TranscriptError
 from .web.app import create_app
@@ -62,6 +63,7 @@ def callback() -> None:
 @app.command()
 def summarize(
     url: str,
+    ctx: typer.Context,
     out: Path = typer.Option(Path("./outputs"), "--out"),
     cookies_from_browser: str | None = typer.Option(None, "--cookies-from-browser"),
     cookies_file: Path | None = typer.Option(None, "--cookies-file"),
@@ -81,12 +83,16 @@ def summarize(
     debug_log: bool = typer.Option(False, "--debug-log"),
 ) -> None:
     """Prepare a local Bilifan run for one Bilibili current-P URL."""
+    _legacy_options_notice(ctx)
     if debug_log:
         raise typer.BadParameter("--debug-log is reserved for a later slice.")
     try:
         validate_output_format(output_format)
         validate_language(language)
-        summary_template = validate_summary_style(summary_template)
+        # Legacy report/template options are accepted but no longer executed.
+    except (ExecutionBusy, ExecutionUncertain, OperationCanceled) as exc:
+        typer.echo(redact_text(str(exc)), err=True)
+        raise typer.Exit(1) from exc
     except ValueError as exc:
         raise typer.BadParameter(redact_text(str(exc))) from exc
     except SummarizationError as exc:
@@ -96,30 +102,34 @@ def summarize(
     _ensure_consent(uses_cookies=uses_cookies, yes_i_understand=yes_i_understand)
 
     try:
-        result = run_summarize_pipeline(
-            PipelineRequest(
-                url=url,
-                out=out,
-                cookies_from_browser=cookies_from_browser,
-                cookies_file=cookies_file,
-                output_format=output_format,
-                transcriber=transcriber,
-                language=language,
-                force_whisper=force_whisper,
-                llm_provider=llm_provider,
-                llm_model=llm_model,
-                summary_template=summary_template,
-                with_frames=with_frames,
-                with_diagrams=with_diagrams,
-                require_pdf=require_pdf,
-                allow_long_video=allow_long_video,
-                yes_i_understand=yes_i_understand,
-                overwrite=overwrite,
-                confirm_long_video=lambda message: typer.confirm(
-                    f"{message} Continue?"
-                ),
+        with execution_lock(out):
+            result = run_summarize_pipeline(
+                PipelineRequest(
+                    url=url,
+                    out=out,
+                    cookies_from_browser=cookies_from_browser,
+                    cookies_file=cookies_file,
+                    output_format=output_format,
+                    transcriber=transcriber,
+                    language=language,
+                    force_whisper=force_whisper,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                    summary_template=summary_template,
+                    with_frames=with_frames,
+                    with_diagrams=with_diagrams,
+                    require_pdf=require_pdf,
+                    allow_long_video=allow_long_video,
+                    yes_i_understand=yes_i_understand,
+                    overwrite=overwrite,
+                    confirm_long_video=lambda message: typer.confirm(
+                        f"{message} Continue?"
+                    ),
+                )
             )
-        )
+    except (ExecutionBusy, ExecutionUncertain, OperationCanceled) as exc:
+        typer.echo(redact_text(str(exc)), err=True)
+        raise typer.Exit(1) from exc
     except ValueError as exc:
         raise typer.BadParameter(redact_text(str(exc))) from exc
     except PipelineRunError as exc:
@@ -145,6 +155,7 @@ def summarize(
 @app.command()
 def retry(
     run_dir: Path,
+    ctx: typer.Context,
     from_stage: str = typer.Option("", "--from"),
     output_format: str = typer.Option("html,pdf", "--format"),
     llm_provider: str = typer.Option("codex-exec", "--llm-provider"),
@@ -153,23 +164,29 @@ def retry(
     with_frames: bool = typer.Option(False, "--with-frames"),
     with_diagrams: bool = typer.Option(False, "--with-diagrams"),
     require_pdf: bool = typer.Option(False, "--require-pdf"),
+    force_article: bool = typer.Option(False, "--force-article"),
+    allow_long_video: bool = typer.Option(False, "--allow-long-video"),
 ) -> None:
     """Retry summarization, render, or bundle stages for an existing run directory."""
+    _legacy_options_notice(ctx)
     if not from_stage:
         raise typer.BadParameter("--from must be summarization, render, or bundle.")
     try:
-        result = retry_run(
-            run_dir,
-            from_stage=from_stage,
-            output_format=output_format,
-            llm_provider=llm_provider,
-            llm_model=llm_model,
-            summary_template=summary_template,
-            with_frames=with_frames,
-            with_diagrams=with_diagrams,
-            require_pdf=require_pdf,
-        )
-    except RetryError as exc:
+        with execution_lock(retry_outputs_root(run_dir)):
+            result = retry_run(
+                run_dir,
+                from_stage=from_stage,
+                output_format=output_format,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+                summary_template=summary_template,
+                with_frames=with_frames,
+                with_diagrams=with_diagrams,
+                require_pdf=require_pdf,
+                force_article=force_article,
+                allow_long_video=True if allow_long_video else None,
+            )
+    except (RetryError, ExecutionBusy, ExecutionUncertain, OperationCanceled) as exc:
         typer.echo(redact_text(str(exc)), err=True)
         raise typer.Exit(1) from exc
 
@@ -310,6 +327,12 @@ def _local_url_ready(url: str) -> bool:
 
 def _open_browser(url: str) -> None:
     webbrowser.open(url)
+
+
+def _legacy_options_notice(ctx: typer.Context) -> None:
+    if any(getattr(ctx.get_parameter_source(name), "name", "") == "COMMANDLINE"
+           for name in ("summary_template", "with_frames", "with_diagrams")):
+        typer.echo("旧模板、图解和截图选项已停用，本次只保留原稿并生成整理逐字稿。", err=True)
 
 
 def main() -> None:

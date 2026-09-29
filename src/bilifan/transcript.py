@@ -8,6 +8,8 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from .diagnostics import redact_text
+from .exports import write_transcript_exports
+from .execution import check_cancelled, run_whisper_worker, OperationCanceled, ExecutionUncertain
 from .sources.youtube import parse_youtube_vtt
 from .transcript_quality import check_transcript_quality
 from .transcription_routing import alternate_whisper_route, choose_whisper_route
@@ -68,6 +70,11 @@ def build_transcript(
                     segments=segments,
                     media=media,
                 )
+                transcript["transcript_quality_check"] = check_transcript_quality(
+                    transcript["segments"], expected_language=transcript["language"],
+                    metadata=metadata, audio_seconds=_float_value(media.get("duration_seconds")),
+                )
+                _preserve_transcript(run_dir, metadata, transcript)
                 _raise_if_incomplete(transcript)
                 return transcript
             except TranscriptError:
@@ -126,8 +133,15 @@ def build_transcript(
         transcription_attempts=[_attempt_summary(attempt) for attempt in attempts],
         segments_are_normalized=True,
     )
+    _preserve_transcript(run_dir, metadata, transcript)
     _raise_if_incomplete(transcript)
     return transcript
+
+
+def _preserve_transcript(run_dir: Path, metadata: dict[str, Any], transcript: dict[str, Any]) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "transcript.json").write_text(json.dumps(transcript, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_transcript_exports(run_dir, metadata, transcript, overwrite=True)
 
 
 def choose_whisper_model(
@@ -145,21 +159,13 @@ def transcribe_with_whisper(
     model_name: str,
     language: str,
 ) -> list[dict[str, Any]]:
+    check_cancelled()
     try:
-        import whisper
-    except Exception as exc:
-        raise TranscriptError("openai-whisper is not installed.") from exc
-
-    try:
-        model = whisper.load_model(model_name)
-        result = model.transcribe(str(audio_path), language=language)
-    except Exception as exc:
+        return run_whisper_worker(audio_path, model_name=model_name, language=language, backend="whisper")
+    except (OperationCanceled, ExecutionUncertain):
+        raise
+    except (OSError, ValueError, RuntimeError) as exc:
         raise TranscriptError(f"Whisper transcription failed: {exc}") from exc
-
-    raw_segments = result.get("segments") if isinstance(result, dict) else None
-    if not isinstance(raw_segments, list):
-        raise TranscriptError("Whisper returned invalid transcript segments.")
-    return raw_segments
 
 
 def transcribe_with_mlx_whisper(
@@ -168,25 +174,13 @@ def transcribe_with_mlx_whisper(
     model_name: str,
     language: str,
 ) -> list[dict[str, Any]]:
+    check_cancelled()
     try:
-        import mlx_whisper
-    except Exception as exc:
-        raise TranscriptError("mlx-whisper is not installed or unavailable.") from exc
-
-    try:
-        result = mlx_whisper.transcribe(
-            str(audio_path),
-            path_or_hf_repo=_mlx_whisper_model_path(model_name),
-            language=language,
-            verbose=False,
-        )
-    except Exception as exc:
+        return run_whisper_worker(audio_path, model_name=model_name, language=language, backend="mlx")
+    except (OperationCanceled, ExecutionUncertain):
+        raise
+    except (OSError, ValueError, RuntimeError) as exc:
         raise TranscriptError(f"MLX Whisper transcription failed: {exc}") from exc
-
-    raw_segments = result.get("segments") if isinstance(result, dict) else None
-    if not isinstance(raw_segments, list):
-        raise TranscriptError("MLX Whisper returned invalid transcript segments.")
-    return raw_segments
 
 
 def fetch_subtitle_bytes(url: str) -> bytes:

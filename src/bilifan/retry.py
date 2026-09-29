@@ -25,6 +25,13 @@ from .renderer import (
     render_transcript_html,
 )
 from .runs import RUN_OUTPUT_ID_PATTERN
+from .exports import write_transcript_exports
+from .quality import build_quality
+from .delivery import mark_complete, validate_delivery, promote_latest
+from .article_cache import cache_directory
+from .chunking import build_chunks
+from . import metrics
+from .execution import check_cancelled, publish_guard, record_completion
 from .retry_workspace import RetryWorkspaceError, retry_workspace
 from .summarizer import (
     SummarizationError,
@@ -33,7 +40,7 @@ from .summarizer import (
 )
 from .visuals import enrich_chapters_with_visuals, visual_artifact_paths
 
-RETRY_STAGES = {"summarization", "render", "bundle"}
+RETRY_STAGES = {"article", "summarization", "render", "bundle"}
 RUN_ID_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}")
 
 
@@ -86,7 +93,33 @@ class _RetryRef:
         )
 
 
-def retry_run(
+def retry_outputs_root(run_dir: Path) -> Path:
+    resolved = run_dir.resolve()
+    _run_key(resolved)
+    if not resolved.is_dir():
+        raise RetryError("Run directory does not exist.")
+    return resolved.parent.parent.parent
+
+
+def retry_run(run_dir: Path, *, from_stage: str, output_format: str = "html,pdf",
+              llm_provider: str = "codex-exec", llm_model: str = "gpt-5.5",
+              summary_template: str = "学习笔记", with_frames: bool = False,
+              with_diagrams: bool = False, require_pdf: bool = False,
+              force_article: bool = False, allow_long_video: bool | None = None) -> RetryResult:
+    with metrics.attempt_context("retry", llm_provider, llm_model):
+        if run_dir.is_dir():
+            metrics.bind_run(run_dir.resolve())
+        metrics.stage_event(from_stage, "running")
+        result = _retry_run(run_dir, from_stage=from_stage, output_format=output_format,
+                            llm_provider=llm_provider, llm_model=llm_model,
+                            summary_template=summary_template, with_frames=with_frames,
+                            with_diagrams=with_diagrams, require_pdf=require_pdf,
+                            force_article=force_article, allow_long_video=allow_long_video)
+        metrics.stage_event(from_stage, "done")
+        return result
+
+
+def _retry_run(
     run_dir: Path,
     *,
     from_stage: str,
@@ -97,12 +130,16 @@ def retry_run(
     with_frames: bool = False,
     with_diagrams: bool = False,
     require_pdf: bool = False,
+    force_article: bool = False,
+    allow_long_video: bool | None = None,
 ) -> RetryResult:
     stage = from_stage.strip().lower()
+    if stage == "article":
+        stage = "summarization"
     if stage not in RETRY_STAGES:
         raise RetryError("--from must be summarization, render, or bundle.")
     requested_formats = _parse_output_formats(output_format)
-    summary_template = _validate_summary_template(summary_template)
+    # Legacy template options are accepted but no longer generate a report.
 
     if run_dir.is_symlink():
         raise RetryError("Cannot retry a run directory containing a symlink.")
@@ -125,12 +162,20 @@ def retry_run(
                     with_frames=with_frames,
                     with_diagrams=with_diagrams,
                     require_pdf=require_pdf,
+                    cache_dir=cache_directory(run_dir),
+                    force_article=force_article,
+                    allow_long_video=allow_long_video,
                 )
                 # Explicit exports are snapshots of the previous bundle. A
                 # successful retry invalidates them; users may export again.
                 (workspace.path / "nabaichuan.jsonl").unlink(missing_ok=True)
                 (workspace.path / "retry_diagnostics.json").unlink(missing_ok=True)
-                workspace.publish()
+                validate_delivery(workspace.path)
+                with publish_guard():
+                    mark_complete(workspace.path)
+                    workspace.publish()
+                    promote_latest(run_dir)
+                    record_completion(RetryResult(run_key, run_dir, run_dir / "diagnostics.json", result.artifact_paths, result.warnings))
             except (RetryError, OSError, ValueError) as exc:
                 diagnostic_path = _record_retry_failure(run_dir, stage=stage, error=exc)
                 raise RetryError(str(exc), diagnostics_path=diagnostic_path) from exc
@@ -195,15 +240,31 @@ def _retry_in_workspace(
     with_frames: bool,
     with_diagrams: bool,
     require_pdf: bool,
+    cache_dir: Path,
+    force_article: bool,
+    allow_long_video: bool | None,
 ) -> RetryResult:
 
     metadata = _read_required_json(run_dir, "metadata.json")
     transcript = _read_required_json(run_dir, "transcript.json")
     ref = _ref_from_metadata(metadata)
+    write_transcript_exports(run_dir, metadata, transcript, overwrite=True)
+    check_cancelled()
 
     if stage == "summarization":
+        if build_quality(transcript, metadata=metadata)["status"] == "unusable":
+            raise RetryError("原始转录不可用，已保留原稿；请先修正转录再整理。")
         _cleanup_downstream_artifacts(run_dir)
-        chunks = _read_required_json(run_dir, "chunks.json")
+        previous_chunks = _read_optional_json(run_dir, "chunks.json")
+        options = {**previous_chunks.get("strategy", {}), **metadata.get("processing_options", {})}
+        duration = _duration_check(run_dir) or {}
+        # Raw transcription is authoritative, including changed indices/text.
+        chunks = build_chunks(
+            transcript, {"duration_seconds": duration.get("audio_seconds") or metadata.get("duration")},
+            allow_long_video=bool(options.get("allow_long_video")) if allow_long_video is None else allow_long_video,
+            long_video_confirmed=bool(options.get("long_video_confirmed", True)),
+        )
+        _write_json(run_dir / "chunks.json", chunks)
         try:
             transcript_article = generate_transcript_article(
                 ref=ref,
@@ -213,23 +274,7 @@ def _retry_in_workspace(
                 run_dir=run_dir,
                 provider=llm_provider,
                 model=llm_model,
-            )
-            chapters = summarize_article_sections(
-                ref=ref,
-                metadata=metadata,
-                article=transcript_article,
-                run_dir=run_dir,
-                provider=llm_provider,
-                model=llm_model,
-                style=summary_template,
-            )
-            visual_warnings = enrich_chapters_with_visuals(
-                ref=ref,
-                chapters=chapters,
-                media=_visual_media(run_dir),
-                run_dir=run_dir,
-                with_frames=with_frames,
-                with_diagrams=with_diagrams,
+                cache_dir=cache_dir, force_article=force_article,
             )
         except (ArticleError, SummarizationError) as exc:
             _write_failure_diagnostics(
@@ -243,7 +288,6 @@ def _retry_in_workspace(
                 + _existing_named_artifacts(run_dir, ["transcript_article.json"]),
             )
             raise RetryError(str(exc), diagnostics_path=run_dir / "diagnostics.json") from exc
-        _write_json(run_dir / "chapters.json", chapters)
         return _render_and_bundle(
             run_dir=run_dir,
             run_key=run_key,
@@ -251,28 +295,18 @@ def _retry_in_workspace(
             metadata=metadata,
             transcript=transcript,
             transcript_article=transcript_article,
-            chapters=chapters,
+            chapters=None,
             requested_formats=requested_formats,
             llm_provider=llm_provider,
             llm_model=llm_model,
-            visual_warnings=visual_warnings,
+            visual_warnings=[],
             require_pdf=require_pdf,
         )
 
-    chapters = _read_required_json(run_dir, "chapters.json")
-    transcript_article = _read_optional_json(run_dir, "transcript_article.json") or None
+    chapters = None
+    transcript_article = _read_required_json(run_dir, "transcript_article.json")
     if stage == "render":
         _cleanup_downstream_artifacts(run_dir)
-        visual_warnings = enrich_chapters_with_visuals(
-            ref=ref,
-            chapters=chapters,
-            media=_visual_media(run_dir),
-            run_dir=run_dir,
-            with_frames=with_frames,
-            with_diagrams=with_diagrams,
-        )
-        if with_frames or with_diagrams:
-            _write_json(run_dir / "chapters.json", chapters)
         return _render_and_bundle(
             run_dir=run_dir,
             run_key=run_key,
@@ -280,11 +314,11 @@ def _retry_in_workspace(
             metadata=metadata,
             transcript=transcript,
             transcript_article=transcript_article,
-            chapters=chapters,
+            chapters=None,
             requested_formats=requested_formats,
             llm_provider=llm_provider,
             llm_model=llm_model,
-            visual_warnings=visual_warnings,
+            visual_warnings=[],
             require_pdf=require_pdf,
         )
 
@@ -316,11 +350,11 @@ def _render_and_bundle(
     visual_warnings: list[str] | None = None,
     require_pdf: bool = False,
 ) -> RetryResult:
-    warnings: list[str] = list(visual_warnings or [])
+    quality = build_quality(transcript, transcript_article, metadata)
+    write_transcript_exports(run_dir, metadata, transcript, overwrite=True, quality=quality)
+    warnings: list[str] = ["quality_review_required"] if quality["review_required"] else []
     artifact_paths = _base_artifact_paths(run_dir)
     artifact_paths.extend(_existing_named_artifacts(run_dir, ["transcript_article.json"]))
-    artifact_paths.append("chapters.json")
-    artifact_paths.extend(visual_artifact_paths(chapters))
 
     try:
         pdf_sources: list[tuple[Path, str]] = []
@@ -333,15 +367,6 @@ def _render_and_bundle(
             )
             artifact_paths.append(transcript_html.name)
             pdf_sources.append((transcript_html, "transcript.pdf"))
-        report_html = render_report_html(
-            ref=ref,
-            metadata=metadata,
-            transcript=transcript,
-            chapters=chapters,
-            run_dir=run_dir,
-        )
-        artifact_paths.append(report_html.name)
-        pdf_sources.append((report_html, "report.pdf"))
     except (RenderError, OSError, ValueError) as exc:
         _write_failure_diagnostics(
             run_dir,
@@ -380,7 +405,7 @@ def _render_and_bundle(
             metadata=metadata,
             transcript=transcript,
             transcript_article=transcript_article,
-            chapters=chapters,
+            chapters=None,
             artifact_paths=artifact_paths,
             platform=ref.platform,
             source_id=ref.source_id,
@@ -436,14 +461,18 @@ def _bundle_only(
     llm_provider: str,
     llm_model: str,
 ) -> RetryResult:
+    quality = build_quality(transcript, transcript_article, metadata)
+    write_transcript_exports(run_dir, metadata, transcript, overwrite=True, quality=quality)
     artifact_paths = _existing_artifact_paths(run_dir)
+    if not (run_dir / "transcript.html").is_file():
+        raise RetryError("Cannot retry bundle without transcript.html; retry rendering first.")
     try:
         bundle_path = write_content_bundle(
             run_dir=run_dir,
             metadata=metadata,
             transcript=transcript,
             transcript_article=transcript_article,
-            chapters=chapters,
+            chapters=None,
             artifact_paths=artifact_paths,
             platform=ref.platform,
             source_id=ref.source_id,
@@ -463,7 +492,7 @@ def _bundle_only(
         )
         raise RetryError(str(exc), diagnostics_path=run_dir / "diagnostics.json") from exc
     artifact_paths = _append_unique(artifact_paths, bundle_path.name)
-    warnings: list[str] = []
+    warnings: list[str] = ["quality_review_required"] if quality["review_required"] else []
     _write_success_diagnostics(
         run_dir,
         stage="bundle",
@@ -561,14 +590,12 @@ def _existing_artifact_paths(run_dir: Path) -> list[str]:
         "transcript.json",
         "transcript.txt",
         "transcript.srt",
+        "transcript_source.zip",
+        "quality.json",
         "chunks.json",
         "transcript_article.json",
-        "chapters.json",
-        "notes.md",
         "transcript.html",
         "transcript.pdf",
-        "report.html",
-        "report.pdf",
         "content_bundle.json",
         *_frame_artifact_paths(run_dir),
     ]:
@@ -587,6 +614,8 @@ def _base_artifact_paths(run_dir: Path) -> list[str]:
         "transcript.json",
         "transcript.txt",
         "transcript.srt",
+        "transcript_source.zip",
+        "quality.json",
         "chunks.json",
         *_frame_artifact_paths(run_dir),
     ]:
@@ -603,8 +632,6 @@ def _cleanup_downstream_artifacts(run_dir: Path) -> None:
     for relative_path in (
         "transcript.html",
         "transcript.pdf",
-        "report.html",
-        "report.pdf",
         "content_bundle.json",
     ):
         try:

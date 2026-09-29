@@ -65,7 +65,7 @@ def _fake_transcript_article(end: float = 120.0) -> dict:
                 "timestamp_url": "https://www.bilibili.com/video/BV1abcDEF12G?t=0",
                 "source_segment_start_index": 0,
                 "source_segment_end_index": 0,
-                "paragraphs": [{"text": "转写", "emphasis": []}],
+                "paragraphs": [{"text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。', "emphasis": []}],
                 "key_terms": [],
                 "warnings": [],
             }
@@ -85,6 +85,7 @@ def _article_first_defaults(monkeypatch):
         run_dir,
         provider="codex-exec",
         model="gpt-5.5",
+        **_options,
     ):
         article = _fake_transcript_article(chunks["chunks"][0]["end"])
         (run_dir / "transcript_article.json").write_text(
@@ -198,7 +199,7 @@ def _install_minimal_successful_pipeline_fakes(monkeypatch) -> None:
             "source": "whisper",
             "language": "zh",
             "model": "turbo",
-            "segments": [{"start": 0.0, "end": 120.0, "text": "转写"}],
+            "segments": [{"start": 0.0, "end": 120.0, "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。'}],
             "transcript_check": {"status": "ok", "segment_count": 1},
         }
 
@@ -221,10 +222,10 @@ def _install_minimal_successful_pipeline_fakes(monkeypatch) -> None:
                             "source_index": 0,
                             "start": 0.0,
                             "end": 120.0,
-                            "text": "转写",
+                            "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。',
                         }
                     ],
-                    "text": "转写",
+                    "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。',
                 }
             ],
         }
@@ -369,7 +370,7 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
                 {
                     "start": 0.0,
                     "end": media["duration_seconds"],
-                    "text": "转写",
+                    "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。',
                     "language": "zh",
                     "source": "whisper",
                 }
@@ -420,10 +421,10 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
                             "source_index": 0,
                             "start": 0.0,
                             "end": media["duration_seconds"],
-                            "text": "转写",
+                            "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。',
                         }
                     ],
-                    "text": "转写",
+                    "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。',
                 }
             ],
         }
@@ -458,14 +459,14 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
     assert result.run_key.startswith("BV1abcDEF12G_p1/runs/")
     assert "transcript_article.json" in result.artifact_paths
     assert "transcript.html" in result.artifact_paths
-    assert "report.html" in result.artifact_paths
-    assert "report.pdf" in result.artifact_paths
+    assert "report.html" not in result.artifact_paths
+    assert "report.pdf" not in result.artifact_paths
     assert "content_bundle.json" in result.artifact_paths
     assert "media/audio.mp3" in result.artifact_paths
     assert "nabaichuan.jsonl" not in result.artifact_paths
     assert "notes.md" not in result.artifact_paths
-    assert "transcript.txt" not in result.artifact_paths
-    assert "transcript.srt" not in result.artifact_paths
+    assert "transcript.txt" in result.artifact_paths
+    assert "transcript.srt" in result.artifact_paths
 
     for artifact_name in (
         "metadata.json",
@@ -473,9 +474,9 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
         "transcript.json",
         "chunks.json",
         "transcript_article.json",
-        "chapters.json",
+        "transcript.txt",
+        "transcript.srt",
         "transcript.html",
-        "report.html",
         "content_bundle.json",
         "diagnostics.json",
     ):
@@ -483,8 +484,8 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
     for legacy_artifact_name in (
         "nabaichuan.jsonl",
         "notes.md",
-        "transcript.txt",
-        "transcript.srt",
+        "chapters.json",
+        "report.html",
     ):
         assert not (result.run_dir / legacy_artifact_name).exists()
 
@@ -493,12 +494,12 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
     assert bundle["bundle_id"] == "bilibili:BV1abcDEF12G:p1"
     assert bundle["artifacts"]["transcript_article_json"] == "transcript_article.json"
     assert bundle["artifacts"]["transcript_html"] == "transcript.html"
-    assert bundle["artifacts"]["report_html"] == "report.html"
+    assert "report_html" not in bundle["artifacts"]
     assert bundle["artifacts"]["audio_mp3"] == "media/audio.mp3"
     assert bundle["transcript_article"]["sections"][0]["title"] == "开场"
-    assert bundle["summary"]["chapters"][0]["title"] == "开场"
-    assert bundle["summary"]["chapters"][0]["diagram"]["caption"] == "图解：开场"
-    assert "frames_unavailable" in diagnostics["warnings"]
+    assert bundle["summary"]["chapters"] == []
+    assert bundle["summary"]["status"] == "not_generated"
+    assert "frames_unavailable" not in diagnostics["warnings"]
 
     assert [
         (stage, status)
@@ -516,7 +517,7 @@ def test_run_summarize_pipeline_writes_artifacts_and_reports_progress(
     ]
 
 
-def test_pipeline_exports_transcript_and_report_pdfs_when_pdf_requested(
+def test_pipeline_exports_only_transcript_pdf_when_pdf_requested(
     tmp_path, monkeypatch
 ):
     _install_minimal_successful_pipeline_fakes(monkeypatch)
@@ -549,9 +550,9 @@ def test_pipeline_exports_transcript_and_report_pdfs_when_pdf_requested(
     )
 
     assert "transcript.pdf" in result.artifact_paths
-    assert "report.pdf" in result.artifact_paths
+    assert "report.pdf" not in result.artifact_paths
     assert (result.run_dir / "transcript.pdf").read_bytes() == b"PDF for transcript.html"
-    assert (result.run_dir / "report.pdf").read_bytes() == b"PDF for report.html"
+    assert not (result.run_dir / "report.pdf").exists()
 
 
 def test_pipeline_promotes_transcript_quality_warning_to_diagnostics(
@@ -574,7 +575,7 @@ def test_pipeline_promotes_transcript_quality_warning_to_diagnostics(
             "source": "whisper",
             "language": "zh",
             "model": "turbo",
-            "segments": [{"start": 0.0, "end": 120.0, "text": "转写"}],
+            "segments": [{"start": 0.0, "end": 120.0, "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。'}],
             "transcript_check": {"status": "ok", "segment_count": 1},
             "transcript_quality_check": {"status": "suspect_wrong_route"},
             "transcription_attempts": [
@@ -637,9 +638,9 @@ def test_pipeline_pdf_failure_warns_when_not_required(tmp_path, monkeypatch):
 
     assert result.warnings.count("pdf_failed") == 1
     assert "transcript.html" in result.artifact_paths
-    assert "report.html" in result.artifact_paths
+    assert "report.html" not in result.artifact_paths
     assert (result.run_dir / "transcript.html").is_file()
-    assert (result.run_dir / "report.html").is_file()
+    assert not (result.run_dir / "report.html").exists()
     assert not (result.run_dir / "transcript.pdf").exists()
     assert not (result.run_dir / "report.pdf").exists()
 
@@ -703,9 +704,9 @@ def test_pipeline_bundle_failure_writes_diagnostics_with_completed_artifacts(
     assert diagnostics["stage"] == "bundle"
     assert diagnostics["error_type"] == "BundleError"
     assert "transcript.html" in diagnostics["artifact_paths"]
-    assert "report.html" in diagnostics["artifact_paths"]
+    assert "report.html" not in diagnostics["artifact_paths"]
     assert "transcript.pdf" in diagnostics["artifact_paths"]
-    assert "report.pdf" in diagnostics["artifact_paths"]
+    assert "report.pdf" not in diagnostics["artifact_paths"]
     assert "content_bundle.json" not in diagnostics["artifact_paths"]
     assert "content_bundle.json" not in exc_info.value.artifact_paths
     assert not (exc_info.value.diagnostics_path.parent / "content_bundle.json").exists()
@@ -777,7 +778,7 @@ def test_run_summarize_pipeline_uses_subtitles_without_downloading_audio(
                 {
                     "start": 0.0,
                     "end": 120.0,
-                    "text": "字幕内容",
+                    "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。',
                     "language": "zh-Hans",
                     "source": "bilibili-subtitle",
                 }
@@ -806,9 +807,9 @@ def test_run_summarize_pipeline_uses_subtitles_without_downloading_audio(
                     "chunk_index": 1,
                     "start": 0,
                     "end": 120,
-                    "text": "字幕内容",
+                    "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。',
                     "segments": [
-                        {"source_index": 0, "start": 0, "end": 120, "text": "字幕内容"}
+                        {"source_index": 0, "start": 0, "end": 120, "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。'}
                     ],
                 }
             ]
@@ -841,8 +842,8 @@ def test_run_summarize_pipeline_uses_subtitles_without_downloading_audio(
 
     assert "transcript_article.json" in result.artifact_paths
     assert "transcript.html" in result.artifact_paths
-    assert "report.html" in result.artifact_paths
-    assert "transcript.txt" not in result.artifact_paths
+    assert "report.html" not in result.artifact_paths
+    assert "transcript.txt" in result.artifact_paths
     assert "content_bundle.json" in result.artifact_paths
     assert "media/audio.mp3" not in result.artifact_paths
     assert not any(path.endswith(".mp3") for path in result.artifact_paths)
@@ -920,7 +921,7 @@ def test_run_summarize_pipeline_force_whisper_downloads_audio_before_transcript(
             "source": "whisper",
             "language": "zh",
             "model": "turbo",
-            "segments": [{"start": 0.0, "end": 120.0, "text": "转写"}],
+            "segments": [{"start": 0.0, "end": 120.0, "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。'}],
             "transcript_check": {"status": "ok"},
         }
 
@@ -937,7 +938,7 @@ def test_run_summarize_pipeline_force_whisper_downloads_audio_before_transcript(
                     "chunk_index": 1,
                     "start": 0,
                     "end": 120,
-                    "text": "转写",
+                    "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。',
                     "segments": [],
                 }
             ]
@@ -1021,7 +1022,7 @@ def test_summarization_failure_keeps_transcript_exports_in_artifacts(
             "source": "whisper",
             "language": "zh",
             "model": "turbo",
-            "segments": [{"start": 0.0, "end": 120.0, "text": "转写"}],
+            "segments": [{"start": 0.0, "end": 120.0, "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。'}],
             "transcript_check": {"status": "ok"},
         }
 
@@ -1038,7 +1039,7 @@ def test_summarization_failure_keeps_transcript_exports_in_artifacts(
                     "chunk_index": 1,
                     "start": 0,
                     "end": 120,
-                    "text": "转写",
+                    "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。',
                     "segments": [],
                 }
             ]
@@ -1051,7 +1052,7 @@ def test_summarization_failure_keeps_transcript_exports_in_artifacts(
     monkeypatch.setattr(pipeline, "download_current_part_audio", fake_download_current_part_audio)
     monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
     monkeypatch.setattr(pipeline, "build_chunks", fake_build_chunks)
-    monkeypatch.setattr(pipeline, "summarize_article_sections", fake_summarize_article_sections)
+    monkeypatch.setattr(pipeline, "generate_transcript_article", fake_summarize_article_sections)
 
     with pytest.raises(pipeline.PipelineRunError) as exc_info:
         pipeline.run_summarize_pipeline(
@@ -1063,11 +1064,12 @@ def test_summarization_failure_keeps_transcript_exports_in_artifacts(
         )
 
     assert "transcript.json" in exc_info.value.artifact_paths
-    assert "transcript_article.json" in exc_info.value.artifact_paths
+    assert "transcript.txt" in exc_info.value.artifact_paths
+    assert "transcript.srt" in exc_info.value.artifact_paths
     run_dir = exc_info.value.diagnostics_path.parent
-    assert (run_dir / "transcript_article.json").is_file()
-    assert not (run_dir / "transcript.txt").exists()
-    assert not (run_dir / "transcript.srt").exists()
+    assert not (run_dir / "transcript_article.json").exists()
+    assert (run_dir / "transcript.txt").exists()
+    assert (run_dir / "transcript.srt").exists()
 
 
 def test_render_failure_keeps_completed_exports_in_artifacts(tmp_path, monkeypatch):
@@ -1121,7 +1123,7 @@ def test_render_failure_keeps_completed_exports_in_artifacts(tmp_path, monkeypat
             "source": "whisper",
             "language": "zh",
             "model": "turbo",
-            "segments": [{"start": 0.0, "end": 120.0, "text": "转写"}],
+            "segments": [{"start": 0.0, "end": 120.0, "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。'}],
             "transcript_check": {"status": "ok"},
         }
 
@@ -1138,7 +1140,7 @@ def test_render_failure_keeps_completed_exports_in_artifacts(tmp_path, monkeypat
                     "chunk_index": 1,
                     "start": 0,
                     "end": 120,
-                    "text": "转写",
+                    "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。',
                     "segments": [],
                 }
             ]
@@ -1151,7 +1153,7 @@ def test_render_failure_keeps_completed_exports_in_artifacts(tmp_path, monkeypat
     monkeypatch.setattr(pipeline, "download_current_part_audio", fake_download_current_part_audio)
     monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
     monkeypatch.setattr(pipeline, "build_chunks", fake_build_chunks)
-    monkeypatch.setattr(pipeline, "render_report_html", fake_render_report_html)
+    monkeypatch.setattr(pipeline, "render_transcript_html", fake_render_report_html)
 
     with pytest.raises(pipeline.PipelineRunError) as exc_info:
         pipeline.run_summarize_pipeline(
@@ -1169,8 +1171,10 @@ def test_render_failure_keeps_completed_exports_in_artifacts(tmp_path, monkeypat
         "transcript.json",
         "chunks.json",
         "transcript_article.json",
-        "chapters.json",
-        "transcript.html",
+        "transcript.txt",
+        "transcript.srt",
+        "transcript_source.zip",
+        "quality.json",
     ]
     diagnostics = json.loads(exc_info.value.diagnostics_path.read_text(encoding="utf-8"))
     assert diagnostics["error_type"] == "RenderError"
@@ -1290,10 +1294,8 @@ def test_run_summarize_pipeline_without_long_video_callback_writes_early_failure
             progress_callback=record_progress,
         )
 
-    latest = json.loads(
-        (tmp_path / "BV1abcDEF12G_p1" / "latest.json").read_text(encoding="utf-8")
-    )
-    run_dir = tmp_path / "BV1abcDEF12G_p1" / latest["run_dir"]
+    assert not (tmp_path / "BV1abcDEF12G_p1/latest.json").exists()
+    run_dir = next((tmp_path / "BV1abcDEF12G_p1/runs").glob("[0-9]*"))
 
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text())
     assert diagnostics["error_type"] == "LongVideoConfirmationRequired"
@@ -1301,3 +1303,21 @@ def test_run_summarize_pipeline_without_long_video_callback_writes_early_failure
     assert ("metadata", "failed") in [
         (stage, status) for stage, status, _message in progress_events
     ]
+
+
+def test_unusable_transcript_keeps_downloadable_raw_and_never_calls_article(tmp_path, monkeypatch):
+    _install_minimal_successful_pipeline_fakes(monkeypatch)
+    def unusable(*args, **kwargs):
+        if not args[1].get("audio_path"):
+            raise pipeline.TranscriptError("Audio file for Whisper is missing.")
+        return {"source": "whisper", "language": "zh",
+                "segments": [{"start": 0, "end": 120, "text": "嗯"}],
+                "transcript_check": {"status": "ok", "audio_seconds": 120}}
+    monkeypatch.setattr(pipeline, "build_transcript", unusable)
+    monkeypatch.setattr(pipeline, "generate_transcript_article", lambda **kw: pytest.fail("unusable raw sent to AI"))
+    with pytest.raises(pipeline.PipelineRunError, match="转录不可用") as caught:
+        pipeline.run_summarize_pipeline(PipelineRequest(url="https://www.bilibili.com/video/BV1abcDEF12G", out=tmp_path))
+    for name in ("transcript.json", "transcript.txt", "transcript.srt", "transcript_source.zip", "quality.json"):
+        assert name in caught.value.artifact_paths
+        assert (caught.value.diagnostics_path.parent / name).is_file()
+    assert not (tmp_path / "BV1abcDEF12G_p1/latest.json").exists()

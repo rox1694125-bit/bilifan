@@ -12,7 +12,7 @@ class _GenericRef:
     sanitized_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 
-def test_create_run_uses_stable_output_id_and_updates_latest(tmp_path):
+def test_create_run_uses_stable_output_id_without_claiming_success(tmp_path):
     ref = BilibiliPartRef(
         bvid="BV1abcDEF12G",
         part_index=2,
@@ -26,7 +26,9 @@ def test_create_run_uses_stable_output_id_and_updates_latest(tmp_path):
     assert run.run_dir == run.video_dir / "runs" / "2026-06-08_011530"
     assert run.run_dir.is_dir()
 
-    latest = json.loads((run.video_dir / "latest.json").read_text(encoding="utf-8"))
+    assert not (run.video_dir / "latest.json").exists()
+    latest = json.loads((run.run_dir / "run_state.json").read_text(encoding="utf-8"))
+    assert latest["status"] == "running"
     assert latest["run_id"] == "2026-06-08_011530"
     assert latest["run_dir"] == "runs/2026-06-08_011530"
     assert latest["generated_at"] == "2026-06-08T01:15:30+00:00"
@@ -39,7 +41,9 @@ def test_create_run_accepts_youtube_output_id(tmp_path):
     run = create_run(tmp_path / "outputs", _GenericRef(), now=now)
 
     assert run.video_dir == tmp_path / "outputs" / "YTdQw4w9WgXcQ_p1"
-    latest = json.loads((run.video_dir / "latest.json").read_text(encoding="utf-8"))
+    assert not (run.video_dir / "latest.json").exists()
+    latest = json.loads((run.run_dir / "run_state.json").read_text(encoding="utf-8"))
+    assert latest["status"] == "running"
     assert latest["input_url_sanitized"] == (
         "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     )

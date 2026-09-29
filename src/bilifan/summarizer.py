@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+from .execution import cancellable_run
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -242,7 +243,7 @@ def summarize_chunks(
     provider: str = "codex-exec",
     model: str = "gpt-5.5",
     style: str = "学习笔记",
-    runner: Runner = subprocess.run,
+    runner: Runner = cancellable_run,
 ) -> dict[str, Any]:
     if provider != "codex-exec":
         raise SummarizationError(f"Unsupported LLM provider: {provider}")
@@ -324,7 +325,7 @@ def run_codex_article_report(
     run_dir: Path,
     model: str,
     style: str,
-    runner: Runner = subprocess.run,
+    runner: Runner = cancellable_run,
 ) -> dict[str, Any]:
     prompt = build_article_report_prompt(
         metadata=metadata,
@@ -388,7 +389,7 @@ def summarize_article_sections(
     provider: str = "codex-exec",
     model: str = "gpt-5.5",
     style: str = "学习笔记",
-    runner: Runner = subprocess.run,
+    runner: Runner = cancellable_run,
 ) -> dict[str, Any]:
     if provider != "codex-exec":
         raise SummarizationError(f"Unsupported LLM provider: {provider}")
@@ -429,7 +430,7 @@ def run_codex_chunk_summary(
     run_dir: Path,
     model: str,
     style: str,
-    runner: Runner = subprocess.run,
+    runner: Runner = cancellable_run,
 ) -> dict[str, Any]:
     prompt = build_chunk_prompt(metadata=metadata, chunk=chunk, style=style)
     with tempfile.TemporaryDirectory(dir=run_dir) as tmp_dir:

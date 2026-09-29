@@ -56,6 +56,7 @@ def test_content_bundle_to_nabaichuan_outputs_jsonl(tmp_path):
             str(bundle_path),
             "--out",
             str(output_path),
+            "--include-review-required",
         ],
         check=False,
         capture_output=True,
@@ -69,7 +70,6 @@ def test_content_bundle_to_nabaichuan_outputs_jsonl(tmp_path):
     ]
     assert [row["type"] for row in rows] == [
         "video",
-        "chapter",
         "transcript_segment",
     ]
     for row in rows:
@@ -80,19 +80,15 @@ def test_content_bundle_to_nabaichuan_outputs_jsonl(tmp_path):
 
     assert rows[0]["type"] == "video"
     assert rows[0]["record_id"] == "bilibili:source:p1:video"
-    assert rows[1]["type"] == "chapter"
-    assert rows[1]["record_id"] == "bilibili:source:p1:chapter:1"
-    assert rows[1]["chapter_id"] == "bilibili:source:p1:chapter:1"
+    assert rows[1]["type"] == "transcript_segment"
+    assert rows[1]["record_id"] == "bilibili:source:p1:transcript_segment:1:0-35000"
     assert rows[1]["parent_record_id"] == rows[0]["record_id"]
+    assert rows[1]["chapter_id"] is None
+    assert rows[1]["start"] == 0
+    assert rows[1]["end"] == 35
+    assert rows[1]["text"] == "Hello"
+    assert rows[1]["quality"]["review_required"]
     assert rows[1]["timestamp_url"].endswith("t=0")
-    assert rows[2]["type"] == "transcript_segment"
-    assert rows[2]["record_id"] == "bilibili:source:p1:transcript_segment:1:0-35000"
-    assert rows[2]["parent_record_id"] == rows[0]["record_id"]
-    assert rows[2]["chapter_id"] == rows[1]["chapter_id"]
-    assert rows[2]["start"] == 0
-    assert rows[2]["end"] == 35
-    assert rows[2]["text"] == "Hello"
-    assert rows[2]["timestamp_url"].endswith("t=0")
     assert str(tmp_path) not in output_path.read_text(encoding="utf-8")
 
 
@@ -108,6 +104,7 @@ def test_content_bundle_to_nabaichuan_keeps_include_transcript_compatible(tmp_pa
             str(bundle_path),
             "--out",
             str(output_path),
+            "--include-review-required",
             "--include-transcript",
         ],
         check=False,
@@ -120,8 +117,8 @@ def test_content_bundle_to_nabaichuan_keeps_include_transcript_compatible(tmp_pa
         json.loads(line)
         for line in output_path.read_text(encoding="utf-8").splitlines()
     ]
-    assert rows[2]["type"] == "transcript_segment"
-    assert rows[2]["text"] == "Hello"
+    assert rows[1]["type"] == "transcript_segment"
+    assert rows[1]["text"] == "Hello"
 
 
 def test_content_bundle_to_nabaichuan_can_disable_transcript(tmp_path):
@@ -136,6 +133,7 @@ def test_content_bundle_to_nabaichuan_can_disable_transcript(tmp_path):
             str(bundle_path),
             "--out",
             str(output_path),
+            "--include-review-required",
             "--no-transcript",
         ],
         check=False,
@@ -148,4 +146,15 @@ def test_content_bundle_to_nabaichuan_can_disable_transcript(tmp_path):
         json.loads(line)
         for line in output_path.read_text(encoding="utf-8").splitlines()
     ]
-    assert [row["type"] for row in rows] == ["video", "chapter"]
+    assert [row["type"] for row in rows] == ["video"]
+
+
+def test_converter_requires_explicit_quality_override(tmp_path):
+    bundle_path = tmp_path / "content_bundle.json"
+    output = tmp_path / "out.jsonl"
+    _bundle(bundle_path, "bilibili")
+    result = subprocess.run([sys.executable, "examples/content_bundle_to_nabaichuan.py",
+                             str(bundle_path), "--out", str(output)], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "需复查" in result.stderr
+    assert not output.exists()

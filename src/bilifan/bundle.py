@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .diagnostics import redact_text, validate_artifact_paths
+from .quality import build_quality
 
 BUNDLE_SCHEMA_VERSION = 1
 
@@ -20,7 +21,7 @@ def build_content_bundle(
     metadata: dict[str, Any],
     transcript: dict[str, Any],
     transcript_article: dict[str, Any] | None = None,
-    chapters: dict[str, Any],
+    chapters: dict[str, Any] | None = None,
     artifact_paths: list[str],
     platform: str,
     source_id: str,
@@ -28,14 +29,18 @@ def build_content_bundle(
     llm_provider: str | None = None,
     llm_model: str | None = None,
 ) -> dict[str, Any]:
+    has_summary = chapters is not None
+    chapters = chapters or {}
     bundle: dict[str, Any] = {
         "schema_version": BUNDLE_SCHEMA_VERSION,
+        "output_profile": "legacy_report" if has_summary else "transcript_article_v1",
         "contract": {
             "name": "bilifan.content_bundle",
             "schema_version": BUNDLE_SCHEMA_VERSION,
             "compatibility": "additive",
         },
         "bundle_id": f"{platform}:{source_id}:{part_id}",
+        "quality": build_quality(transcript, transcript_article, metadata),
         "source": {
             "platform": platform,
             "id": source_id,
@@ -52,13 +57,19 @@ def build_content_bundle(
         },
         "artifacts": _artifact_map(artifact_paths),
         "summary": {
-            "style": _first_text(chapters.get("style")) or "学习笔记",
-            "summary_validation": _summary_validation(chapters.get("summary_validation")),
+            "status": "generated" if has_summary else "not_generated",
+            "style": (_first_text(chapters.get("style")) or "学习笔记") if has_summary else "",
+            "summary_validation": _summary_validation(chapters.get("summary_validation")) if has_summary else {"status": "not_applicable", "checks": {}, "warnings": []},
             "chapters": _chapter_items(chapters),
         },
         "transcript": {
             "source": _nullable_text(transcript.get("source")),
             "language": _nullable_text(transcript.get("language")),
+            "model": transcript.get("model"),
+            "transcript_check": transcript.get("transcript_check"),
+            "transcript_quality_check": transcript.get("transcript_quality_check"),
+            "routing_decision": transcript.get("routing_decision"),
+            "transcription_attempts": transcript.get("transcription_attempts"),
             "segments": _segment_items(transcript),
         },
         "provenance": {
@@ -91,7 +102,7 @@ def write_content_bundle(
     metadata: dict[str, Any],
     transcript: dict[str, Any],
     transcript_article: dict[str, Any] | None = None,
-    chapters: dict[str, Any],
+    chapters: dict[str, Any] | None = None,
     artifact_paths: list[str],
     platform: str,
     source_id: str,

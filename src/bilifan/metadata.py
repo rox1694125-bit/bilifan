@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from .execution import cancellable_run
 import sys
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -62,7 +63,7 @@ def fetch_current_part_metadata(
     *,
     cookies_from_browser: str | None = None,
     cookies_file: Path | None = None,
-    runner: Runner = subprocess.run,
+    runner: Runner = cancellable_run,
     public_api_fetcher: PublicApiFetcher | None = None,
 ) -> dict[str, Any]:
     cmd = build_yt_dlp_metadata_command(

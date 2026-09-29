@@ -151,7 +151,7 @@ def _install_fake_transcript_build(monkeypatch):
                 {
                     "start": 0.0,
                     "end": media["duration_seconds"],
-                    "text": "转写",
+                    "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。' * max(1, int(media["duration_seconds"] / 120)),
                     "language": "zh",
                     "source": "whisper",
                 }
@@ -182,6 +182,7 @@ def _install_fake_article_summary(monkeypatch):
         run_dir,
         provider="codex-exec",
         model="gpt-5.5",
+        **_options,
     ):
         calls.append(
             {
@@ -208,7 +209,7 @@ def _install_fake_article_summary(monkeypatch):
                     "timestamp_url": ref.timestamp_url(0),
                     "source_segment_start_index": 0,
                     "source_segment_end_index": 0,
-                    "paragraphs": [{"text": "转写", "emphasis": []}],
+                    "paragraphs": [{"text": transcript["segments"][0]["text"], "emphasis": []}],
                     "key_terms": [],
                     "warnings": [],
                 }
@@ -367,8 +368,7 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     assert str(outputs) not in result.output
 
     video_dir = outputs / "BV1abcDEF12G_p2"
-    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
-    run_dir = video_dir / latest["run_dir"]
+    run_dir = sorted((video_dir / "runs").iterdir())[-1]
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
     metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
 
@@ -387,11 +387,12 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
         "transcript.json",
         "chunks.json",
         "transcript_article.json",
-        "chapters.json",
+        "transcript.txt",
+        "transcript.srt",
+        "transcript_source.zip",
+        "quality.json",
         "transcript.html",
-        "report.html",
         "transcript.pdf",
-        "report.pdf",
         "content_bundle.json",
     ]
     assert diagnostics["warnings"] == []
@@ -403,22 +404,20 @@ def test_summarize_writes_metadata_json_with_yes_flag(tmp_path, monkeypatch):
     assert metadata["title"] == "CLI metadata title"
     transcript = json.loads((run_dir / "transcript.json").read_text(encoding="utf-8"))
     assert transcript["source"] == "whisper"
-    assert transcript["segments"][0]["text"] == "转写"
+    assert transcript["segments"][0]["text"] == '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。'
     article = json.loads((run_dir / "transcript_article.json").read_text(encoding="utf-8"))
     assert article["sections"][0]["title"] == "开场"
-    assert not (run_dir / "transcript.txt").exists()
-    assert not (run_dir / "transcript.srt").exists()
+    assert (run_dir / "transcript.txt").is_file()
+    assert (run_dir / "transcript.srt").is_file()
     chunks = json.loads((run_dir / "chunks.json").read_text(encoding="utf-8"))
     assert chunks["strategy"]["mode"] == "single_pass"
     assert chunks["chunk_count"] == 1
-    chapters = json.loads((run_dir / "chapters.json").read_text(encoding="utf-8"))
-    assert chapters["style"] == "学习笔记"
-    assert chapters["chapters"][0]["title"] == "开场"
+    assert not (run_dir / "chapters.json").exists()
     assert not (run_dir / "notes.md").exists()
     assert (run_dir / "transcript.html").is_file()
     assert (run_dir / "transcript.pdf").is_file()
-    assert (run_dir / "report.html").is_file()
-    assert (run_dir / "report.pdf").is_file()
+    assert not (run_dir / "report.html").exists()
+    assert not (run_dir / "report.pdf").exists()
     assert (run_dir / "media" / "audio.mp3").is_file()
     assert not (run_dir / "nabaichuan.jsonl").exists()
     bundle = json.loads((run_dir / "content_bundle.json").read_text(encoding="utf-8"))
@@ -476,9 +475,7 @@ def test_summarize_accepts_mvp_public_flags_before_later_stages(tmp_path, monkey
     assert transcript_calls[0]["language"] == "en"
     assert summary_calls[0]["provider"] == "codex-exec"
     assert summary_calls[0]["model"] == "gpt-5.5"
-    assert summary_calls[1]["provider"] == "codex-exec"
-    assert summary_calls[1]["model"] == "gpt-5.5"
-    assert summary_calls[1]["style"] == "教程步骤"
+    assert [call["stage"] for call in summary_calls] == ["article"]
 
 
 def test_summarize_prepares_runs_for_real_bilibili_urls(tmp_path, monkeypatch):
@@ -690,8 +687,7 @@ def test_summarize_metadata_failure_writes_sanitized_diagnostics_without_leaks(
     assert "SESSDATA=secret" not in result.output
 
     video_dir = outputs / "BV1abcDEF12G_p2"
-    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
-    run_dir = video_dir / latest["run_dir"]
+    run_dir = sorted((video_dir / "runs").iterdir())[-1]
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
 
     assert not (run_dir / "metadata.json").exists()
@@ -759,8 +755,7 @@ def test_summarize_audio_failure_writes_diagnostics_after_metadata(tmp_path, mon
     assert "bili-cookies.txt" not in result.output
 
     video_dir = outputs / "BV1abcDEF12G_p2"
-    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
-    run_dir = video_dir / latest["run_dir"]
+    run_dir = sorted((video_dir / "runs").iterdir())[-1]
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
 
     assert (run_dir / "metadata.json").is_file()
@@ -819,8 +814,7 @@ def test_summarize_transcript_failure_writes_diagnostics_after_media(
     assert "/private/tmp" not in result.output
 
     video_dir = outputs / "BV1abcDEF12G_p2"
-    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
-    run_dir = video_dir / latest["run_dir"]
+    run_dir = sorted((video_dir / "runs").iterdir())[-1]
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
 
     assert (run_dir / "metadata.json").is_file()
@@ -868,7 +862,7 @@ def test_summarize_incomplete_transcript_writes_file_with_warning(
                 {
                     "start": 0.0,
                     "end": 60.0,
-                    "text": "partial",
+                    "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。' * max(1, int(media["duration_seconds"] / 120)),
                     "language": "zh",
                     "source": "whisper",
                 }
@@ -893,8 +887,7 @@ def test_summarize_incomplete_transcript_writes_file_with_warning(
 
     assert result.exit_code == 0
     video_dir = outputs / "BV1abcDEF12G_p2"
-    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
-    run_dir = video_dir / latest["run_dir"]
+    run_dir = sorted((video_dir / "runs").iterdir())[-1]
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
     transcript = json.loads((run_dir / "transcript.json").read_text(encoding="utf-8"))
 
@@ -903,9 +896,10 @@ def test_summarize_incomplete_transcript_writes_file_with_warning(
     assert diagnostics["transcript_check"]["status"] == "transcript_incomplete"
     assert diagnostics["stage"] == "render"
     assert (run_dir / "chunks.json").is_file()
-    assert (run_dir / "chapters.json").is_file()
-    assert (run_dir / "report.html").is_file()
-    assert diagnostics["warnings"] == ["transcript_incomplete"]
+    assert not (run_dir / "chapters.json").exists()
+    assert (run_dir / "transcript.html").is_file()
+    assert not (run_dir / "report.html").exists()
+    assert set(diagnostics["warnings"]) == {"transcript_incomplete", "quality_review_required"}
 
 
 def test_summarize_chunking_confirmation_decline_writes_diagnostics(
@@ -939,8 +933,7 @@ def test_summarize_chunking_confirmation_decline_writes_diagnostics(
 
     assert result.exit_code == 1
     video_dir = outputs / "BV1abcDEF12G_p2"
-    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
-    run_dir = video_dir / latest["run_dir"]
+    run_dir = sorted((video_dir / "runs").iterdir())[-1]
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
 
     assert diagnostics["error_type"] == "ChunkingError"
@@ -968,19 +961,20 @@ def test_summarize_pdf_failure_is_warning_when_pdf_is_not_required(
 
     assert result.exit_code == 0
     video_dir = outputs / "BV1abcDEF12G_p2"
-    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
-    run_dir = video_dir / latest["run_dir"]
+    run_dir = sorted((video_dir / "runs").iterdir())[-1]
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
 
     assert (run_dir / "transcript.html").is_file()
-    assert (run_dir / "report.html").is_file()
+    assert (run_dir / "transcript.html").is_file()
+    assert not (run_dir / "report.html").exists()
     assert not (run_dir / "transcript.pdf").exists()
     assert not (run_dir / "report.pdf").exists()
     assert (run_dir / "content_bundle.json").is_file()
     assert diagnostics["stage"] == "render"
     assert diagnostics["warnings"] == ["pdf_failed"]
     assert "transcript.html" in diagnostics["artifact_paths"]
-    assert "report.html" in diagnostics["artifact_paths"]
+    assert "transcript.html" in diagnostics["artifact_paths"]
+    assert "report.html" not in diagnostics["artifact_paths"]
     assert "content_bundle.json" in diagnostics["artifact_paths"]
     assert "nabaichuan.jsonl" not in diagnostics["artifact_paths"]
 
@@ -1014,13 +1008,13 @@ def test_summarize_require_pdf_returns_nonzero_when_pdf_fails(
     assert "/Users/jack" not in result.output
 
     video_dir = outputs / "BV1abcDEF12G_p2"
-    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
-    run_dir = video_dir / latest["run_dir"]
+    run_dir = sorted((video_dir / "runs").iterdir())[-1]
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
 
     assert (run_dir / "transcript.html").is_file()
     assert not (run_dir / "transcript.pdf").exists()
-    assert (run_dir / "report.html").is_file()
+    assert (run_dir / "transcript.html").is_file()
+    assert not (run_dir / "report.html").exists()
     assert not (run_dir / "report.pdf").exists()
     assert diagnostics["error_type"] == "PdfExportError"
     assert diagnostics["stage"] == "render"
@@ -1053,7 +1047,6 @@ def test_summarize_format_html_skips_pdf_export(tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert [call["stage"] for call in render_calls] == [
         "transcript_html",
-        "report_html",
     ]
 
 
@@ -1146,6 +1139,7 @@ def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
         run_dir,
         provider="codex-exec",
         model="gpt-5.5",
+        **_options,
     ):
         article = {
             "schema_version": 1,
@@ -1160,7 +1154,7 @@ def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
                     "timestamp_url": ref.timestamp_url(0),
                     "source_segment_start_index": 0,
                     "source_segment_end_index": 0,
-                    "paragraphs": [{"text": "转写", "emphasis": []}],
+                    "paragraphs": [{"text": transcript["segments"][0]["text"], "emphasis": []}],
                     "key_terms": [],
                     "warnings": [],
                 }
@@ -1186,7 +1180,7 @@ def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
     )
     monkeypatch.setattr(
         pipeline,
-        "summarize_article_sections",
+        "generate_transcript_article",
         fake_summarize_article_sections,
         raising=False,
     )
@@ -1203,12 +1197,11 @@ def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
     assert "/Users/jack" not in result.output
 
     video_dir = outputs / "BV1abcDEF12G_p2"
-    latest = json.loads((video_dir / "latest.json").read_text(encoding="utf-8"))
-    run_dir = video_dir / latest["run_dir"]
+    run_dir = sorted((video_dir / "runs").iterdir())[-1]
     diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
 
     assert (run_dir / "chunks.json").is_file()
-    assert (run_dir / "transcript_article.json").is_file()
+    assert not (run_dir / "transcript_article.json").exists()
     assert not (run_dir / "chapters.json").exists()
     assert diagnostics["error_type"] == "SummarizationError"
     assert diagnostics["stage"] == "summarization"
@@ -1217,8 +1210,11 @@ def test_summarize_summarization_failure_writes_diagnostics_after_chunks(
         "metadata.json",
         ".bilifan/cache/BV1abcDEF12G_p2.mp3",
         "transcript.json",
+        "transcript.txt",
+        "transcript.srt",
+        "transcript_source.zip",
+        "quality.json",
         "chunks.json",
-        "transcript_article.json",
     ]
     assert "secret" not in diagnostics["sanitized_message"]
     assert "/Users/jack" not in diagnostics["sanitized_message"]

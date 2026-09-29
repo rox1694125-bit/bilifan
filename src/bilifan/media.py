@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from .execution import cancellable_run
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -93,7 +94,7 @@ def build_ffprobe_duration_command(audio_path: Path) -> list[str]:
 def ffprobe_duration_seconds(
     audio_path: Path,
     *,
-    runner: Runner = subprocess.run,
+    runner: Runner = cancellable_run,
 ) -> float:
     cmd = build_ffprobe_duration_command(audio_path)
     try:
@@ -176,11 +177,11 @@ def download_current_part_audio(
     *,
     cookies_from_browser: str | None = None,
     cookies_file: Path | None = None,
-    downloader: Runner = subprocess.run,
-    probe_runner: Runner = subprocess.run,
+    downloader: Runner = cancellable_run,
+    probe_runner: Runner = cancellable_run,
     playurl_fetcher: PlayurlFetcher | None = None,
     stream_downloader: StreamDownloader | None = None,
-    ffmpeg_runner: Runner = subprocess.run,
+    ffmpeg_runner: Runner = cancellable_run,
 ) -> dict[str, Any]:
     cache_dir = run_dir / ".bilifan" / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -423,7 +424,7 @@ def convert_audio_to_mp3(
     raw_audio_path: Path,
     mp3_path: Path,
     *,
-    runner: Runner = subprocess.run,
+    runner: Runner = cancellable_run,
 ) -> None:
     cmd = build_ffmpeg_convert_command(raw_audio_path, mp3_path)
     try:

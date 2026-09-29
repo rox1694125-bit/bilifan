@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from ..execution import cancellable_run
 import sys
 from pathlib import Path
 from typing import Any
@@ -86,7 +87,7 @@ class YouTubeAdapter:
         run_dir: Path,
         options: SourceOptions,
         *,
-        runner=subprocess.run,
+        runner=cancellable_run,
     ) -> dict[str, Any]:
         if options.cookies_file is not None or options.cookies_from_browser is not None:
             raise MetadataIngestError(
@@ -147,8 +148,8 @@ class YouTubeAdapter:
         run_dir: Path,
         options: SourceOptions,
         *,
-        downloader=subprocess.run,
-        probe_runner=subprocess.run,
+        downloader=cancellable_run,
+        probe_runner=cancellable_run,
     ) -> dict[str, Any]:
         if options.cookies_file is not None or options.cookies_from_browser is not None:
             raise MediaDownloadError("YouTube cookies are not supported in the public-video MVP.")

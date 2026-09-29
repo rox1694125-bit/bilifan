@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .bilibili import BilibiliPartRef
+from .delivery import atomic_json, OUTPUT_PROFILE
 
 
 RUN_OUTPUT_ID_PATTERN = re.compile(
@@ -61,17 +62,14 @@ def create_run(
 
     run_dir.mkdir(parents=True, exist_ok=False)
 
-    latest = {
+    attempt = {
         "run_id": run_id,
         "run_dir": f"runs/{run_id}",
         "generated_at": current.isoformat(),
         "input_url_sanitized": ref.sanitized_url,
     }
     video_dir.mkdir(parents=True, exist_ok=True)
-    (video_dir / "latest.json").write_text(
-        json.dumps(latest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    atomic_json(run_dir / "run_state.json", {**attempt, "status": "running", "output_profile": OUTPUT_PROFILE})
 
     return RunPaths(video_dir=video_dir, run_dir=run_dir, run_id=run_id)
 

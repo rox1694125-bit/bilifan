@@ -40,7 +40,7 @@ def install_pipeline_fakes(monkeypatch, *, duration, actual_duration=None):
         calls["transcript"] += 1
         return {
             "source": "bilibili-subtitle", "language": "zh",
-            "segments": [{"start": 0, "end": effective_duration, "text": "test transcript"}],
+            "segments": [{"start": 0, "end": effective_duration, "text": '这是一段逐字稿测试内容，详细说明操作步骤、环境要求和验证方法，保留说话者的原意与关键细节。' * max(1, int(effective_duration / 120))}],
             "transcript_check": {"status": "ok", "segment_count": 1},
         }
 
@@ -50,7 +50,7 @@ def install_pipeline_fakes(monkeypatch, *, duration, actual_duration=None):
                   "sections": [{"section_index": 1, "title": "Fixture", "start": 0,
                                 "end": effective_duration, "source_segment_start_index": 0,
                                 "source_segment_end_index": 0,
-                                "paragraphs": [{"text": "test article", "emphasis": []}],
+                                "paragraphs": [{"text": kwargs["transcript"]["segments"][0]["text"], "emphasis": []}],
                                 "key_terms": [], "warnings": []}], "warnings": []}
         (kwargs["run_dir"] / "transcript_article.json").write_text(json.dumps(result))
         return result
@@ -118,8 +118,9 @@ def test_confirmed_video_prompts_once_and_completes(tmp_path, monkeypatch, durat
         url=BILIBILI, out=tmp_path, output_format="html", confirm_long_video=confirm,
     ))
     assert len(prompts) == 1
-    assert (result.run_dir / "report.html").is_file()
-    assert calls == {"transcript": 1, "article": 1, "summary": 1}
+    assert (result.run_dir / "transcript.html").is_file()
+    assert not (result.run_dir / "report.html").exists()
+    assert calls == {"transcript": 1, "article": 1}
 
 
 @pytest.mark.parametrize("url", [BILIBILI, YOUTUBE])
@@ -128,8 +129,9 @@ def test_explicit_over_limit_permission_allows_processing(tmp_path, monkeypatch,
     result = pipeline.run_summarize_pipeline(PipelineRequest(
         url=url, out=tmp_path, output_format="html", allow_long_video=True, force_whisper=True,
     ))
-    assert (result.run_dir / "report.html").is_file()
-    assert calls == {"audio": 1, "transcript": 1, "article": 1, "summary": 1}
+    assert (result.run_dir / "transcript.html").is_file()
+    assert not (result.run_dir / "report.html").exists()
+    assert calls == {"audio": 1, "transcript": 1, "article": 1}
 
 
 @pytest.mark.parametrize("duration,actual", [(None, 193 * 60), (120, 193 * 60)])
@@ -168,7 +170,7 @@ def test_web_entrypoints_apply_long_video_permission(tmp_path, monkeypatch, entr
     assert response.status_code == 200
     if allowed:
         assert item["status"] == "succeeded"
-        assert calls == {"transcript": 1, "article": 1, "summary": 1}
+        assert calls == {"transcript": 1, "article": 1}
         return
     assert not calls
     assert item["status"] == "failed"
@@ -193,7 +195,7 @@ def test_cli_entrypoint_checks_duration_before_work(tmp_path, monkeypatch, allow
     result = CliRunner().invoke(cli_app, command, env={"BILIFAN_CONFIG_HOME": str(tmp_path / "config")})
     if allowed:
         assert result.exit_code == 0, result.output
-        assert calls == {"transcript": 1, "article": 1, "summary": 1}
+        assert calls == {"transcript": 1, "article": 1}
     else:
         assert result.exit_code == 1
         assert "--allow-long-video" in result.output

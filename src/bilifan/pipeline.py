@@ -20,6 +20,12 @@ from .chunking import (
     validate_video_duration,
 )
 from .diagnostics import Diagnostics, redact_text, write_diagnostics
+from .exports import write_transcript_exports
+from .quality import build_quality
+from .delivery import mark_complete
+from .article_cache import cache_directory
+from . import metrics
+from .execution import check_cancelled, emit_event, publish_guard, record_completion
 from .media import MediaDownloadError, download_current_part_audio, publish_audio_artifact
 from .metadata import MetadataIngestError, fetch_current_part_metadata
 from .renderer import PdfExportError, render_report_html
@@ -56,6 +62,7 @@ class PipelineRequest:
     transcriber: str = "auto"
     language: str = "auto"
     force_whisper: bool = False
+    force_article: bool = False
     llm_provider: str = "codex-exec"
     llm_model: str = "gpt-5.5"
     summary_template: str = "学习笔记"
@@ -109,7 +116,12 @@ def validate_language(language: str) -> None:
         raise ValueError("--language must be auto, zh, or en.")
 
 
-def run_summarize_pipeline(
+def run_summarize_pipeline(request: PipelineRequest, *, progress_callback: ProgressCallback = default_progress) -> PipelineResult:
+    with metrics.attempt_context("pipeline", request.llm_provider, request.llm_model):
+        return _run_summarize_pipeline(request, progress_callback=progress_callback)
+
+
+def _run_summarize_pipeline(
     request: PipelineRequest,
     *,
     progress_callback: ProgressCallback = default_progress,
@@ -162,6 +174,8 @@ def run_summarize_pipeline(
         message = "Run directory already exists; use --overwrite or retry later."
         _progress(progress_callback, PipelineStage.PREFLIGHT, "failed", message)
         raise ValueError(message) from exc
+    emit_event({"type": "run_created", "run_key": _display_run_path(run)})
+    metrics.bind_run(run.run_dir)
     _progress(progress_callback, PipelineStage.PREFLIGHT, "done", "Input accepted.")
 
     _progress(progress_callback, PipelineStage.METADATA, "running", "Fetching metadata.")
@@ -208,6 +222,8 @@ def run_summarize_pipeline(
 
     _write_json(run.run_dir / "metadata.json", metadata)
     long_video_confirmed = _check_metadata_duration(request, metadata, run, ref, progress_callback)
+    metadata["processing_options"] = {"allow_long_video": request.allow_long_video, "long_video_confirmed": long_video_confirmed}
+    _write_json(run.run_dir / "metadata.json", metadata)
     _progress(
         progress_callback,
         PipelineStage.METADATA,
@@ -283,6 +299,10 @@ def run_summarize_pipeline(
     assert transcript is not None
 
     _write_json(run.run_dir / "transcript.json", transcript)
+    raw_quality = build_quality(transcript, metadata=metadata)
+    raw_artifacts = write_transcript_exports(run.run_dir, metadata, transcript, quality=raw_quality)
+    if raw_quality["status"] == "unusable":
+        _raise_transcript_failure(TranscriptError("转录不可用，原稿已保留；请检查语言与音频后重新转录。"), run=run, ref=ref, media=media, progress_callback=progress_callback)
     export_warnings = _transcript_pipeline_warnings(transcript)
     _progress(progress_callback, PipelineStage.TRANSCRIPT, "done", "Transcript saved.")
 
@@ -303,7 +323,7 @@ def run_summarize_pipeline(
                 transcript,
                 sanitized_message=exc.sanitized_message,
                 warnings=[*export_warnings, "chunking_confirmation_required"],
-                transcript_export_artifacts=[],
+                transcript_export_artifacts=raw_artifacts,
             )
             _progress(
                 progress_callback,
@@ -316,7 +336,7 @@ def run_summarize_pipeline(
                 exc.sanitized_message,
                 artifact_paths=_chunking_failure_artifacts(
                     media,
-                    [],
+                    raw_artifacts,
                 ),
                 warnings=[*export_warnings, "chunking_confirmation_required"],
             ) from exc
@@ -331,7 +351,7 @@ def run_summarize_pipeline(
             sanitized_message = redact_text(str(retry_exc))
             artifact_paths = _chunking_failure_artifacts(
                 media,
-                [],
+                raw_artifacts,
             )
             _write_chunking_failure_diagnostics(
                 run,
@@ -340,7 +360,7 @@ def run_summarize_pipeline(
                 transcript,
                 sanitized_message=sanitized_message,
                 warnings=[*export_warnings, "chunking_failed"],
-                transcript_export_artifacts=[],
+                transcript_export_artifacts=raw_artifacts,
             )
             _progress(
                 progress_callback,
@@ -356,7 +376,7 @@ def run_summarize_pipeline(
             ) from retry_exc
     except ChunkingError as exc:
         sanitized_message = redact_text(str(exc))
-        artifact_paths = _chunking_failure_artifacts(media, [])
+        artifact_paths = _chunking_failure_artifacts(media, raw_artifacts)
         _write_chunking_failure_diagnostics(
             run,
             ref,
@@ -364,7 +384,7 @@ def run_summarize_pipeline(
             transcript,
             sanitized_message=sanitized_message,
             warnings=[*export_warnings, "chunking_failed"],
-            transcript_export_artifacts=[],
+            transcript_export_artifacts=raw_artifacts,
         )
         _progress(progress_callback, PipelineStage.CHUNKING, "failed", sanitized_message)
         raise _pipeline_run_error(
@@ -392,15 +412,8 @@ def run_summarize_pipeline(
             run_dir=run.run_dir,
             provider=request.llm_provider,
             model=request.llm_model,
-        )
-        chapters = summarize_article_sections(
-            ref=ref,
-            metadata=metadata,
-            article=article,
-            run_dir=run.run_dir,
-            provider=request.llm_provider,
-            model=request.llm_model,
-            style=request.summary_template,
+            cache_dir=cache_directory(run.run_dir),
+            force_article=request.force_article,
         )
     except (ArticleError, SummarizationError) as exc:
         sanitized_message = redact_text(str(exc))
@@ -409,6 +422,7 @@ def run_summarize_pipeline(
             "metadata.json",
             *_media_artifact_paths(media),
             "transcript.json",
+            *raw_artifacts,
             "chunks.json",
             *_existing_named_artifacts(run.run_dir, ["transcript_article.json"]),
             *_partial_summary_artifacts(run.run_dir),
@@ -440,23 +454,11 @@ def run_summarize_pipeline(
             artifact_paths=artifact_paths,
             warnings=[*export_warnings, "summarization_failed"],
         ) from exc
-    visual_warnings = enrich_chapters_with_visuals(
-        ref=ref,
-        chapters=chapters,
-        media=media,
-        run_dir=run.run_dir,
-        with_frames=request.with_frames,
-        with_diagrams=request.with_diagrams,
-    )
-    export_warnings.extend(visual_warnings)
-    visual_artifacts = visual_artifact_paths(chapters)
-    _write_json(run.run_dir / "chapters.json", chapters)
-    _progress(
-        progress_callback,
-        PipelineStage.SUMMARIZATION,
-        "done",
-        "Summaries saved.",
-    )
+    quality = build_quality(transcript, article, metadata)
+    raw_artifacts = write_transcript_exports(run.run_dir, metadata, transcript, overwrite=True, quality=quality)
+    if quality["review_required"]:
+        export_warnings.append("quality_review_required")
+    _progress(progress_callback, PipelineStage.SUMMARIZATION, "done", "整理逐字稿已保存。")
 
     render_warnings: list[str] = list(export_warnings)
     render_base_artifacts = [
@@ -466,8 +468,7 @@ def run_summarize_pipeline(
         "transcript.json",
         "chunks.json",
         "transcript_article.json",
-        "chapters.json",
-        *visual_artifacts,
+        *raw_artifacts,
     ]
     _progress(progress_callback, PipelineStage.RENDER, "running", "Rendering outputs.")
     render_artifacts = list(render_base_artifacts)
@@ -479,14 +480,6 @@ def run_summarize_pipeline(
             run_dir=run.run_dir,
         )
         render_artifacts.append(transcript_html.name)
-        report_html = render_report_html(
-            ref=ref,
-            metadata=metadata,
-            transcript=transcript,
-            chapters=chapters,
-            run_dir=run.run_dir,
-        )
-        render_artifacts.append(report_html.name)
     except Exception as exc:
         sanitized_message = redact_text(str(exc))
         artifact_paths = list(render_artifacts)
@@ -515,7 +508,6 @@ def run_summarize_pipeline(
     if should_export_pdf:
         for html_path, pdf_name in (
             (transcript_html, "transcript.pdf"),
-            (report_html, "report.pdf"),
         ):
             try:
                 pdf_path = export_html_pdf(
@@ -575,7 +567,7 @@ def run_summarize_pipeline(
             metadata=metadata,
             transcript=transcript,
             transcript_article=article,
-            chapters=chapters,
+            chapters=None,
             artifact_paths=render_artifacts,
             platform=adapter.platform,
             source_id=source_ref.source_id,
@@ -610,29 +602,33 @@ def run_summarize_pipeline(
         ) from exc
     render_artifacts.append(bundle_path.name)
 
-    write_diagnostics(
-        run.run_dir / "diagnostics.json",
-        Diagnostics(
-            error_type=None,
-            exit_code=0,
-            stage=PipelineStage.RENDER.value,
-            video_id=ref.bvid,
-            part_index=ref.part_index,
-            duration_check=media["duration_check"],
-            transcript_check=transcript["transcript_check"],
-            artifact_paths=render_artifacts,
-            sanitized_message="Report rendering completed.",
-            warnings=render_warnings,
-        ),
-    )
-    _progress(progress_callback, PipelineStage.RENDER, "done", "Render complete.")
-    return PipelineResult(
+    result = PipelineResult(
         run_key=_display_run_path(run),
         run_dir=run.run_dir,
         diagnostics_path=run.run_dir / "diagnostics.json",
         artifact_paths=render_artifacts,
         warnings=render_warnings,
     )
+    with publish_guard():
+        write_diagnostics(
+            run.run_dir / "diagnostics.json",
+            Diagnostics(
+                error_type=None,
+                exit_code=0,
+                stage=PipelineStage.RENDER.value,
+                video_id=ref.bvid,
+                part_index=ref.part_index,
+                duration_check=media["duration_check"],
+                transcript_check=transcript["transcript_check"],
+                artifact_paths=render_artifacts,
+                sanitized_message="原始稿与整理逐字稿已完成。",
+                warnings=render_warnings,
+            ),
+        )
+        mark_complete(run.run_dir, update_latest=True)
+        record_completion(result)
+    _progress(progress_callback, PipelineStage.RENDER, "done", "整理逐字稿已完成。")
+    return result
 
 
 class _GenericRunRef:
@@ -754,6 +750,7 @@ def _raise_transcript_failure(
         "diagnostics.json",
         "metadata.json",
         *_media_artifact_paths(media),
+        *_existing_named_artifacts(run.run_dir, ["transcript.json", "transcript.txt", "transcript.srt", "transcript_source.zip", "quality.json"]),
     ]
     write_diagnostics(
         run.run_dir / "diagnostics.json",
@@ -891,6 +888,8 @@ def _progress(
     status: str,
     message: str,
 ) -> None:
+    check_cancelled()
+    metrics.stage_event(stage.value, status)
     progress_callback(stage.value, status, redact_text(message))
 
 

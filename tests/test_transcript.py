@@ -390,7 +390,7 @@ def test_build_transcript_auto_retries_alternate_route_when_first_route_is_suspe
     assert calls == [("turbo", "zh"), ("small.en", "en")]
     assert transcript["language"] == "en"
     assert transcript["model"] == "small.en"
-    assert transcript["transcript_quality_check"]["status"] == "ok"
+    assert transcript["transcript_quality_check"]["status"] == "low_confidence"
     assert transcript["transcription_attempts"] == [
         {
             "model": "turbo",
@@ -403,7 +403,7 @@ def test_build_transcript_auto_retries_alternate_route_when_first_route_is_suspe
             "model": "small.en",
             "language": "en",
             "backend": "openai-whisper",
-            "quality_status": "ok",
+            "quality_status": "low_confidence",
             "selected": True,
         },
     ]
@@ -418,7 +418,7 @@ def test_build_transcript_keeps_first_attempt_when_alternate_is_not_better(tmp_p
     def fake_whisper(audio_file, *, model_name, language):
         if language == "zh":
             return [{"start": 0, "end": 8, "text": "Now I do Ay Ari's text."}]
-        return [{"start": 0, "end": 8, "text": "thank you"}]
+        return [{"start": index * 2, "end": (index + 1) * 2, "text": "thank you"} for index in range(4)]
 
     transcript = build_transcript(
         metadata,
@@ -525,7 +525,7 @@ def test_subtitle_transcript_does_not_add_whisper_routing_metadata(tmp_path):
     )
 
     assert "routing_decision" not in transcript
-    assert "transcript_quality_check" not in transcript
+    assert transcript["transcript_quality_check"]["status"] == "ok"
     assert "transcription_attempts" not in transcript
 
 
@@ -594,13 +594,12 @@ def test_build_transcript_falls_back_to_openai_when_mlx_fails(tmp_path):
 
 
 def test_transcribe_with_mlx_whisper_requires_segment_list(tmp_path, monkeypatch):
+    import bilifan.transcript as module
     audio_path = tmp_path / "audio.mp3"
     audio_path.write_bytes(b"audio")
-    fake_mlx_whisper = types.SimpleNamespace(
-        transcribe=lambda *args, **kwargs: {"text": "missing segments"}
-    )
-    monkeypatch.setitem(sys.modules, "mlx_whisper", fake_mlx_whisper)
-
+    def invalid_worker(*args, **kwargs):
+        raise RuntimeError("Whisper returned invalid transcript segments.")
+    monkeypatch.setattr(module, "run_whisper_worker", invalid_worker)
     with pytest.raises(TranscriptError, match="invalid transcript segments"):
         transcribe_with_mlx_whisper(audio_path, model_name="turbo", language="zh")
 

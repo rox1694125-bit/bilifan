@@ -145,7 +145,7 @@ def test_write_exports_skips_existing_files_unless_overwrite(tmp_path):
 
     artifacts = write_transcript_exports(tmp_path, _metadata(), _transcript())
 
-    assert artifacts == ["transcript.txt", "transcript.srt"]
+    assert artifacts == ["transcript.txt", "transcript.srt", "transcript_source.zip", "quality.json"]
     assert (tmp_path / "transcript.txt").read_text(encoding="utf-8") == "existing"
     assert (tmp_path / "transcript.srt").read_text(encoding="utf-8").startswith("1\n")
 

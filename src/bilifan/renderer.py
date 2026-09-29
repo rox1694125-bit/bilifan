@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import subprocess
+from .execution import cancellable_run
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -12,6 +14,7 @@ from markupsafe import Markup, escape
 
 from .bilibili import BilibiliPartRef
 from .diagnostics import redact_text
+from .quality import build_quality, quality_text
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -61,11 +64,29 @@ def render_transcript_html(
     run_dir: Path,
 ) -> Path:
     html_path = run_dir / "transcript.html"
+    try:
+        transcript = json.loads((run_dir / "transcript.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        transcript = {}
+    quality = build_quality(transcript, article, metadata)
+    article_view = _article_view(article)
+    segments = transcript.get("segments", []) if isinstance(transcript, dict) else []
+    for section, view in zip(article.get("sections", []), article_view["sections"]):
+        start = section.get("source_segment_start_index", 0)
+        end = section.get("source_segment_end_index", start)
+        view["source_text"] = "\n".join(
+            str(segment.get("text", "")) for index, segment in enumerate(segments)
+            if isinstance(segment, dict) and isinstance(start, int) and isinstance(end, int) and start <= index <= end
+        )
+        view["quality_reasons"] = [reason for reason in quality.get("reasons", [])
+                                   if reason.get("section_id") == str(section.get("section_index"))]
     html_path.write_text(
         _transcript_template().render(
             ref=ref,
             metadata=_metadata_view(metadata),
-            article=_article_view(article),
+            article=article_view,
+            quality=quality,
+            quality_text=quality_text(quality),
         )
         + "\n",
         encoding="utf-8",
@@ -77,7 +98,7 @@ def export_report_pdf(
     *,
     html_path: Path,
     pdf_path: Path,
-    runner: Runner = subprocess.run,
+    runner: Runner = cancellable_run,
     chrome_path: str | None = None,
 ) -> Path:
     return export_html_pdf(
@@ -92,7 +113,7 @@ def export_html_pdf(
     *,
     html_path: Path,
     pdf_path: Path,
-    runner: Runner = subprocess.run,
+    runner: Runner = cancellable_run,
     chrome_path: str | None = None,
 ) -> Path:
     chrome = chrome_path or find_chrome_executable()
@@ -620,7 +641,7 @@ def _transcript_template():
 <body>
 <main>
   <header>
-    <div class="kicker">Bilifan 逐字稿文章</div>
+    <div class="kicker">Bilifan 整理逐字稿</div>
     <h1>{{ metadata.title or "逐字稿文章" }}</h1>
     <div class="meta">
       {% if metadata.owner_name %}<span>UP：{{ metadata.owner_name }}</span>{% endif %}
@@ -631,6 +652,8 @@ def _transcript_template():
     {% if metadata.cover_path %}<img class="cover" src="{{ metadata.cover_path }}" alt="视频封面">{% endif %}
   </header>
 
+  <div class="notice" data-quality="{{ quality.status }}">{{ quality_text }}</div>
+  <p>本文由原始转录整理而来，自动检查不等于事实核实。<a href="transcript.txt">下载原始转录稿</a> · <a href="transcript_source.zip">下载 SRT 与质量说明</a></p>
   {% if article.warnings %}
   <div class="notice">warning: {{ article.warnings|join(", ") }}</div>
   {% endif %}
@@ -644,6 +667,8 @@ def _transcript_template():
     {% for paragraph in section.paragraphs %}
     <p>{{ paragraph.html }}</p>
     {% endfor %}
+    {% if section.source_text %}<details><summary>对照原稿</summary><pre style="white-space:pre-wrap">{{ section.source_text }}</pre></details>{% endif %}
+    {% for reason in section.quality_reasons %}<div class="notice">{{ reason.message }}</div>{% endfor %}
     {% if section.key_terms %}
     <div class="terms">{% for term in section.key_terms %}<span class="term">{{ term }}</span>{% endfor %}</div>
     {% endif %}

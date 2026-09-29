@@ -3,15 +3,24 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from .diagnostics import redact_text
+from .quality import build_quality, quality_text
 
 
 class ExportError(RuntimeError):
     """Raised when export artifacts cannot be written."""
+
+
+class QualityReviewRequired(ExportError):
+    def __init__(self, quality: dict[str, Any]):
+        super().__init__("内容需复查，尚未导出。可明确选择仍然导出并保留警告。")
+        self.quality = quality
 
 
 NABAICHUAN_JSONL = "nabaichuan.jsonl"
@@ -26,13 +35,15 @@ def write_transcript_exports(
     metadata: dict[str, Any],
     transcript: dict[str, Any],
     overwrite: bool = False,
+    quality: dict[str, Any] | None = None,
 ) -> list[str]:
-    artifacts = ["transcript.txt", "transcript.srt"]
+    quality = quality or build_quality(transcript, metadata=metadata)
+    artifacts = ["transcript.txt", "transcript.srt", "transcript_source.zip", "quality.json"]
     output_dir = Path(run_dir)
     _ensure_output_dir(output_dir)
     _write_if_allowed(
         output_dir / "transcript.txt",
-        render_transcript_text(metadata, transcript),
+        quality_text(quality) + "\n\n" + render_transcript_text(metadata, transcript),
         overwrite=overwrite,
     )
     _write_if_allowed(
@@ -40,6 +51,19 @@ def write_transcript_exports(
         render_transcript_srt(transcript),
         overwrite=overwrite,
     )
+    _write_if_allowed(output_dir / "quality.json", json.dumps(quality, ensure_ascii=False, indent=2) + "\n", overwrite=overwrite)
+    if (output_dir / "transcript_source.zip").exists() and not overwrite:
+        return artifacts
+    with tempfile.NamedTemporaryFile(dir=output_dir, prefix=".transcript-source-", delete=False) as stream:
+        temporary = Path(stream.name)
+    try:
+        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("transcript.srt", render_transcript_srt(transcript))
+            archive.writestr("quality.json", json.dumps(quality, ensure_ascii=False, indent=2))
+            archive.writestr("README.txt", "原始转录稿（未做文章整理）。\n" + quality_text(quality))
+        temporary.replace(output_dir / "transcript_source.zip")
+    finally:
+        temporary.unlink(missing_ok=True)
     return artifacts
 
 
@@ -66,11 +90,14 @@ def write_nabaichuan_jsonl(
     bundle: dict[str, Any] | None = None,
     overwrite: bool = True,
     run_key: str | None = None,
+    include_review_required: bool = False,
 ) -> str:
     output_dir = Path(run_dir)
     _ensure_output_dir(output_dir)
     content_bundle = bundle if bundle is not None else _read_content_bundle(output_dir)
-    records = build_nabaichuan_records(content_bundle, run_key=run_key)
+    content_bundle = prepare_export_bundle(output_dir, content_bundle)
+    records = build_nabaichuan_records(content_bundle, run_key=run_key,
+                                       include_review_required=include_review_required)
     output_path = output_dir / NABAICHUAN_JSONL
     _write_if_allowed(
         output_path,
@@ -83,17 +110,43 @@ def write_nabaichuan_jsonl(
     return NABAICHUAN_JSONL
 
 
+def prepare_export_bundle(output_dir: Path, content_bundle: dict[str, Any]) -> dict[str, Any]:
+    # Re-evaluate only checks supported by the existing local source data.
+    content_bundle = dict(content_bundle)
+    transcript_path = output_dir / "transcript.json"
+    if transcript_path.is_file() and not transcript_path.is_symlink():
+        try:
+            raw = json.loads(transcript_path.read_text(encoding="utf-8"))
+            metadata = content_bundle.get("source") or {}
+            metadata_path = output_dir / "metadata.json"
+            if metadata_path.is_file() and not metadata_path.is_symlink():
+                candidate = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if isinstance(candidate, dict):
+                    metadata = candidate
+            content_bundle["quality"] = build_quality(
+                raw, content_bundle.get("transcript_article"), metadata
+            )
+        except (ValueError, OSError):
+            content_bundle["quality"] = build_quality({})
+    return content_bundle
+
 def build_nabaichuan_records(
     bundle: dict[str, Any],
     *,
     include_transcript: bool = True,
     run_key: str | None = None,
+    include_review_required: bool = False,
 ) -> list[dict[str, Any]]:
     if not isinstance(bundle, dict):
         raise ExportError("content_bundle must be a JSON object.")
     bundle_id = _first_text(bundle.get("bundle_id"))
     if not bundle_id:
         raise ExportError("content_bundle is missing bundle_id.")
+    quality = bundle.get("quality")
+    if not isinstance(quality, dict):
+        quality = build_quality(bundle.get("transcript") or {}, bundle.get("transcript_article"), bundle.get("source"))
+    if quality.get("review_required") and not include_review_required:
+        raise QualityReviewRequired(quality)
 
     source = bundle.get("source") if isinstance(bundle.get("source"), dict) else {}
     source_payload = {
@@ -114,42 +167,9 @@ def build_nabaichuan_records(
         "source": source_payload,
         "title": source_payload["title"],
         "text": source_payload["title"],
+        "quality": quality,
     }
     records = [_with_export_metadata(video_record, bundle_id=bundle_id, run_key=run_key)]
-
-    summary = bundle.get("summary") if isinstance(bundle.get("summary"), dict) else {}
-    chapters = summary.get("chapters") if isinstance(summary.get("chapters"), list) else []
-    chapter_records: list[dict[str, Any]] = []
-    for index, chapter in enumerate(chapters, start=1):
-        if not isinstance(chapter, dict):
-            continue
-        chapter_index = chapter.get("chapter_index")
-        if not isinstance(chapter_index, int) or isinstance(chapter_index, bool):
-            chapter_index = index
-        chapter_id = f"{bundle_id}:chapter:{chapter_index}"
-        chapter_record = {
-            "type": "chapter",
-            "record_id": chapter_id,
-            "chapter_id": chapter_id,
-            "parent_record_id": video_record["record_id"],
-            "source": source_payload,
-            "chapter_index": chapter_index,
-            "title": _first_text(chapter.get("title")),
-            "summary": _first_text(chapter.get("summary")),
-            "key_points": _string_list(chapter.get("key_points")),
-            "start": _float_value(chapter.get("start")),
-            "end": _float_value(chapter.get("end")),
-            "timestamp_url": _first_text(chapter.get("timestamp_url")),
-        }
-        chapter_record["text"] = _record_text(
-            chapter_record["title"],
-            chapter_record["summary"],
-            *chapter_record["key_points"],
-        )
-        chapter_records.append(chapter_record)
-        records.append(
-            _with_export_metadata(chapter_record, bundle_id=bundle_id, run_key=run_key)
-        )
 
     if include_transcript:
         for index, segment in enumerate(
@@ -158,18 +178,16 @@ def build_nabaichuan_records(
         ):
             start = _float_value(segment.get("start")) or 0.0
             end = _float_value(segment.get("end")) or start
-            chapter_id = _chapter_id_for_time(
-                chapter_records,
-                (start + end) / 2,
-            ) or _chapter_id_for_time(chapter_records, start)
             record = {
+                "quality": quality,
+                "text_source": "transcript_article" if bundle.get("transcript_article") else "raw_transcript",
                 "type": "transcript_segment",
                 "record_id": (
                     f"{bundle_id}:transcript_segment:{index}:"
                     f"{_millis(start)}-{_millis(end)}"
                 ),
                 "parent_record_id": video_record["record_id"],
-                "chapter_id": chapter_id,
+                "chapter_id": None,
                 "source": source_payload,
                 "start": start,
                 "end": end,

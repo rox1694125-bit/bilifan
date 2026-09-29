@@ -7,6 +7,7 @@ from bilifan.exports import (
     NABAICHUAN_EXPORT_SCHEMA_VERSION,
     build_nabaichuan_records,
     write_nabaichuan_jsonl,
+    QualityReviewRequired,
 )
 
 
@@ -62,28 +63,21 @@ def _bundle():
     }
 
 
-def test_build_nabaichuan_records_outputs_video_chapter_and_transcript_records():
-    records = build_nabaichuan_records(_bundle())
-
-    assert [record["type"] for record in records] == [
-        "video",
-        "chapter",
-        "chapter",
-        "transcript_segment",
-        "transcript_segment",
-    ]
+def test_build_nabaichuan_records_exports_transcripts_without_legacy_report_chapters():
+    with pytest.raises(QualityReviewRequired):
+        build_nabaichuan_records(_bundle())
+    records = build_nabaichuan_records(_bundle(), include_review_required=True)
+    assert [record["type"] for record in records] == ["video", "transcript_segment", "transcript_segment"]
     assert records[0]["record_id"] == "bilibili:BV1abcDEF12G:p1:video"
-    assert records[0]["content_hash"]
-    assert records[1]["parent_record_id"] == records[0]["record_id"]
-    assert records[1]["chapter_id"] == "bilibili:BV1abcDEF12G:p1:chapter:1"
-    assert records[3]["chapter_id"] == "bilibili:BV1abcDEF12G:p1:chapter:1"
-    assert records[4]["chapter_id"] == "bilibili:BV1abcDEF12G:p1:chapter:2"
-    assert records[3]["start"] == 0
-    assert 30 <= records[3]["end"] - records[3]["start"] <= 90
-    assert 30 <= records[4]["end"] - records[4]["start"] <= 90
-    assert "第一段" in records[3]["text"]
-    assert "第四段" in records[4]["text"]
-    assert records[3]["timestamp_url"].endswith("t=0")
+    for record in records[1:]:
+        assert record["parent_record_id"] == records[0]["record_id"]
+        assert record["chapter_id"] is None
+        assert record["text_source"] == "raw_transcript"
+        assert record["quality"]["review_required"]
+        assert 30 <= record["end"] - record["start"] <= 90
+    assert "第一段" in records[1]["text"]
+    assert "第四段" in records[2]["text"]
+    assert records[1]["timestamp_url"].endswith("t=0")
 
 
 def test_nabaichuan_records_prefer_article_sections_when_present():
@@ -99,7 +93,7 @@ def test_nabaichuan_records_prefer_article_sections_when_present():
         ]
     }
 
-    records = build_nabaichuan_records(bundle)
+    records = build_nabaichuan_records(bundle, include_review_required=True)
     transcript_records = [
         record for record in records if record["type"] == "transcript_segment"
     ]
@@ -110,10 +104,12 @@ def test_nabaichuan_records_prefer_article_sections_when_present():
 def test_nabaichuan_records_include_stable_export_contract_metadata():
     records = build_nabaichuan_records(
         _bundle(),
+        include_review_required=True,
         run_key="BV1abcDEF12G_p1/runs/2026-06-08_120000",
     )
     same_content_other_run = build_nabaichuan_records(
         _bundle(),
+        include_review_required=True,
         run_key="BV1abcDEF12G_p1/runs/2026-06-09_120000",
     )
 
@@ -135,7 +131,7 @@ def test_nabaichuan_transcript_records_split_long_segments_into_30_to_90_second_
         {"start": 0, "end": 180, "text": "长片段" * 90},
     ]
 
-    records = build_nabaichuan_records(bundle)
+    records = build_nabaichuan_records(bundle, include_review_required=True)
     transcript_records = [
         record for record in records if record["type"] == "transcript_segment"
     ]
@@ -154,7 +150,7 @@ def test_nabaichuan_expands_short_transcript_windows_when_source_is_long():
         {"start": 0, "end": 1, "text": "异常短字幕"},
     ]
 
-    records = build_nabaichuan_records(bundle)
+    records = build_nabaichuan_records(bundle, include_review_required=True)
     transcript_records = [
         record for record in records if record["type"] == "transcript_segment"
     ]
@@ -172,7 +168,7 @@ def test_nabaichuan_allows_short_windows_for_truly_short_sources():
         {"start": 0, "end": 8, "text": "短视频"},
     ]
 
-    records = build_nabaichuan_records(bundle)
+    records = build_nabaichuan_records(bundle, include_review_required=True)
     transcript_records = [
         record for record in records if record["type"] == "transcript_segment"
     ]
@@ -183,11 +179,11 @@ def test_nabaichuan_allows_short_windows_for_truly_short_sources():
 
 
 def test_nabaichuan_content_hash_changes_only_when_content_changes():
-    original = build_nabaichuan_records(_bundle())
-    same = build_nabaichuan_records(_bundle())
+    original = build_nabaichuan_records(_bundle(), include_review_required=True)
+    same = build_nabaichuan_records(_bundle(), include_review_required=True)
     changed_bundle = _bundle()
-    changed_bundle["summary"]["chapters"][0]["summary"] = "新摘要"
-    changed = build_nabaichuan_records(changed_bundle)
+    changed_bundle["transcript"]["segments"][0]["text"] = "新首段"
+    changed = build_nabaichuan_records(changed_bundle, include_review_required=True)
 
     assert [record["content_hash"] for record in same] == [
         record["content_hash"] for record in original
@@ -202,14 +198,14 @@ def test_write_nabaichuan_jsonl_writes_strict_json_without_local_paths(tmp_path)
     run_dir.mkdir()
     bundle = _bundle()
     bundle["source"]["title"] = "Title /Users/jack/private/raw.txt"
-    bundle["summary"]["chapters"][0]["summary"] = "OPENAI_API_KEY=sk-test-secret"
+    bundle["transcript"]["segments"][1]["text"] = "OPENAI_API_KEY=sk-test-secret"
     bundle["transcript"]["segments"][0]["text"] = "local /Volumes/mySSD/raw.wav"
     (run_dir / "content_bundle.json").write_text(
         json.dumps(bundle, ensure_ascii=False),
         encoding="utf-8",
     )
 
-    artifact = write_nabaichuan_jsonl(run_dir)
+    artifact = write_nabaichuan_jsonl(run_dir, include_review_required=True)
     rows = [
         json.loads(line)
         for line in (run_dir / artifact).read_text(encoding="utf-8").splitlines()
