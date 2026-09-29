@@ -409,13 +409,13 @@ def test_download_current_part_audio_falls_back_to_playurl_after_duration_mismat
     assert ffmpeg_calls
 
 
-def test_download_current_part_audio_tries_backup_when_playurl_candidate_duration_mismatches(
-    tmp_path,
+@pytest.mark.parametrize("first_failure", ["duration", "download", "convert", "probe"])
+def test_download_current_part_audio_keeps_successful_backup_after_candidate_failure(
+    tmp_path, first_failure,
 ):
     ref = parse_bilibili_url("https://www.bilibili.com/video/BV1abcDEF12G?p=1")
     metadata = {"duration": 100, "cid": "38864161273"}
     stream_calls = []
-    probe_durations = iter(["10", "10", "40", "100"])
 
     def fake_download(cmd, **kwargs):
         (tmp_path / ".bilifan" / "cache").mkdir(parents=True, exist_ok=True)
@@ -435,16 +435,23 @@ def test_download_current_part_audio_tries_backup_when_playurl_candidate_duratio
     def fake_stream_downloader(url, received_ref, raw_path):
         stream_calls.append(url)
         raw_path.write_bytes(f"raw-{len(stream_calls)}".encode())
+        if first_failure == "download" and len(stream_calls) == 1:
+            raise MediaDownloadError("first candidate interrupted")
 
     def fake_ffmpeg(cmd, **kwargs):
         Path(cmd[-1]).write_bytes(f"mp3-{len(stream_calls)}".encode())
+        if first_failure == "convert" and len(stream_calls) == 1:
+            return subprocess.CompletedProcess(cmd, 1, "", "first candidate conversion failed")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     def fake_ffprobe(cmd, **kwargs):
+        if first_failure == "probe" and len(stream_calls) == 1:
+            return subprocess.CompletedProcess(cmd, 1, "", "first candidate probe failed")
+        duration = "10" if not stream_calls else "40" if len(stream_calls) == 1 else "100"
         return subprocess.CompletedProcess(
             cmd,
             0,
-            json.dumps({"format": {"duration": next(probe_durations)}}),
+            json.dumps({"format": {"duration": duration}}),
             "",
         )
 
@@ -467,6 +474,9 @@ def test_download_current_part_audio_tries_backup_when_playurl_candidate_duratio
         "https://upos-primary.example.test/audio.m4s",
         "https://upos-backup.example.test/audio.m4s",
     ]
+    # A successful return is only useful if the next stage can read the audio.
+    assert (tmp_path / result["audio_path"]).read_bytes() == b"mp3-2"
+    assert not (tmp_path / ".bilifan/cache" / f"{ref.output_id}.source.m4s").exists()
 
 
 def test_download_current_part_audio_raises_after_retry_mismatch(tmp_path):

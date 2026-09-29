@@ -535,6 +535,8 @@ def _run_playurl_audio_download_with_duration_check(
                 attempts=attempts,
             )
             if duration_check["status"] != "duration_mismatch":
+                # Cleanup belongs to this candidate, not a previous failure.
+                last_error = None
                 return {
                     "audio_path": _relative_audio_path(ref),
                     "audio_source": "bilibili-playurl-api",
