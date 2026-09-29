@@ -1,0 +1,43 @@
+{
+  "origin": "synthetic",
+  "metadata": {
+    "title": "数据备份与核对教程",
+    "description": "参考 https://example.test/tutorial/install-and-configure-the-environment"
+  },
+  "transcript": {
+    "source": "whisper",
+    "language": "zh",
+    "segments": [
+      {
+        "start": 0,
+        "end": 12,
+        "text": "今天我们学习配置版本工具，先查看官方说明，再核对本地设置是否正确。"
+      }
+    ],
+    "transcript_check": {
+      "status": "ok",
+      "audio_seconds": 12
+    }
+  },
+  "article": {
+    "sections": [
+      {
+        "section_index": 1,
+        "start": 0,
+        "end": 12,
+        "source_segment_start_index": 0,
+        "source_segment_end_index": 0,
+        "paragraphs": [
+          {
+            "text": "今天我们学习配置版本工具，先查看官方说明，再核对本地设置是否正确。"
+          }
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "status": "clean",
+    "reason_codes": [],
+    "route": "zh"
+  }
+}

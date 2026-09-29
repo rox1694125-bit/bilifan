@@ -5,6 +5,19 @@ from typing import Any
 
 
 URL_TEXT_RE = re.compile(r"https?://\S+")
+FENCED_CODE_RE = re.compile(r"```.*?(?:```|$)|~~~.*?(?:~~~|$)", re.DOTALL)
+INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+COMMAND_RE = re.compile(
+    r"(?<![A-Za-z])(?:"
+    r"git\s+(?:config|clone|checkout|switch|commit|push|pull|remote|status|add|init|log|branch|reset|merge)"
+    r"|(?:python[23]?|pip[3]?|npm|npx|yarn|pnpm|uv|brew|docker|kubectl|curl|wget)\s+(?:-[A-Za-z]|[A-Za-z])"
+    r"|(?:sudo|export|chmod|mkdir)\s+[A-Za-z/])[^\n\u4e00-\u9fff。；]*",
+    re.IGNORECASE,
+)
+CODE_LINE_RE = re.compile(
+    r"(?m)^\s*(?:(?:from|import|def|class|async def|const|let|var|function)\s+[^\n]+"
+    r"|[A-Za-z_][\w.]*\s*=\s*[^\n]+)$"
+)
 
 
 def choose_whisper_route(
@@ -31,11 +44,11 @@ def choose_whisper_route(
     if language != "auto":
         raise ValueError(f"Unsupported Whisper language: {language}")
 
-    title_text = _metadata_text(metadata, ("title",))
+    title_text = strip_non_speech_text(_metadata_text(metadata, ("title",)))
     descriptive_text = _metadata_text(metadata, ("part_title", "description"))
-    tags_text = _metadata_text(metadata, ("tags",))
+    tags_text = strip_non_speech_text(_metadata_text(metadata, ("tags",)))
     subtitle_text = _subtitle_metadata_text(metadata.get("subtitles"))
-    descriptive_signal_text = _strip_urls(descriptive_text)
+    descriptive_signal_text = strip_non_speech_text(descriptive_text)
     support_text = " ".join(
         text
         for text in (
@@ -149,8 +162,10 @@ def _signals(
     signals: list[str] = []
     if _contains_cjk(title_text):
         signals.append("title_has_cjk")
-    if descriptive_text != descriptive_signal_text:
+    if URL_TEXT_RE.search(descriptive_text):
         signals.append("description_urls_ignored")
+    if _strip_urls(descriptive_text) != descriptive_signal_text:
+        signals.append("description_code_ignored")
     if support_text and _english_signal(support_text):
         signals.append("support_text_english_heavy")
     if (
@@ -215,6 +230,33 @@ def _strip_urls(text: str) -> str:
     return URL_TEXT_RE.sub(" ", text)
 
 
+def strip_non_speech_text(text: str) -> str:
+    """Remove metadata snippets which describe tools, not the spoken language."""
+    text = _strip_urls(text)
+    text = FENCED_CODE_RE.sub(" ", text)
+    text = INLINE_CODE_RE.sub(" ", text)
+    # Shell snippets often use backslash + newline (including copied NBSP
+    # indentation). Treat the continuation as part of its command, not prose.
+    text = re.sub(r"\\[ \t]*\r?\n[ \t\u00a0]*", " ", text)
+    text = CODE_LINE_RE.sub(" ", text)
+    return COMMAND_RE.sub(" ", text)
+
+
+def metadata_language_conflict(metadata: dict[str, Any], observed_language: str) -> bool:
+    """An English-looking result cannot establish that a Chinese title was wrong.
+
+    A title is weak evidence, so this raises a review warning, not a rejection or
+    an additional transcription attempt. Explicit audio-language evidence wins.
+    """
+    title = strip_non_speech_text(_metadata_text(metadata, ("title", "part_title")))
+    evidence = strip_non_speech_text(_metadata_text(metadata, ("title", "part_title", "description")))
+    return (
+        observed_language == "en"
+        and _contains_cjk(title)
+        and not _explicit_english_audio_signal(evidence)
+    )
+
+
 def _explicit_english_audio_signal(text: str) -> bool:
     lowered = text.lower()
     return any(
@@ -226,8 +268,6 @@ def _explicit_english_audio_signal(text: str) -> bool:
             "英文访谈",
             "english audio",
             "spoken in english",
-            "andrew ng",
-            "吴恩达",
         )
     )
 

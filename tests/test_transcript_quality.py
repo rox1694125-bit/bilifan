@@ -65,3 +65,23 @@ def test_quality_check_marks_repetitive_transcript_unusable():
 
     assert result["status"] == "unusable"
     assert "high_repetition" in result["warnings"]
+
+
+def test_short_valid_clip_is_not_unusable_just_for_character_count():
+    result = check_transcript_quality([{"start": 0, "end": 2, "text": "hello"}], expected_language="en", audio_seconds=2)
+    assert result["status"] == "ok"
+
+
+def test_long_clip_with_nearly_no_words_remains_unusable():
+    result = check_transcript_quality([{"start": 0, "end": 120, "text": "hello"}], expected_language="en", audio_seconds=120)
+    assert result["status"] == "unusable"
+
+
+def test_selected_english_output_does_not_prove_chinese_title_was_english_audio():
+    result = check_transcript_quality(
+        [{"start": 0, "end": 8, "text": "Now we explain configuration steps and install all the packages."}],
+        expected_language="en", audio_seconds=8,
+        metadata={"title": "中文工具安装教程", "description": "git config --global user.name Example"},
+    )
+    assert result["status"] == "low_confidence"
+    assert "metadata_language_conflict" in result["warnings"]

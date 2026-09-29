@@ -1,0 +1,44 @@
+{
+  "origin": "synthetic",
+  "metadata": {
+    "title": "数据备份与核对教程",
+    "description": ""
+  },
+  "transcript": {
+    "source": "bilibili-subtitle",
+    "language": "zh",
+    "segments": [
+      {
+        "start": 0,
+        "end": 12,
+        "text": "这里需要运行 `git reset --soft HEAD`，同时保留原始文件，便于核对和恢复。"
+      }
+    ],
+    "transcript_check": {
+      "status": "ok",
+      "audio_seconds": 12
+    }
+  },
+  "article": {
+    "sections": [
+      {
+        "section_index": 1,
+        "start": 0,
+        "end": 12,
+        "source_segment_start_index": 0,
+        "source_segment_end_index": 0,
+        "paragraphs": [
+          {
+            "text": "这里需要运行 `git reset --hard HEAD`，同时保留原始文件，便于核对和恢复。"
+          }
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "status": "needs_review",
+    "reason_codes": [
+      "article_code_changed"
+    ]
+  }
+}

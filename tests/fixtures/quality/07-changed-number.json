@@ -1,0 +1,44 @@
+{
+  "origin": "synthetic",
+  "metadata": {
+    "title": "数据备份与核对教程",
+    "description": ""
+  },
+  "transcript": {
+    "source": "bilibili-subtitle",
+    "language": "zh",
+    "segments": [
+      {
+        "start": 0,
+        "end": 12,
+        "text": "请设置保留时间为30天，然后核对所有归档记录是否保存完整。"
+      }
+    ],
+    "transcript_check": {
+      "status": "ok",
+      "audio_seconds": 12
+    }
+  },
+  "article": {
+    "sections": [
+      {
+        "section_index": 1,
+        "start": 0,
+        "end": 12,
+        "source_segment_start_index": 0,
+        "source_segment_end_index": 0,
+        "paragraphs": [
+          {
+            "text": "请设置保留时间为300天，然后核对所有归档记录是否保存完整。"
+          }
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "status": "needs_review",
+    "reason_codes": [
+      "article_numbers_changed"
+    ]
+  }
+}

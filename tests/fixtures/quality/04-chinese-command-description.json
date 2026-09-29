@@ -1,0 +1,43 @@
+{
+  "origin": "synthetic",
+  "metadata": {
+    "title": "数据备份与核对教程",
+    "description": "git config --global user.name Example\ngit config --global user.email example@example.test\ngit remote add origin repository"
+  },
+  "transcript": {
+    "source": "whisper",
+    "language": "zh",
+    "segments": [
+      {
+        "start": 0,
+        "end": 12,
+        "text": "今天我们学习版本工具的基本设置，完成配置后记得检查用户名和邮箱。"
+      }
+    ],
+    "transcript_check": {
+      "status": "ok",
+      "audio_seconds": 12
+    }
+  },
+  "article": {
+    "sections": [
+      {
+        "section_index": 1,
+        "start": 0,
+        "end": 12,
+        "source_segment_start_index": 0,
+        "source_segment_end_index": 0,
+        "paragraphs": [
+          {
+            "text": "今天我们学习版本工具的基本设置，完成配置后记得检查用户名和邮箱。"
+          }
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "status": "clean",
+    "reason_codes": [],
+    "route": "zh"
+  }
+}

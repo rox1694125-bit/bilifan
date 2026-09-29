@@ -1,0 +1,43 @@
+{
+  "origin": "synthetic",
+  "metadata": {
+    "title": "数据备份与核对教程",
+    "description": "```python\nimport asyncio\nasync def execute_request(payload):\n    return await client.submit(payload)\n```"
+  },
+  "transcript": {
+    "source": "bilibili-subtitle",
+    "language": "zh",
+    "segments": [
+      {
+        "start": 0,
+        "end": 12,
+        "text": "今天介绍异步请求的处理方法，先保存请求记录，然后等待返回结果。"
+      }
+    ],
+    "transcript_check": {
+      "status": "ok",
+      "audio_seconds": 12
+    }
+  },
+  "article": {
+    "sections": [
+      {
+        "section_index": 1,
+        "start": 0,
+        "end": 12,
+        "source_segment_start_index": 0,
+        "source_segment_end_index": 0,
+        "paragraphs": [
+          {
+            "text": "今天介绍异步请求的处理方法，先保存请求记录，然后等待返回结果。"
+          }
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "status": "clean",
+    "reason_codes": [],
+    "route": "zh"
+  }
+}

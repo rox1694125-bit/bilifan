@@ -12,6 +12,10 @@ from jsonschema import ValidationError, validate
 
 from .bilibili import BilibiliPartRef
 from .diagnostics import redact_text
+from .article_cache import active_generation, cache_key, load_checkpoint, save_checkpoint
+from .execution import cancellable_run, check_cancelled
+from .quality import QUALITY_RULE_VERSION
+from . import metrics
 from .summarizer import (
     CODEX_EXEC_TIMEOUT_SECONDS,
     SummarizationError,
@@ -21,6 +25,7 @@ from .summarizer import (
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 ARTICLE_SCHEMA_VERSION = 1
+ARTICLE_NORMALIZATION_VERSION = "article-normalization-v2.2"
 ARTICLE_ARTIFACT = "transcript_article.json"
 TIMESTAMP_EPSILON_SECONDS = 0.001
 ARTICLE_SCHEMA: dict[str, Any] = {
@@ -122,6 +127,7 @@ def build_article_prompt(
     transcript: dict[str, Any],
     chunk: dict[str, Any],
 ) -> str:
+    chunk = _chunk_from_current_transcript(chunk, transcript)
     source = _first_text(transcript.get("source")).strip()
     cleaning_level = _cleaning_level_for_source(source)
     cleaning_instruction = (
@@ -166,7 +172,10 @@ def build_article_prompt(
     }
     return (
         "你是 Bilifan 的逐字稿文章生成器。请只根据输入 transcript 内容，把视频逐字稿"
-        "整理成可阅读文章，不要编造视频里没有的信息。输出必须是严格 JSON，且必须匹配"
+        "整理成忠于原意的可阅读逐字稿。只做纠错、去重复口癖、断句、分段和章节标题；"
+        "不要增加解读、推断、观点总结或行动建议，不把不确定表述改成确定结论。"
+        "保留数字、单位、代码、否定和限定条件；无法确定的识别词保留并在 warnings 中注明。"
+        "不要编造视频里没有的信息。输出必须是严格 JSON，且必须匹配"
         " output_schema。\n"
         f"本次清洗等级：{cleaning_level}。{cleaning_instruction}\n"
         "sections 必须按输入片段自然分段；每个 section 的 start/end 必须落在 chunk "
@@ -187,6 +196,7 @@ def run_codex_article_generation(
     model: str,
     runner: Runner = subprocess.run,
 ) -> dict[str, Any]:
+    chunk = _chunk_from_current_transcript(chunk, transcript)
     prompt = build_article_prompt(
         ref=ref,
         metadata=metadata,
@@ -216,38 +226,37 @@ def run_codex_article_generation(
             str(output_path),
             "-",
         ]
+        succeeded = False
+        usage = None
+        call_id = metrics.start_model_call(len(prompt))
+        effective_runner = cancellable_run if runner is subprocess.run else runner
         try:
-            result = runner(
-                cmd,
-                input=prompt,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=CODEX_EXEC_TIMEOUT_SECONDS,
-                cwd=run_dir,
+            try:
+                result = effective_runner(
+                    cmd, input=prompt, check=False, capture_output=True, text=True,
+                    timeout=CODEX_EXEC_TIMEOUT_SECONDS, cwd=run_dir,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise ArticleError(
+                    f"codex exec timed out after {CODEX_EXEC_TIMEOUT_SECONDS} seconds."
+                ) from exc
+            except OSError as exc:
+                raise ArticleError(f"codex exec failed to start: {exc}") from exc
+            usage = metrics.usage_from_codex_events(result.stdout or "")
+            if result.returncode != 0:
+                detail = result.stderr or result.stdout or "codex exec returned no output."
+                raise ArticleError(f"codex exec failed with exit code {result.returncode}: {detail}")
+            if not output_path.is_file():
+                raise ArticleError("codex exec did not write a final JSON message.")
+            article = _read_json(output_path, "codex exec final message")
+            normalized = normalize_transcript_article(
+                article, ref=ref, transcript=transcript, chunks={"chunks": [chunk]},
             )
-        except subprocess.TimeoutExpired as exc:
-            raise ArticleError(
-                f"codex exec timed out after {CODEX_EXEC_TIMEOUT_SECONDS} seconds."
-            ) from exc
-        except OSError as exc:
-            raise ArticleError(f"codex exec failed to start: {exc}") from exc
+            succeeded = True
+            return normalized
+        finally:
+            metrics.complete_model_call(call_id, succeeded, usage)
 
-        if result.returncode != 0:
-            detail = result.stderr or result.stdout or "codex exec returned no output."
-            raise ArticleError(
-                f"codex exec failed with exit code {result.returncode}: {detail}"
-            )
-        if not output_path.is_file():
-            raise ArticleError("codex exec did not write a final JSON message.")
-
-        article = _read_json(output_path, "codex exec final message")
-        return normalize_transcript_article(
-            article,
-            ref=ref,
-            transcript=transcript,
-            chunks={"chunks": [chunk]},
-        )
 
 
 def normalize_transcript_article(
@@ -338,23 +347,52 @@ def generate_transcript_article(
     provider: str = "codex-exec",
     model: str = "gpt-5.5",
     runner: Runner = subprocess.run,
+    cache_dir: Path | None = None,
+    force_article: bool = False,
 ) -> dict[str, Any]:
     if provider != "codex-exec":
         raise ArticleError(f"Unsupported LLM provider: {provider}")
 
-    chunk_items = _chunk_items(chunks)
-    partials = [
-        run_codex_article_generation(
-            ref=ref,
-            metadata=metadata,
-            transcript=transcript,
-            chunk=chunk,
-            run_dir=run_dir,
-            model=model,
-            runner=runner,
-        )
-        for chunk in chunk_items
-    ]
+    chunk_items = [_chunk_from_current_transcript(chunk, transcript) for chunk in _chunk_items(chunks)]
+    covered_indices = {segment["source_index"] for chunk in chunk_items for segment in chunk["segments"]}
+    raw_segments = transcript.get("segments", [])
+    expected_indices = {index for index, segment in enumerate(raw_segments)
+                        if isinstance(segment, dict) and _first_text(segment.get("text")).strip()}
+    if covered_indices != expected_indices:
+        raise ArticleError("Raw transcript segment layout changed; rebuild chunks before generating an article.")
+    if cache_dir is not None:
+        try:
+            cache_dir = active_generation(cache_dir, force=force_article)
+        except OSError as exc:
+            raise ArticleError("Could not establish article checkpoint generation.") from exc
+    partials = []
+    metrics.cache_event(False, 0, len(chunk_items))
+    for position, chunk in enumerate(chunk_items, 1):
+        check_cancelled()
+        prompt = build_article_prompt(ref=ref, metadata=metadata, transcript=transcript, chunk=chunk)
+        key = cache_key(prompt=prompt, provider=provider, model=model,
+                        normalization_version=f"{ARTICLE_NORMALIZATION_VERSION}:{QUALITY_RULE_VERSION}")
+        def normalize_partial(value):
+            return normalize_transcript_article(value, ref=ref, transcript=transcript, chunks={"chunks": [chunk]})
+        partial = None
+        if cache_dir is not None:
+            partial = load_checkpoint(cache_dir, key, normalize=normalize_partial)
+        hit = partial is not None
+        if partial is None:
+            partial = run_codex_article_generation(
+                ref=ref, metadata=metadata, transcript=transcript, chunk=chunk,
+                run_dir=run_dir, model=model, runner=runner,
+            )
+            partial = normalize_partial(partial)
+            if cache_dir is not None:
+                try:
+                    save_checkpoint(cache_dir, key, partial, chunk_index=chunk.get("chunk_index", position))
+                except OSError as exc:
+                    raise ArticleError("Could not save completed article checkpoint; existing checkpoints were preserved.") from exc
+        partials.append(partial)
+        metrics.cache_event(hit, position, len(chunk_items))
+        # A valid completed block is durable before honoring cancellation.
+        check_cancelled()
 
     source = _first_text(transcript.get("source")).strip()
     article = {
@@ -377,7 +415,7 @@ def generate_transcript_article(
         article,
         ref=ref,
         transcript=transcript,
-        chunks=chunks,
+        chunks={**chunks, "chunks": chunk_items},
     )
     _write_json(run_dir / ARTICLE_ARTIFACT, normalized)
     return normalized
@@ -393,6 +431,36 @@ def _chunk_items(chunks: dict[str, Any]) -> list[dict[str, Any]]:
         raise ArticleError("chunks.json contains no chunks.")
     return [chunk for chunk in raw_chunks if isinstance(chunk, dict)]
 
+
+
+def _chunk_from_current_transcript(chunk: dict[str, Any], transcript: dict[str, Any]) -> dict[str, Any]:
+    """Chunks retain boundaries; raw transcript remains the text source of truth."""
+    segments = transcript.get("segments")
+    if not isinstance(segments, list):
+        raise ArticleError("Raw transcript has no segments to bind the article chunk.")
+    raw = chunk.get("segments")
+    indices = [item.get("source_index") for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+    if not indices:
+        start, end = chunk.get("segment_start_index"), chunk.get("segment_end_index")
+        if type(start) is int and type(end) is int and 0 <= start <= end < len(segments):
+            indices = list(range(start, end + 1))
+    if not indices or any(type(i) is not int or i < 0 or i >= len(segments) for i in indices):
+        raise ArticleError("Article chunk cannot be matched to the current raw transcript; rebuild chunks first.")
+    if indices != sorted(set(indices)):
+        raise ArticleError("Article chunk source indices must be ordered and unique.")
+    current = []
+    for index in indices:
+        source = segments[index]
+        if not isinstance(source, dict) or not _first_text(source.get("text")).strip():
+            raise ArticleError("Article chunk references an invalid current raw segment.")
+        start = _nonnegative_float(source.get("start"), "source segment start")
+        end = _nonnegative_float(source.get("end"), "source segment end")
+        if end <= start:
+            raise ArticleError("Article chunk references an invalid current raw segment time.")
+        current.append({"source_index": index, "start": start, "end": end, "text": source["text"]})
+    return {**chunk, "segments": current, "text": "\n".join(item["text"] for item in current),
+            "start": current[0]["start"], "end": current[-1]["end"],
+            "segment_start_index": indices[0], "segment_end_index": indices[-1]}
 
 def _prompt_segments(chunk: dict[str, Any]) -> list[dict[str, Any]]:
     raw_segments = chunk.get("segments")

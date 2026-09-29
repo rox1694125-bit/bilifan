@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "purpose": "固定质量正反样本；均为人工构造，不含真实用户数据，不冒称真实运行快照。",
+  "historical_context": "03、04重构既有测试/审查记录中的链接与命令误判形态，仅测试机制；真实历史副本验证另由发布验收记录保留。",
+  "samples": [
+    {
+      "file": "01-chinese-subtitle-clean.json",
+      "origin": "synthetic",
+      "scenario": "chinese-subtitle-clean"
+    },
+    {
+      "file": "02-english-whisper-clean.json",
+      "origin": "synthetic",
+      "scenario": "english-whisper-clean"
+    },
+    {
+      "file": "03-chinese-reference-links.json",
+      "origin": "synthetic",
+      "scenario": "chinese-reference-links"
+    },
+    {
+      "file": "04-chinese-command-description.json",
+      "origin": "synthetic",
+      "scenario": "chinese-command-description"
+    },
+    {
+      "file": "05-chinese-fenced-code.json",
+      "origin": "synthetic",
+      "scenario": "chinese-fenced-code"
+    },
+    {
+      "file": "06-mixed-evidence-conflict.json",
+      "origin": "synthetic",
+      "scenario": "mixed-evidence-conflict"
+    },
+    {
+      "file": "07-changed-number.json",
+      "origin": "synthetic",
+      "scenario": "changed-number"
+    },
+    {
+      "file": "08-changed-unit.json",
+      "origin": "synthetic",
+      "scenario": "changed-unit"
+    },
+    {
+      "file": "09-changed-command.json",
+      "origin": "synthetic",
+      "scenario": "changed-command"
+    },
+    {
+      "file": "10-multiple-blocks-omission.json",
+      "origin": "synthetic",
+      "scenario": "multiple-blocks-omission"
+    }
+  ]
+}

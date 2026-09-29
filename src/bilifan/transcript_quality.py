@@ -4,6 +4,8 @@ import re
 from collections import Counter
 from typing import Any
 
+from .transcription_routing import metadata_language_conflict
+
 
 WORD_RE = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
@@ -50,6 +52,7 @@ def _metrics(
     duration = float(audio_seconds or 0)
     return {
         "char_count": char_count,
+        "audio_seconds": duration if duration > 0 else None,
         "cjk_ratio": round(cjk_count / char_count, 4) if char_count else 0,
         "ascii_word_ratio": round(ascii_word_chars / char_count, 4)
         if char_count
@@ -83,7 +86,8 @@ def _warnings(
     repeat_fragment_ratio = float(metrics.get("repeat_fragment_ratio") or 0)
     chars_per_second = metrics.get("chars_per_second")
 
-    if char_count < 12:
+    duration = metrics.get("audio_seconds")
+    if char_count == 0 or (char_count < 12 and isinstance(duration, (int, float)) and duration > 15):
         warnings.append("too_little_text")
     if repeat_fragment_ratio >= 0.55:
         warnings.append("high_repetition")
@@ -101,6 +105,9 @@ def _warnings(
             warnings.append("expected_en_but_low_ascii_words")
         elif ascii_word_ratio < 0.45:
             warnings.append("expected_en_low_confidence")
+
+    if metadata_language_conflict(metadata, observed_language):
+        warnings.append("metadata_language_conflict")
 
     return _unique(warnings)
 
