@@ -8,6 +8,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .jobs import explain_failure, retry_actions_for
+from bilifan.delivery import successful_delivery
+from bilifan.quality import build_quality
 from .run_info import transcript_source_label
 
 OUTPUT_ID_PATTERN = re.compile(
@@ -23,6 +25,8 @@ ROOT_FILES = {
     "chapters.json",
     "diagnostics.json",
     "retry_diagnostics.json",
+    "quality.json",
+    "transcript_source.zip",
     "content_bundle.json",
     "report.html",
     "report.pdf",
@@ -71,7 +75,7 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
         )
         metadata = _read_json_object(_safe_existing_file(run_dir, "metadata.json"))
         transcript = _read_json_object(_safe_existing_file(run_dir, "transcript.json"))
-        status = "failed" if diagnostics.get("error_type") else "succeeded"
+        status = "succeeded" if successful_delivery(run_dir, diagnostics) else "failed"
         stage = _text(diagnostics.get("stage"))
         artifact_paths = _text_list(diagnostics.get("artifact_paths"))
         warnings = _text_list(diagnostics.get("warnings"))
@@ -83,6 +87,7 @@ def list_latest_runs(outputs: Path) -> list[dict[str, Any]]:
                 "title": _metadata_title(metadata, output_id),
                 "source_url": _source_url(latest, metadata),
                 "status": status,
+                "quality": _read_json_object(_safe_existing_file(run_dir, "quality.json")) or {"status": "unknown", "review_required": False, "reasons": []},
                 "stage": stage,
                 "transcript_source_label": transcript_source_label(transcript),
                 "generated_at": _text(latest.get("generated_at")),
@@ -240,7 +245,7 @@ def _run_item(
     diagnostics = _read_json_object(_safe_existing_file(run_dir, "diagnostics.json"))
     metadata = _read_json_object(_safe_existing_file(run_dir, "metadata.json"))
     transcript = _read_json_object(_safe_existing_file(run_dir, "transcript.json"))
-    status = "failed" if diagnostics.get("error_type") else "succeeded"
+    status = "succeeded" if successful_delivery(run_dir, diagnostics) else "failed"
     stage = _text(diagnostics.get("stage"))
     artifact_paths = _text_list(diagnostics.get("artifact_paths"))
     warnings = _text_list(diagnostics.get("warnings"))
@@ -349,6 +354,8 @@ _DISPLAYED_ARTIFACTS = {
     "html": "report.html",
     "transcript_pdf": "transcript.pdf",
     "pdf": "report.pdf",
+    "raw": "transcript.txt",
+    "source_zip": "transcript_source.zip",
 }
 
 

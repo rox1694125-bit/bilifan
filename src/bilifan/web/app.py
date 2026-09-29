@@ -3,16 +3,18 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from bilifan.bilibili_collection import preview_bilibili_collection
 from bilifan.config import default_config_path, read_config, write_consent
-from bilifan.exports import ExportError, write_nabaichuan_jsonl
+from bilifan.exports import ExportError, QualityReviewRequired, write_nabaichuan_jsonl
+from bilifan.delivery import successful_delivery
 from bilifan.metadata import MetadataIngestError
 from bilifan.pipeline import (
     PipelineRequest,
@@ -32,7 +34,7 @@ from .files import (
     resolve_run_file,
     resolve_run_dir,
 )
-from .jobs import JobManager
+from .queue_storage import QueueStorageError
 from .queue import BatchQueueManager
 from .security import TokenAuth
 from .ui import render_app_html
@@ -66,6 +68,8 @@ class JobCreatePayload(BaseModel):
 
 class RetryCreatePayload(BaseModel):
     from_stage: str
+    force_article: bool = False
+    allow_long_video: bool | None = None
     format: str = WEB_DEFAULTS["format"]
     llm_provider: str = "codex-exec"
     llm_model: str = "gpt-5.5"
@@ -142,13 +146,30 @@ def create_app(
 ) -> FastAPI:
     auth = TokenAuth(token)
     started_at = datetime.now(timezone.utc).isoformat()
-    jobs = JobManager(runner=pipeline_runner, run_jobs_inline=run_jobs_inline)
+    # Production goes through the supervised executor; test runners remain injectable.
+    production = pipeline_runner is run_summarize_pipeline and retry_runner is retry_run and not run_jobs_inline
     queue = BatchQueueManager(
-        runner=pipeline_runner,
+        runner=None if production else pipeline_runner,
+        retry_runner=None if production else retry_runner,
         storage_path=outputs / "_jobs" / "jobs.json",
-        run_jobs_inline=run_jobs_inline,
+        run_jobs_inline=run_jobs_inline, auto_start=False,
     )
-    app = FastAPI()
+    jobs = queue
+
+    @asynccontextmanager
+    async def lifespan(app):
+        queue.start()
+        try:
+            yield
+        finally:
+            queue.close()
+
+    app = FastAPI(lifespan=lifespan)
+    app.state.queue = queue
+
+    @app.exception_handler(QueueStorageError)
+    async def storage_error(_request, exc):
+        return JSONResponse(status_code=503, content={"detail": str(exc), "storage_error": True})
 
     @app.middleware("http")
     async def add_security_headers(request, call_next):
@@ -200,6 +221,8 @@ def create_app(
                 "notice_version": config.notice_version,
             },
             "defaults": dict(WEB_DEFAULTS),
+            "output_profile": "transcript_article_v1",
+            "report_generation_enabled": False,
         }
 
     @app.post("/api/consent")
@@ -213,7 +236,13 @@ def create_app(
 
     @app.get("/api/history")
     def history(_: None = Depends(require_token)) -> dict[str, object]:
-        return {"items": _add_token_to_artifact_links(list_latest_runs(outputs), token)}
+        latest = list_latest_runs(outputs)
+        current_keys = {item["run_key"] for item in latest}
+        legacy = [item for item in list_all_runs(outputs)
+                  if item["run_key"] not in current_keys and item.get("status") == "succeeded"
+                  and (item.get("artifacts", {}).get("html") or item.get("artifacts", {}).get("pdf"))]
+        return {"items": _add_token_to_artifact_links(latest, token),
+                "legacy_reports": _add_token_to_artifact_links(legacy, token)}
 
     @app.post("/api/bilibili/collection/preview")
     def preview_collection(
@@ -259,10 +288,9 @@ def create_app(
             yes_i_understand=True,
             overwrite=False,
         )
-        state = jobs.start(request)
-        if state is None:
-            raise HTTPException(status_code=409, detail="A job is already running.")
-        return {"job_id": state.job_id, "status": "running"}
+        state = queue.submit_one(request)
+        return {"job_id": state.job_id, "status": state.status, "output_profile": "transcript_article_v1",
+                "notice": "本版本只生成原始稿和整理逐字稿，旧主报告选项不再执行。"}
 
     @app.get("/api/jobs/current")
     def current_job(_: None = Depends(require_token)) -> dict[str, object]:
@@ -270,10 +298,7 @@ def create_app(
 
     @app.get("/api/jobs/queue")
     def queue_state(_: None = Depends(require_token)) -> dict[str, object]:
-        return _task_center_state(
-            current_job=jobs.current().as_dict(),
-            queue_state=queue.state(),
-        )
+        return queue.state()
 
     @app.post("/api/jobs/batch")
     def create_batch_jobs(
@@ -296,7 +321,9 @@ def create_app(
             )
             for item in batch_items
         ]
-        return queue.submit(requests, titles=[item["title"] for item in batch_items])
+        result = queue.submit(requests, titles=[item["title"] for item in batch_items])
+        result["notices"] = _legacy_option_notices(payload)
+        return result
 
     @app.post("/api/intake/feishu")
     def create_feishu_intake(
@@ -376,13 +403,15 @@ def create_app(
                 }
             )
 
-        return queue.submit_intake_batch(
+        result = queue.submit_intake_batch(
             batch_id=batch_id,
             requests=requests,
             origins=origins,
             rejected=rejected,
             duplicates=duplicates,
         )
+        result["notices"] = _legacy_option_notices(payload.defaults)
+        return result
 
     @app.post("/api/jobs/queue/pause")
     def pause_queue(_: None = Depends(require_token)) -> dict[str, object]:
@@ -390,6 +419,12 @@ def create_app(
 
     @app.post("/api/jobs/queue/resume")
     def resume_queue(_: None = Depends(require_token)) -> dict[str, object]:
+        if queue.state().get("execution_error"):
+            from bilifan.execution import reconcile_execution, ExecutionBusy, ExecutionUncertain
+            try:
+                reconcile_execution(outputs)
+            except (ExecutionBusy, ExecutionUncertain, OSError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
         return queue.resume()
 
     @app.post("/api/jobs/queue/clear-completed")
@@ -416,6 +451,13 @@ def create_app(
         if state is None:
             raise HTTPException(status_code=409, detail="No running job to cancel.")
         return {"job_id": state.job_id, "status": state.status}
+
+    @app.get("/api/jobs/{job_id}")
+    def get_job(job_id: str, _: None = Depends(require_token)):
+        item = queue.get(job_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Task not found.")
+        return item.as_dict()
 
     @app.post("/api/runs/{output_id}/runs/{run_id}/retry")
     def retry_run_job(
@@ -455,43 +497,21 @@ def create_app(
         if not run_dir.is_dir():
             raise HTTPException(status_code=404, detail=f"{output_id}/runs/{run_id}")
 
-        def run_retry(_request, *, progress_callback):
-            progress_callback(from_stage, "running", f"Retrying {from_stage}.")
-            try:
-                result = retry_runner(
-                    run_dir,
-                    from_stage=from_stage,
-                    output_format=payload.format,
-                    llm_provider=payload.llm_provider,
-                    llm_model=payload.llm_model,
-                    summary_template=summary_template,
-                    with_frames=payload.with_frames,
-                    with_diagrams=payload.with_diagrams,
-                    require_pdf=payload.require_pdf,
-                )
-            except RetryError as exc:
-                retry_artifacts, retry_warnings = _retry_failure_context(
-                    run_dir, diagnostics_path=exc.diagnostics_path
-                )
-                raise PipelineRunError(
-                    str(exc),
-                    run_key=f"{output_id}/runs/{run_id}",
-                    diagnostics_path=exc.diagnostics_path or run_dir / "retry_diagnostics.json",
-                    artifact_paths=retry_artifacts,
-                    warnings=retry_warnings,
-                ) from exc
-            progress_callback("render" if from_stage != "bundle" else "render", "done", "Retry completed.")
-            return result
-
-        state = jobs.start(object(), runner=run_retry, initial_stage=from_stage)
-        if state is None:
-            raise HTTPException(status_code=409, detail="A job is already running.")
-        return {"job_id": state.job_id, "status": "running"}
+        state = queue.submit_retry(f"{output_id}/runs/{run_id}", {
+            "from_stage": from_stage, "output_format": payload.format,
+            "llm_provider": payload.llm_provider, "llm_model": payload.llm_model,
+            "summary_template": summary_template, "with_frames": payload.with_frames,
+            "with_diagrams": payload.with_diagrams, "require_pdf": payload.require_pdf,
+            "force_article": payload.force_article,
+            "allow_long_video": payload.allow_long_video,
+        })
+        return {"job_id": state.job_id, "status": state.status}
 
     @app.post("/api/runs/{output_id}/runs/{run_id}/exports/nabaichuan")
     def export_run_nabaichuan(
         output_id: str,
         run_id: str,
+        include_review_required: bool = Query(default=False),
         _: None = Depends(require_token),
     ) -> dict[str, object]:
         config = read_config(default_config_path())
@@ -513,7 +533,9 @@ def create_app(
             )
         run_key = f"{output_id}/runs/{run_id}"
         try:
-            artifact = write_nabaichuan_jsonl(run_dir, run_key=run_key)
+            artifact = write_nabaichuan_jsonl(run_dir, run_key=run_key, include_review_required=include_review_required)
+        except QualityReviewRequired as exc:
+            return JSONResponse(status_code=409, content={"detail": str(exc), "review_required": True, "quality": exc.quality})
         except ExportError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         record_count = _jsonl_record_count(run_dir / artifact)
@@ -527,7 +549,7 @@ def create_app(
         }
 
     @app.post("/api/exports/nabaichuan/batch")
-    def export_batch_nabaichuan(_: None = Depends(require_token)) -> dict[str, object]:
+    def export_batch_nabaichuan(include_review_required: bool = Query(default=False), _: None = Depends(require_token)) -> dict[str, object]:
         config = read_config(default_config_path())
         if config.local_processing_notice_accepted_at is None:
             raise HTTPException(
@@ -577,7 +599,7 @@ def create_app(
                 run_dir = resolve_run_dir(outputs, output_id, run_id)
                 if not _is_successful_run_dir(run_dir):
                     raise ValueError
-                artifact = write_nabaichuan_jsonl(run_dir, run_key=run_key)
+                artifact = write_nabaichuan_jsonl(run_dir, run_key=run_key, include_review_required=include_review_required)
                 run_lines = (run_dir / artifact).read_text(encoding="utf-8").splitlines()
                 lines.extend(run_lines)
             except (ValueError, FileNotFoundError, OSError, ExportError) as exc:
@@ -586,7 +608,8 @@ def create_app(
                     {
                         "run_key": run_key,
                         "status": "skipped",
-                        "reason": type(exc).__name__,
+                        "reason": "quality_review_required" if isinstance(exc, QualityReviewRequired) else type(exc).__name__,
+                        "message": str(exc),
                     }
                 )
                 continue
@@ -674,6 +697,11 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if file_path == "transcript.html":
+            content = path.read_text(encoding="utf-8")
+            for name in ("transcript.txt", "transcript_source.zip"):
+                content = content.replace(f'href="{name}"', f'href="{name}?{urlencode({"token": token})}"')
+            return HTMLResponse(content)
         return FileResponse(path)
 
     @app.post("/api/runs/{output_id}/runs/{run_id}/open-folder")
@@ -722,11 +750,15 @@ def _retry_failure_context(
     return artifact_paths, warnings
 
 
+def _legacy_option_notices(payload: BaseModel) -> list[str]:
+    if {"summary_template", "with_frames", "with_diagrams"} & payload.model_fields_set:
+        return ["旧主报告模板、图解和截图选项已停用，本次只保存原稿并生成整理逐字稿。"]
+    return []
+
+
 def _validated_summary_template(value: str) -> str:
-    try:
-        return validate_summary_style(value)
-    except SummarizationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Kept solely for older clients; the value is persisted, never executed.
+    return str(value)
 
 
 def _require_local_processing_consent(detail: str) -> None:
@@ -788,18 +820,7 @@ def _feishu_reply_target_ref(
 
 
 def _is_successful_run_dir(run_dir: Path) -> bool:
-    diagnostics_path = run_dir / "diagnostics.json"
-    if not diagnostics_path.is_file():
-        return False
-    try:
-        diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    return (
-        isinstance(diagnostics, dict)
-        and "error_type" in diagnostics
-        and diagnostics.get("error_type") is None
-    )
+    return successful_delivery(run_dir)
 
 
 def _add_token_to_artifact_links(

@@ -197,7 +197,7 @@ def test_history_endpoint_returns_direct_artifact_links_with_query_token(tmp_pat
         == "https://www.bilibili.com/video/BV1abcDEF12G?p=1"
     )
     artifacts = response.json()["items"][0]["artifacts"]
-    assert set(artifacts) == {"transcript_html", "html", "transcript_pdf", "pdf", "folder"}
+    assert set(artifacts) == {"transcript_html", "html", "transcript_pdf", "pdf", "raw", "folder"}
     assert artifacts["transcript_html"].endswith("/transcript.html?token=test-token")
     assert artifacts["html"].endswith("/report.html?token=test-token")
     assert artifacts["transcript_pdf"].endswith("/transcript.pdf?token=test-token")
@@ -277,17 +277,18 @@ def test_job_success_lifecycle(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json()["status"] == "running"
+    assert response.json()["status"] == "succeeded"
     state = client.get("/api/jobs/current", headers=_headers()).json()
     assert state["status"] == "succeeded"
     assert state["stage"] == "render"
-    assert state["message"] == "Report ready."
+    assert state["message"] == "整理逐字稿已生成。"
     assert state["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120000"
     assert state["artifacts"] == {
         "transcript_html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.html",
         "html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
         "transcript_pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.pdf",
         "pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf",
+        "raw": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
     assert "job_started_at" in state
@@ -366,7 +367,8 @@ def test_single_job_is_visible_in_task_center_queue_endpoint(tmp_path, monkeypat
 
     assert start_response.status_code == 200
     assert task_center["visible_counts"]["succeeded"] == 1
-    assert task_center["items"][0]["source"] == "current"
+    assert task_center["items"][0]["job_id"] == start_response.json()["job_id"]
+    assert task_center["total_items"] == 1
     assert task_center["items"][0]["title"] == "单个入口视频标题"
     assert task_center["items"][0]["request"]["url"] == "https://www.bilibili.com/video/BV1abcDEF12G?p=1"
     assert isinstance(task_center["items"][0]["elapsed_seconds"], float)
@@ -434,7 +436,8 @@ def test_queue_endpoint_exposes_transcript_quality_warnings(tmp_path, monkeypatc
 
     assert start_response.status_code == 200
     item = task_center["items"][0]
-    assert item["source"] == "current"
+    assert item["job_id"] == start_response.json()["job_id"]
+    assert task_center["total_items"] == 1
     assert item["warnings"] == ["transcript_quality_suspect_wrong_route"]
     assert item["transcript_source_label"] == "Whisper turbo · 需复查"
 
@@ -471,7 +474,7 @@ def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json()["status"] == "running"
+    assert response.json()["status"] == "succeeded"
     assert calls[0].output_format == "html,pdf"
     assert calls[0].language == "auto"
     assert calls[0].summary_template == "AI 自动判断"
@@ -1226,7 +1229,7 @@ def test_job_requires_local_processing_consent(tmp_path, monkeypatch):
     assert "consent" in response.json()["detail"]
 
 
-def test_running_job_conflict(tmp_path, monkeypatch):
+def test_running_job_accepts_next_job_into_same_queue(tmp_path, monkeypatch):
     monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
     release = threading.Event()
     started = threading.Event()
@@ -1271,7 +1274,9 @@ def test_running_job_conflict(tmp_path, monkeypatch):
     release.set()
 
     assert first.status_code == 200
-    assert second.status_code == 409
+    assert second.status_code == 200
+    assert second.json()["status"] == "queued"
+    assert second.json()["job_id"] != first.json()["job_id"]
     _wait_for_status(client, "succeeded")
 
 
@@ -1857,8 +1862,8 @@ def test_job_pipeline_run_error_exposes_friendly_error(tmp_path, monkeypatch):
             "summarization",
             "codex exec failed with exit code 1: max tokens exceeded",
             ["summarization_failed"],
-            "Codex 总结失败",
-            "重试总结",
+            "逐字稿整理失败",
+            "继续整理逐字稿",
         ),
         (
             "summarization",
@@ -1886,7 +1891,7 @@ def test_job_pipeline_run_error_exposes_friendly_error(tmp_path, monkeypatch):
             "chunk summary chapter start was not anchored to a transcript segment.",
             [],
             "总结时间戳校验失败",
-            "重试总结",
+            "继续整理逐字稿",
         ),
         (
             "bundle",
@@ -1978,7 +1983,7 @@ def test_retry_failed_run_from_web_api(tmp_path, monkeypatch):
     state = client.get("/api/jobs/current", headers=_headers()).json()
 
     assert response.status_code == 200
-    assert response.json()["status"] == "running"
+    assert response.json()["status"] == "succeeded"
     assert calls == [
         {
             "run_dir": run_dir.resolve(strict=False),
@@ -2113,9 +2118,10 @@ def test_retry_failure_preserves_run_context_without_diagnostics_artifact_link(t
     assert state["status"] == "failed"
     assert state["run_key"] == "BV1abcDEF12G_p1/runs/2026-06-08_120000"
     assert state["artifacts"] == {
+        "raw": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
-    assert state["retry_actions"] == ["summarization"]
+    assert state["retry_actions"] == ["summarization", "bundle"]
 
 
 def test_real_retry_failure_keeps_history_readable_and_exportable(tmp_path, monkeypatch):
@@ -2228,6 +2234,13 @@ def test_export_single_run_nabaichuan_jsonl_from_web_api(tmp_path, monkeypatch):
         "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/exports/nabaichuan",
         headers=_headers(),
     )
+    assert response.status_code == 409
+    assert response.json()["review_required"] is True
+    assert not (run_dir / "nabaichuan.jsonl").exists()
+    response = client.post(
+        "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/exports/nabaichuan?include_review_required=true",
+        headers=_headers(),
+    )
     file_response = client.get(
         "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/nabaichuan.jsonl",
         headers=_headers(),
@@ -2243,6 +2256,7 @@ def test_export_single_run_nabaichuan_jsonl_from_web_api(tmp_path, monkeypatch):
     assert file_response.status_code == 200
     assert json.loads(file_response.text.splitlines()[0])["type"] == "video"
 
+    assert json.loads(file_response.text.splitlines()[0])["quality"]["review_required"] is True
 
 def test_export_single_run_nabaichuan_rejects_failed_run(tmp_path, monkeypatch):
     monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
@@ -2311,6 +2325,11 @@ def test_batch_export_all_successful_history_runs_to_nabaichuan_jsonl(tmp_path, 
     response = client.post("/api/exports/nabaichuan/batch", headers=_headers())
 
     assert response.status_code == 200
+    assert response.json()["exported_runs"] == 0
+    assert response.json()["skipped_runs"] == 4
+    first_report = client.get(response.json()["report"], headers=_headers()).json()
+    assert sum(item.get("reason") == "quality_review_required" for item in first_report["items"]) == 3
+    response = client.post("/api/exports/nabaichuan/batch?include_review_required=true", headers=_headers())
     payload = response.json()
     assert payload["export_id"].startswith("nabaichuan_batch_")
     assert payload["exported_runs"] == 3
@@ -2333,6 +2352,7 @@ def test_batch_export_all_successful_history_runs_to_nabaichuan_jsonl(tmp_path, 
         "BV1abcDEF12H",
     ]
 
+    assert all(row["quality"]["review_required"] for row in rows)
 
 def test_job_ignores_late_progress_from_previous_job(tmp_path):
     callbacks = []

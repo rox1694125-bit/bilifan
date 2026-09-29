@@ -475,7 +475,7 @@ def test_batch_queue_recovers_running_job_as_interrupted(tmp_path):
     )
     state = manager.state()
 
-    assert state["items"][0]["status"] == "failed"
+    assert state["items"][0]["status"] == "interrupted"
     assert state["items"][0]["stage"] == "interrupted"
     assert "restarted" in state["items"][0]["message"].lower()
 
@@ -566,6 +566,7 @@ def test_intake_batch_persists_origin_metadata_and_replays_idempotent_result(tmp
     assert first["duplicates"] == duplicates
     assert manager.state()["total_items"] == 2
 
+    manager.close()
     reloaded = BatchQueueManager(
         runner=lambda request, *, progress_callback: None,
         storage_path=storage_path,
@@ -742,6 +743,7 @@ def test_intake_batch_jobs_only_replay_after_batch_index_loss(tmp_path):
 
     persisted.pop("intake_batches")
     storage_path.write_text(json.dumps(persisted), encoding="utf-8")
+    manager.close()
     reloaded = BatchQueueManager(
         runner=lambda request, *, progress_callback: None,
         storage_path=storage_path,

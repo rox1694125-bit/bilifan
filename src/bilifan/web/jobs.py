@@ -309,6 +309,8 @@ def _artifact_links(run_key: str, artifact_paths: list[str]) -> dict[str, str]:
         "html": "report.html",
         "transcript_pdf": "transcript.pdf",
         "pdf": "report.pdf",
+        "raw": "transcript.txt",
+        "source_zip": "transcript_source.zip",
     }
     for key, relative_path in displayed_artifacts.items():
         if relative_path in artifact_set:
@@ -443,7 +445,7 @@ def explain_failure(
         return {
             "title": "总结时间戳校验失败",
             "cause": "模型返回的章节时间戳没有落在逐字稿片段范围内。",
-            "next_action": "使用重试总结；如果反复失败，换短一点的视频或减少并发操作。",
+            "next_action": "使用继续整理逐字稿；如果反复失败，换短一点的视频或减少并发操作。",
         }
     codex_auth_terms = [
         "401",
@@ -466,15 +468,15 @@ def explain_failure(
         return {
             "title": "Codex 账号认证失败",
             "cause": "Codex CLI 能启动，但账号认证、登录态或访问权限失败。",
-            "next_action": "在 Terminal 里重新确认 Codex 登录状态，然后回到 Bilifan 重试总结。",
+            "next_action": "在 Terminal 里重新确认 Codex 登录状态，然后回到 Bilifan 继续整理逐字稿。",
         }
     if "codex exec failed" in normalized or (
         stage_name == "summarization" and "summarization_failed" in normalized
     ):
         return {
-            "title": "Codex 总结失败",
-            "cause": "逐字稿已经准备好，但 Codex 生成总结时失败。",
-            "next_action": "优先使用重试总结；如果仍失败，检查 Codex CLI 输出、账号状态或模型可用性。",
+            "title": "逐字稿整理失败",
+            "cause": "逐字稿已经准备好，但 Codex 整理逐字稿时失败。",
+            "next_action": "优先使用继续整理逐字稿；如果仍失败，检查 Codex CLI 输出、账号状态或模型可用性。",
         }
     if "unsupported" in normalized or ("invalid" in normalized and "url" in normalized):
         return {
@@ -494,9 +496,9 @@ def retry_actions_for(stage: str, artifact_paths: list[str]) -> list[str]:
     actions: list[str] = []
     if stage == "summarization" and {"metadata.json", "transcript.json", "chunks.json"} <= artifacts:
         actions.append("summarization")
-    if stage in {"render", "bundle"} and {"metadata.json", "transcript.json", "chapters.json"} <= artifacts:
+    if stage in {"render", "bundle"} and {"metadata.json", "transcript.json", "transcript_article.json"} <= artifacts:
         actions.append("render")
-    if {"metadata.json", "transcript.json", "chapters.json"} <= artifacts:
+    if {"metadata.json", "transcript.json", "transcript_article.json"} <= artifacts:
         actions.append("bundle")
     return actions
 

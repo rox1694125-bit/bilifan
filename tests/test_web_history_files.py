@@ -98,6 +98,7 @@ def test_list_latest_runs_reads_outputs_latest_json(tmp_path):
         "html": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.html",
         "transcript_pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.pdf",
         "pdf": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/report.pdf",
+        "raw": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/files/transcript.txt",
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
 
@@ -207,7 +208,7 @@ def test_list_latest_runs_ignores_invalid_utf8_diagnostics(tmp_path):
 
     items = list_latest_runs(outputs)
 
-    assert items[0]["status"] == "succeeded"
+    assert items[0]["status"] == "failed"
     assert items[0]["stage"] == ""
 
 
@@ -239,7 +240,7 @@ def test_list_latest_runs_does_not_read_diagnostics_symlink_escape(tmp_path):
 
     items = list_latest_runs(outputs)
 
-    assert items[0]["status"] == "succeeded"
+    assert items[0]["status"] == "failed"
     assert items[0]["stage"] == ""
 
 
@@ -299,7 +300,7 @@ def test_failed_latest_run_uses_diagnostics_artifacts_not_stale_files(tmp_path):
     assert artifacts == {
         "folder": "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/open-folder",
     }
-    assert items[0]["friendly_error"]["title"] == "Codex 总结失败"
+    assert items[0]["friendly_error"]["title"] == "逐字稿整理失败"
 
 
 def test_failed_all_runs_uses_diagnostics_artifacts_not_stale_files(tmp_path):
@@ -429,6 +430,8 @@ def test_legacy_runs_expose_only_human_artifacts(
     latest_items = list_latest_runs(outputs)
     all_items = list_all_runs(outputs)
 
+    if "transcript.txt" in files:
+        expected_artifacts = {**expected_artifacts, "raw": f"/api/runs/{output_id}/runs/2026-06-08_120000/files/transcript.txt"}
     assert latest_items[0]["artifacts"] == expected_artifacts, fixture_name
     assert all_items[0]["artifacts"] == expected_artifacts, fixture_name
     hidden_keys = {
