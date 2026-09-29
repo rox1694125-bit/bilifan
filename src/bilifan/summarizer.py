@@ -20,6 +20,7 @@ CODEX_EXEC_TIMEOUT_SECONDS = 60 * 60
 CODEX_EXEC_ENV_VAR = "BILIFAN_CODEX_BIN"
 CODEX_EXEC_CANDIDATES = (
     Path("/Applications/Codex.app/Contents/Resources/codex"),
+    Path("/Applications/ChatGPT.app/Contents/Resources/codex"),
     Path.home() / ".codex" / "bin" / "codex",
     Path("/opt/homebrew/bin/codex"),
     Path("/usr/local/bin/codex"),

@@ -1,5 +1,6 @@
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -167,6 +168,12 @@ def test_run_codex_chunk_summary_uses_packaged_codex_when_not_on_path(
     )
 
     assert calls[0][0] == str(fallback_codex)
+
+
+def test_codex_executable_candidates_include_chatgpt_desktop_cli():
+    assert Path("/Applications/ChatGPT.app/Contents/Resources/codex") in (
+        summarizer.CODEX_EXEC_CANDIDATES
+    )
 
 
 def test_run_codex_chunk_summary_reports_actionable_message_when_codex_missing(
