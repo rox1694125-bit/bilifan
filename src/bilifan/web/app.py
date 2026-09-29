@@ -470,11 +470,13 @@ def create_app(
                     require_pdf=payload.require_pdf,
                 )
             except RetryError as exc:
-                retry_artifacts, retry_warnings = _retry_failure_context(run_dir)
+                retry_artifacts, retry_warnings = _retry_failure_context(
+                    run_dir, diagnostics_path=exc.diagnostics_path
+                )
                 raise PipelineRunError(
                     str(exc),
                     run_key=f"{output_id}/runs/{run_id}",
-                    diagnostics_path=run_dir / "diagnostics.json",
+                    diagnostics_path=exc.diagnostics_path or run_dir / "retry_diagnostics.json",
                     artifact_paths=retry_artifacts,
                     warnings=retry_warnings,
                 ) from exc
@@ -693,10 +695,17 @@ def create_app(
     return app
 
 
-def _retry_failure_context(run_dir: Path) -> tuple[list[str], list[str]]:
-    diagnostics_path = run_dir / "diagnostics.json"
-    artifact_paths = ["diagnostics.json"]
+def _retry_failure_context(
+    run_dir: Path, *, diagnostics_path: Path | None = None
+) -> tuple[list[str], list[str]]:
+    # Read only this attempt's diagnostic; never reuse a prior outcome.
+    artifact_paths = [name for name in (
+        "metadata.json", "transcript.json", "chunks.json", "transcript_article.json", "chapters.json"
+    ) if (run_dir / name).is_file()]
     warnings: list[str] = []
+    if diagnostics_path is None:
+        return artifact_paths, warnings
+    artifact_paths.insert(0, diagnostics_path.name)
     try:
         diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, UnicodeDecodeError, ValueError):
@@ -705,8 +714,8 @@ def _retry_failure_context(run_dir: Path) -> tuple[list[str], list[str]]:
         raw_artifacts = diagnostics.get("artifact_paths")
         if isinstance(raw_artifacts, list):
             artifact_paths = [item for item in raw_artifacts if isinstance(item, str)]
-            if "diagnostics.json" not in artifact_paths:
-                artifact_paths.insert(0, "diagnostics.json")
+            if diagnostics_path.name not in artifact_paths:
+                artifact_paths.insert(0, diagnostics_path.name)
         raw_warnings = diagnostics.get("warnings")
         if isinstance(raw_warnings, list):
             warnings = [item for item in raw_warnings if isinstance(item, str)]

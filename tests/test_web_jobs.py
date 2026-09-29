@@ -2118,6 +2118,85 @@ def test_retry_failure_preserves_run_context_without_diagnostics_artifact_link(t
     assert state["retry_actions"] == ["summarization"]
 
 
+def test_real_retry_failure_keeps_history_readable_and_exportable(tmp_path, monkeypatch):
+    import bilifan.retry as retry_module
+    from bilifan.bundle import write_content_bundle
+
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    metadata = {
+        "video_id": "BV1abcDEF12G", "part_index": 1, "title": "Original report",
+        "input_url_sanitized": "https://www.bilibili.com/video/BV1abcDEF12G?p=1",
+    }
+    transcript = {"source": "whisper", "language": "zh", "segments": [
+        {"start": 0, "end": 10, "text": "原始转录"}
+    ]}
+    for name, value in (("metadata.json", metadata), ("transcript.json", transcript),
+                        ("chunks.json", {"chunks": [{"chunk_index": 1}]})):
+        (run_dir / name).write_text(json.dumps(value), encoding="utf-8")
+    write_content_bundle(
+        run_dir=run_dir, metadata=metadata, transcript=transcript,
+        chapters={"style": "学习笔记", "chapters": []},
+        artifact_paths=["report.html", "report.pdf"],
+        platform="bilibili", source_id="BV1abcDEF12G", part_id="p1",
+    )
+    old_report = (run_dir / "report.html").read_bytes()
+    old_diagnostic = (run_dir / "diagnostics.json").read_bytes()
+    latest = run_dir.parent.parent / "latest.json"
+    old_latest = latest.read_bytes()
+
+    def fail_article(**kwargs):
+        raise retry_module.ArticleError("new attempt failed")
+
+    monkeypatch.setattr(retry_module, "generate_transcript_article", fail_article)
+    app = create_app(outputs=outputs, token="test-token", open_browser=False, run_jobs_inline=True)
+    client = TestClient(app)
+    _accept_consent(client)
+    prefix = "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000"
+    response = client.post(prefix + "/retry", headers=_headers(), json={"from_stage": "summarization"})
+    state = client.get("/api/jobs/current", headers=_headers()).json()
+
+    assert response.status_code == 200
+    assert state["status"] == "failed"
+    assert "new attempt failed" in state["message"]
+    assert "html" not in state["artifacts"]
+    assert (run_dir / "diagnostics.json").read_bytes() == old_diagnostic
+    assert latest.read_bytes() == old_latest
+    assert web_files.list_latest_runs(outputs)[0]["status"] == "succeeded"
+    assert client.get(prefix + "/files/report.html", headers=_headers()).content == old_report
+    diagnostic = client.get(prefix + "/files/retry_diagnostics.json", headers=_headers())
+    assert diagnostic.status_code == 200
+    assert diagnostic.json()["error_type"] == "ArticleError"
+    assert client.post(prefix + "/exports/nabaichuan", headers=_headers()).status_code == 200
+
+
+def test_retry_failure_without_diagnostic_does_not_reuse_previous_attempt(tmp_path, monkeypatch):
+    monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
+    outputs = tmp_path / "outputs"
+    run_dir = _make_run(outputs)
+    (run_dir / "retry_diagnostics.json").write_text(json.dumps({
+        "error_type": "OldError", "warnings": ["old_warning"],
+        "artifact_paths": ["report.html"],
+    }))
+
+    def fail_without_diagnostic(*args, **kwargs):
+        raise RetryError("This run is already being retried.")
+
+    client = TestClient(create_app(
+        outputs=outputs, token="test-token", open_browser=False,
+        retry_runner=fail_without_diagnostic, run_jobs_inline=True,
+    ))
+    _accept_consent(client)
+    client.post("/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry",
+                headers=_headers(), json={"from_stage": "render"})
+    state = client.get("/api/jobs/current", headers=_headers()).json()
+    assert state["status"] == "failed"
+    assert state["warnings"] == []
+    assert "html" not in state["artifacts"]
+    assert state["message"] == "This run is already being retried."
+
+
 def test_export_single_run_nabaichuan_jsonl_from_web_api(tmp_path, monkeypatch):
     monkeypatch.setenv("BILIFAN_CONFIG_HOME", str(tmp_path / "config"))
     outputs = tmp_path / "outputs"

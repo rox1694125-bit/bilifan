@@ -22,6 +22,7 @@ ROOT_FILES = {
     "chunks.json",
     "chapters.json",
     "diagnostics.json",
+    "retry_diagnostics.json",
     "content_bundle.json",
     "report.html",
     "report.pdf",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from .renderer import (
     render_transcript_html,
 )
 from .runs import RUN_OUTPUT_ID_PATTERN
+from .retry_workspace import RetryWorkspaceError, retry_workspace
 from .summarizer import (
     SummarizationError,
     summarize_article_sections,
@@ -45,8 +47,9 @@ class RetryResult:
 
 
 class RetryError(RuntimeError):
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, diagnostics_path: Path | None = None) -> None:
         super().__init__(redact_text(message))
+        self.diagnostics_path = diagnostics_path
 
 
 @dataclass(frozen=True)
@@ -101,10 +104,98 @@ def retry_run(
     requested_formats = _parse_output_formats(output_format)
     summary_template = _validate_summary_template(summary_template)
 
+    if run_dir.is_symlink():
+        raise RetryError("Cannot retry a run directory containing a symlink.")
     run_dir = run_dir.resolve(strict=False)
     if not run_dir.is_dir():
         raise RetryError(f"Run directory does not exist: {run_dir}")
     run_key = _run_key(run_dir)
+
+    try:
+        with retry_workspace(run_dir) as workspace:
+            try:
+                result = _retry_in_workspace(
+                    workspace.path,
+                    run_key=run_key,
+                    stage=stage,
+                    requested_formats=requested_formats,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                    summary_template=summary_template,
+                    with_frames=with_frames,
+                    with_diagrams=with_diagrams,
+                    require_pdf=require_pdf,
+                )
+                # Explicit exports are snapshots of the previous bundle. A
+                # successful retry invalidates them; users may export again.
+                (workspace.path / "nabaichuan.jsonl").unlink(missing_ok=True)
+                (workspace.path / "retry_diagnostics.json").unlink(missing_ok=True)
+                workspace.publish()
+            except (RetryError, OSError, ValueError) as exc:
+                diagnostic_path = _record_retry_failure(run_dir, stage=stage, error=exc)
+                raise RetryError(str(exc), diagnostics_path=diagnostic_path) from exc
+    except RetryWorkspaceError as exc:
+        # A failed rollback leaves the original in exc.backup_path. Never
+        # recreate run_dir here: that would obstruct recovery of that backup.
+        raise RetryError(str(exc)) from exc
+
+    return RetryResult(
+        run_key=run_key,
+        run_dir=run_dir,
+        diagnostics_path=run_dir / "diagnostics.json",
+        artifact_paths=result.artifact_paths,
+        warnings=list(dict.fromkeys([*result.warnings, *workspace.warnings])),
+    )
+
+
+def _record_retry_failure(run_dir: Path, *, stage: str, error: Exception) -> Path | None:
+    """Record this attempt without replacing the last delivery's diagnostics."""
+    path = run_dir / "retry_diagnostics.json"
+    current_path = getattr(error, "diagnostics_path", None)
+    diagnostic = (
+        _read_optional_json(current_path.parent, current_path.name)
+        if current_path is not None else {}
+    )
+    diagnostic.update(
+        error_type=diagnostic.get("error_type") or type(error).__name__,
+        exit_code=1,
+        stage=diagnostic.get("stage") or stage,
+        sanitized_message=redact_text(str(error)),
+        artifact_paths=["retry_diagnostics.json", *_existing_named_artifacts(
+            run_dir, ["metadata.json", "transcript.json", "chunks.json",
+                      "transcript_article.json", "chapters.json"]
+        )],
+        warnings=diagnostic.get("warnings") or [f"{stage}_retry_failed"],
+    )
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=run_dir,
+                                         prefix=".retry-diagnostics-", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(diagnostic, stream, ensure_ascii=False, indent=2, allow_nan=False)
+            stream.write("\n")
+        temporary.replace(path)
+    except OSError:
+        return None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return path
+
+
+def _retry_in_workspace(
+    run_dir: Path,
+    *,
+    run_key: str,
+    stage: str,
+    requested_formats: set[str],
+    llm_provider: str,
+    llm_model: str,
+    summary_template: str,
+    with_frames: bool,
+    with_diagrams: bool,
+    require_pdf: bool,
+) -> RetryResult:
 
     metadata = _read_required_json(run_dir, "metadata.json")
     transcript = _read_required_json(run_dir, "transcript.json")
@@ -151,7 +242,7 @@ def retry_run(
                 artifact_paths=_base_artifact_paths(run_dir)
                 + _existing_named_artifacts(run_dir, ["transcript_article.json"]),
             )
-            raise RetryError(str(exc)) from exc
+            raise RetryError(str(exc), diagnostics_path=run_dir / "diagnostics.json") from exc
         _write_json(run_dir / "chapters.json", chapters)
         return _render_and_bundle(
             run_dir=run_dir,
@@ -261,7 +352,7 @@ def _render_and_bundle(
             message=str(exc),
             artifact_paths=artifact_paths,
         )
-        raise RetryError(str(exc)) from exc
+        raise RetryError(str(exc), diagnostics_path=run_dir / "diagnostics.json") from exc
 
     if "pdf" in requested_formats or require_pdf:
         for html_path, pdf_name in pdf_sources:
@@ -269,6 +360,7 @@ def _render_and_bundle(
                 pdf_path = export_html_pdf(html_path=html_path, pdf_path=run_dir / pdf_name)
                 artifact_paths.append(pdf_path.name)
             except PdfExportError as exc:
+                (run_dir / pdf_name).unlink(missing_ok=True)
                 warnings = _append_unique(warnings, "pdf_failed")
                 if require_pdf:
                     _write_failure_diagnostics(
@@ -281,7 +373,7 @@ def _render_and_bundle(
                         artifact_paths=artifact_paths,
                         warnings=warnings,
                     )
-                    raise RetryError(str(exc)) from exc
+                    raise RetryError(str(exc), diagnostics_path=run_dir / "diagnostics.json") from exc
     try:
         bundle_path = write_content_bundle(
             run_dir=run_dir,
@@ -306,7 +398,7 @@ def _render_and_bundle(
             message=str(exc),
             artifact_paths=artifact_paths,
         )
-        raise RetryError(str(exc)) from exc
+        raise RetryError(str(exc), diagnostics_path=run_dir / "diagnostics.json") from exc
     artifact_paths = _append_unique(artifact_paths, bundle_path.name)
     _write_success_diagnostics(
         run_dir,
@@ -369,7 +461,7 @@ def _bundle_only(
             message=str(exc),
             artifact_paths=artifact_paths,
         )
-        raise RetryError(str(exc)) from exc
+        raise RetryError(str(exc), diagnostics_path=run_dir / "diagnostics.json") from exc
     artifact_paths = _append_unique(artifact_paths, bundle_path.name)
     warnings: list[str] = []
     _write_success_diagnostics(

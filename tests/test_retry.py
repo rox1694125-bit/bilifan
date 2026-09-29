@@ -147,6 +147,117 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _seed_existing_delivery(run_dir):
+    _write_json(run_dir / "chapters.json", _chapters())
+    _write_json(run_dir / "transcript_article.json", _article())
+    _write_json(run_dir / "diagnostics.json", {
+        "error_type": None, "exit_code": 0, "stage": "render",
+        "duration_check": {"status": "ok"}, "warnings": [],
+        "artifact_paths": ["report.html", "content_bundle.json"],
+    })
+    for name in ("transcript.html", "report.html", "transcript.pdf", "report.pdf",
+                 "content_bundle.json", "nabaichuan.jsonl"):
+        (run_dir / name).write_bytes(f"original {name}".encode())
+    frame = run_dir / "media/frames/chapter_001_000001.jpg"
+    frame.parent.mkdir(parents=True)
+    frame.write_bytes(b"original frame")
+    return {str(p.relative_to(run_dir)): p.read_bytes()
+            for p in run_dir.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("failure", ["article", "summary", "report", "second_pdf", "bundle"])
+def test_failed_regeneration_keeps_entire_previous_delivery(tmp_path, monkeypatch, failure):
+    run_dir = _run_dir(tmp_path)
+    previous = _seed_existing_delivery(run_dir)
+
+    def generate(**kwargs):
+        if failure == "article":
+            raise retry_module.ArticleError("new article failed")
+        article = _article()
+        article["sections"][0]["title"] = "new article"
+        _write_json(kwargs["run_dir"] / "transcript_article.json", article)
+        (kwargs["run_dir"] / "media/frames/chapter_001_000001.jpg").write_bytes(b"new frame")
+        return article
+
+    def summarize(**kwargs):
+        if failure == "summary":
+            raise SummarizationError("new summary failed")
+        return _chapters()
+
+    def render_article(**kwargs):
+        path = kwargs["run_dir"] / "transcript.html"
+        path.write_text("new article html")
+        return path
+
+    def render_report(**kwargs):
+        if failure == "report":
+            raise ValueError("new report failed")
+        path = kwargs["run_dir"] / "report.html"
+        path.write_text("new report html")
+        return path
+
+    def pdf(**kwargs):
+        path = kwargs["pdf_path"]
+        path.write_bytes(b"new pdf")
+        if failure == "second_pdf" and path.name == "report.pdf":
+            raise PdfExportError("second pdf failed")
+        return path
+
+    real_bundle = retry_module.write_content_bundle
+    def bundle(**kwargs):
+        if failure == "bundle":
+            (kwargs["run_dir"] / "content_bundle.json").write_text("truncated")
+            raise OSError("new bundle failed")
+        return real_bundle(**kwargs)
+
+    monkeypatch.setattr(retry_module, "generate_transcript_article", generate)
+    monkeypatch.setattr(retry_module, "summarize_article_sections", summarize)
+    monkeypatch.setattr(retry_module, "render_transcript_html", render_article)
+    monkeypatch.setattr(retry_module, "render_report_html", render_report)
+    monkeypatch.setattr(retry_module, "export_html_pdf", pdf)
+    monkeypatch.setattr(retry_module, "write_content_bundle", bundle)
+
+    with pytest.raises(RetryError) as caught:
+        retry_run(run_dir, from_stage="summarization", require_pdf=True)
+
+    assert {name: (run_dir / name).read_bytes() for name in previous} == previous
+    assert caught.value.diagnostics_path == run_dir / "retry_diagnostics.json"
+    diagnostic = json.loads(caught.value.diagnostics_path.read_text())
+    assert diagnostic["exit_code"] == 1
+    assert diagnostic["error_type"]
+    assert "report.html" not in diagnostic["artifact_paths"]
+
+
+@pytest.mark.parametrize("missing", ["chunks.json", "chapters.json"])
+def test_retry_missing_input_keeps_existing_delivery(tmp_path, missing):
+    run_dir = _run_dir(tmp_path)
+    previous = _seed_existing_delivery(run_dir)
+    (run_dir / missing).unlink()
+    previous.pop(missing)
+    with pytest.raises(RetryError, match=missing):
+        retry_run(run_dir, from_stage="summarization" if missing == "chunks.json" else "render")
+    assert {name: (run_dir / name).read_bytes() for name in previous} == previous
+
+
+def test_best_effort_pdf_failure_does_not_publish_partial_or_previous_pdf(tmp_path, monkeypatch):
+    run_dir = _run_dir(tmp_path)
+    _seed_existing_delivery(run_dir)
+
+    def fail_pdf(**kwargs):
+        kwargs["pdf_path"].write_bytes(b"partial pdf")
+        raise PdfExportError("Chrome failed")
+
+    monkeypatch.setattr(retry_module, "export_html_pdf", fail_pdf)
+    result = retry_run(run_dir, from_stage="render")
+    assert result.run_dir == run_dir
+    assert result.diagnostics_path == run_dir / "diagnostics.json"
+    assert "pdf_failed" in result.warnings
+    assert (run_dir / "report.html").is_file()
+    assert not (run_dir / "report.pdf").exists()
+    assert not (run_dir / "transcript.pdf").exists()
+    assert not (run_dir / "nabaichuan.jsonl").exists()
+
+
 def test_retry_bundle_writes_bundle_and_success_diagnostics(tmp_path):
     run_dir = _run_dir(tmp_path)
     _write_json(run_dir / "chapters.json", _chapters())
@@ -570,7 +681,7 @@ def test_retry_require_pdf_failure_writes_failed_diagnostics(tmp_path, monkeypat
     with pytest.raises(RetryError, match="Chrome failed"):
         retry_run(run_dir, from_stage="render", require_pdf=True)
 
-    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+    diagnostics = json.loads((run_dir / "retry_diagnostics.json").read_text(encoding="utf-8"))
     assert diagnostics["error_type"] == "PdfExportError"
     assert diagnostics["stage"] == "render"
     assert diagnostics["exit_code"] == 1
@@ -582,7 +693,7 @@ def test_retry_summarization_failure_writes_failed_diagnostics(tmp_path, monkeyp
 
     def fake_generate_transcript_article(**kwargs):
         article = _article()
-        _write_json(run_dir / "transcript_article.json", article)
+        _write_json(kwargs["run_dir"] / "transcript_article.json", article)
         return article
 
     def fake_summarize_article_sections(**kwargs):
@@ -604,7 +715,7 @@ def test_retry_summarization_failure_writes_failed_diagnostics(tmp_path, monkeyp
     with pytest.raises(RetryError, match="CODEX_ACCESS_TOKEN=<redacted>"):
         retry_run(run_dir, from_stage="summarization", output_format="html")
 
-    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+    diagnostics = json.loads((run_dir / "retry_diagnostics.json").read_text(encoding="utf-8"))
     assert diagnostics["error_type"] == "SummarizationError"
     assert diagnostics["stage"] == "summarization"
     assert diagnostics["exit_code"] == 1
@@ -625,7 +736,7 @@ def test_retry_summarization_failure_does_not_expose_stale_downstream_artifacts(
 
     def fake_generate_transcript_article(**kwargs):
         article = _article()
-        _write_json(run_dir / "transcript_article.json", article)
+        _write_json(kwargs["run_dir"] / "transcript_article.json", article)
         return article
 
     def fake_summarize_article_sections(**kwargs):
@@ -647,16 +758,15 @@ def test_retry_summarization_failure_does_not_expose_stale_downstream_artifacts(
     with pytest.raises(RetryError, match="summary failed"):
         retry_run(run_dir, from_stage="summarization", output_format="html")
 
-    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
-    assert "transcript_article.json" in diagnostics["artifact_paths"]
+    diagnostics = json.loads((run_dir / "retry_diagnostics.json").read_text(encoding="utf-8"))
     assert "report.html" not in diagnostics["artifact_paths"]
     assert "report.pdf" not in diagnostics["artifact_paths"]
     assert "content_bundle.json" not in diagnostics["artifact_paths"]
-    assert not (run_dir / "transcript.html").exists()
-    assert not (run_dir / "transcript.pdf").exists()
-    assert not (run_dir / "report.html").exists()
-    assert not (run_dir / "report.pdf").exists()
-    assert not (run_dir / "content_bundle.json").exists()
+    assert (run_dir / "transcript.html").exists()
+    assert (run_dir / "transcript.pdf").exists()
+    assert (run_dir / "report.html").exists()
+    assert (run_dir / "report.pdf").exists()
+    assert (run_dir / "content_bundle.json").exists()
 
 
 def test_retry_render_failure_does_not_expose_stale_report_or_bundle(
@@ -676,7 +786,7 @@ def test_retry_render_failure_does_not_expose_stale_report_or_bundle(
     with pytest.raises(RetryError, match="render failed"):
         retry_run(run_dir, from_stage="render", output_format="html")
 
-    diagnostics = json.loads((run_dir / "diagnostics.json").read_text(encoding="utf-8"))
+    diagnostics = json.loads((run_dir / "retry_diagnostics.json").read_text(encoding="utf-8"))
     assert "report.html" not in diagnostics["artifact_paths"]
     assert "report.pdf" not in diagnostics["artifact_paths"]
     assert "content_bundle.json" not in diagnostics["artifact_paths"]

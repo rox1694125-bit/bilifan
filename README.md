@@ -119,6 +119,24 @@ python -m bilifan retry outputs/BV1abcDEF12G_p1/runs/2026-06-09_120000 --from su
 
 Supported retry stages are `bundle`, `render`, and `summarization`.
 
+Retries generate in an isolated copy of the run. If generation fails, the
+previous article, report, PDFs, bundle, and successful diagnostics remain
+unchanged. The latest failed retry is recorded separately in
+`retry_diagnostics.json`; the Web task shows the failed attempt while history
+continues to offer the previous delivery. A successful retry replaces the run's
+artifact set, preserving its run key and history pointer. Previously exported
+`nabaichuan.jsonl` is invalidated; export again to obtain the updated content.
+HTML-only or best-effort PDF failures never reuse PDFs from the previous result.
+
+The isolated copy temporarily needs additional disk space. Retries of the same
+run are serialized on macOS/Linux and runs containing symbolic links are
+rejected. Publication uses two same-filesystem directory renames and rolls back
+ordinary failures. It is not a crash-atomic exchange: an interruption between
+the renames may leave the original in `runs/.<run_id>.backup-<id>`. Keep that
+backup for recovery; do not create a new directory over the missing run or
+delete the backup. This recovery protects prior results without downloading
+audio or repeating Whisper.
+
 ## YouTube Scope
 
 YouTube support is limited to public ordinary videos with `youtube.com/watch`
