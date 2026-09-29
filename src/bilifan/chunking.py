@@ -26,6 +26,33 @@ class LongVideoConfirmationRequired(ChunkingError):
     """Raised when a 90-180 minute video needs explicit user confirmation."""
 
 
+class LongVideoLimitExceeded(ChunkingError):
+    """Raised when processing over 180 minutes has not been allowed."""
+
+
+def validate_video_duration(
+    duration_seconds: Any,
+    *,
+    allow_long_video: bool = False,
+    long_video_confirmed: bool = False,
+) -> None:
+    """Apply the same admission rules to metadata and the actual duration."""
+    duration = _positive_float(duration_seconds)
+    if duration is None:
+        return
+    if duration > DEFAULT_LONG_VIDEO_LIMIT_SECONDS and not allow_long_video:
+        raise LongVideoLimitExceeded(
+            "Videos longer than 180 minutes require --allow-long-video."
+        )
+    if (
+        LONG_VIDEO_CONFIRM_SECONDS <= duration <= DEFAULT_LONG_VIDEO_LIMIT_SECONDS
+        and not long_video_confirmed
+    ):
+        raise LongVideoConfirmationRequired(
+            "Videos between 90 and 180 minutes require confirmation."
+        )
+
+
 def build_chunks(
     transcript: dict[str, Any],
     media: dict[str, Any],
@@ -42,17 +69,11 @@ def build_chunks(
     transcript_duration = max(segment["end"] for segment in segments)
     planning_duration = media_duration or transcript_duration
 
-    if planning_duration > DEFAULT_LONG_VIDEO_LIMIT_SECONDS and not allow_long_video:
-        raise ChunkingError(
-            "Videos longer than 180 minutes require --allow-long-video."
-        )
-    if (
-        LONG_VIDEO_CONFIRM_SECONDS <= planning_duration <= DEFAULT_LONG_VIDEO_LIMIT_SECONDS
-        and not long_video_confirmed
-    ):
-        raise LongVideoConfirmationRequired(
-            "Videos between 90 and 180 minutes require confirmation."
-        )
+    validate_video_duration(
+        planning_duration,
+        allow_long_video=allow_long_video,
+        long_video_confirmed=long_video_confirmed,
+    )
 
     target_chunk_seconds = _target_chunk_seconds(
         segments,

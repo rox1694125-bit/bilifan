@@ -5,7 +5,6 @@ import pytest
 
 import bilifan.pipeline as pipeline
 from bilifan.bundle import BundleError
-from bilifan.chunking import LongVideoConfirmationRequired
 from bilifan.pipeline import (
     PipelineRequest,
     PipelineResult,
@@ -1179,7 +1178,7 @@ def test_render_failure_keeps_completed_exports_in_artifacts(tmp_path, monkeypat
     assert "/private/tmp" not in diagnostics["sanitized_message"]
 
 
-def test_run_summarize_pipeline_without_long_video_callback_does_not_write_failure_diagnostics(
+def test_run_summarize_pipeline_without_long_video_callback_writes_early_failure_diagnostics(
     tmp_path, monkeypatch
 ):
     progress_events: list[tuple[str, str, str]] = []
@@ -1281,7 +1280,7 @@ def test_run_summarize_pipeline_without_long_video_callback_does_not_write_failu
     )
     monkeypatch.setattr(pipeline, "build_transcript", fake_build_transcript)
 
-    with pytest.raises(LongVideoConfirmationRequired):
+    with pytest.raises(pipeline.PipelineRunError, match="confirmation"):
         pipeline.run_summarize_pipeline(
             PipelineRequest(
                 url="https://www.bilibili.com/video/BV1abcDEF12G",
@@ -1296,7 +1295,9 @@ def test_run_summarize_pipeline_without_long_video_callback_does_not_write_failu
     )
     run_dir = tmp_path / "BV1abcDEF12G_p1" / latest["run_dir"]
 
-    assert not (run_dir / "diagnostics.json").exists()
-    assert ("chunking", "failed") in [
+    diagnostics = json.loads((run_dir / "diagnostics.json").read_text())
+    assert diagnostics["error_type"] == "LongVideoConfirmationRequired"
+    assert not (run_dir / "transcript.json").exists()
+    assert ("metadata", "failed") in [
         (stage, status) for stage, status, _message in progress_events
     ]

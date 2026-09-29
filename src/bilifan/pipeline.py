@@ -14,8 +14,10 @@ from .bundle import write_content_bundle
 from .chunking import (
     ChunkingError,
     LongVideoConfirmationRequired,
+    LongVideoLimitExceeded,
     build_chunks,
     estimate_chunk_plan,
+    validate_video_duration,
 )
 from .diagnostics import Diagnostics, redact_text, write_diagnostics
 from .media import MediaDownloadError, download_current_part_audio, publish_audio_artifact
@@ -205,6 +207,7 @@ def run_summarize_pipeline(
         ) from exc
 
     _write_json(run.run_dir / "metadata.json", metadata)
+    long_video_confirmed = _check_metadata_duration(request, metadata, run, ref, progress_callback)
     _progress(
         progress_callback,
         PipelineStage.METADATA,
@@ -289,18 +292,10 @@ def run_summarize_pipeline(
             transcript,
             media,
             allow_long_video=request.allow_long_video,
-            long_video_confirmed=request.yes_i_understand,
+            long_video_confirmed=long_video_confirmed,
         )
     except LongVideoConfirmationRequired as exc:
-        if request.confirm_long_video is None:
-            _progress(
-                progress_callback,
-                PipelineStage.CHUNKING,
-                "failed",
-                exc.sanitized_message,
-            )
-            raise
-        if not request.confirm_long_video(exc.sanitized_message):
+        if request.confirm_long_video is None or not request.confirm_long_video(exc.sanitized_message):
             _write_chunking_failure_diagnostics(
                 run,
                 ref,
@@ -782,6 +777,50 @@ def _raise_transcript_failure(
         artifact_paths=artifact_paths,
         warnings=["transcript_failed"],
     ) from exc
+
+
+def _check_metadata_duration(
+    request: PipelineRequest,
+    metadata: dict[str, Any],
+    run: RunPaths,
+    ref: Any,
+    progress_callback: ProgressCallback,
+) -> bool:
+    confirmed = request.yes_i_understand
+    try:
+        validate_video_duration(
+            metadata.get("duration"),
+            allow_long_video=request.allow_long_video,
+            long_video_confirmed=confirmed,
+        )
+    except (LongVideoConfirmationRequired, LongVideoLimitExceeded) as exc:
+        if (
+            isinstance(exc, LongVideoConfirmationRequired)
+            and request.confirm_long_video is not None
+            and request.confirm_long_video(exc.sanitized_message)
+        ):
+            return True
+        warnings = [
+            "long_video_confirmation_required" if isinstance(exc, LongVideoConfirmationRequired)
+            else "long_video_limit_exceeded"
+        ]
+        artifact_paths = ["metadata.json", "diagnostics.json"]
+        write_diagnostics(
+            run.run_dir / "diagnostics.json",
+            Diagnostics(
+                error_type=type(exc).__name__, exit_code=1,
+                stage=PipelineStage.METADATA.value, video_id=ref.bvid,
+                part_index=ref.part_index,
+                duration_check=_metadata_media(metadata)["duration_check"],
+                transcript_check=None, artifact_paths=artifact_paths,
+                sanitized_message=exc.sanitized_message, warnings=warnings,
+            ),
+        )
+        _progress(progress_callback, PipelineStage.METADATA, "failed", exc.sanitized_message)
+        raise _pipeline_run_error(
+            run, exc.sanitized_message, artifact_paths=artifact_paths, warnings=warnings,
+        ) from exc
+    return confirmed
 
 
 def _metadata_media(metadata: dict[str, Any]) -> dict[str, Any]:

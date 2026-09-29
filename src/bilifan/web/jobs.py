@@ -352,6 +352,18 @@ def explain_failure(
     message_normalized = (message or "").lower()
     warnings_normalized = " ".join(warnings).lower()
     normalized = f"{stage_name} {message_normalized} {warnings_normalized}"
+    if "long_video_limit_exceeded" in warnings_normalized or "longer than 180 minutes" in message_normalized:
+        return {
+            "title": "视频超过处理时长限制",
+            "cause": "视频超过 180 分钟，本次未允许处理超长视频。",
+            "next_action": "如需继续，在高级设置勾选“允许长视频”后重新提交原链接。不要直接重新排队，重新排队会沿用原来的选项。",
+        }
+    if "long_video_confirmation_required" in warnings_normalized or "between 90 and 180 minutes require confirmation" in message_normalized:
+        return {
+            "title": "长视频需要确认",
+            "cause": "90 至 180 分钟的视频需要确认处理时间和资源使用。",
+            "next_action": "确认需要处理后重新提交；命令行用户可回应时长确认提示。",
+        }
     if stage_name == "bundle" or "bundle_failed" in warnings_normalized or "export failed" in message_normalized:
         return {
             "title": "结构化导出失败",

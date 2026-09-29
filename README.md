@@ -62,6 +62,15 @@ Useful flags:
 - `--cookies-file` / `--cookies-from-browser`: pass cookies to `yt-dlp`; Bilifan does not store the cookie file name in reports or config.
 - `--overwrite`: replace a run if the timestamp collides.
 
+Known video duration is checked immediately after metadata, before subtitles,
+audio download, Whisper, or AI generation. Videos over 180 minutes require
+`--allow-long-video` (Web: Advanced settings → allow long videos). Videos from
+90 through 180 minutes retain the existing explicit confirmation behavior;
+`--yes-i-understand` supplies that confirmation. Unknown or inaccurate metadata
+still has a second duration check when the actual transcript/audio is chunked.
+For an old over-limit failure, change the option and submit the URL again:
+the queue's requeue action retains the original options.
+
 This creates a run directory like:
 
 ```text
