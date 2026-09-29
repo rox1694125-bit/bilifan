@@ -1755,7 +1755,7 @@ def test_render_app_script_exports_nabaichuan_from_history_and_batch_button():
         await elements["batch-nabaichuan-button"].listeners.click();
         await flush();
         assert(fetchCalls.some((call) => call.method === "POST" && call.path === "/api/exports/nabaichuan/batch"));
-        assert(elements["job-message"].textContent.includes("已批量导出 1 个 run"));
+        assert(elements["export-feedback"].innerHTML.includes("已导出 1 项"));
         """,
     )
 

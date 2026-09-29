@@ -570,6 +570,12 @@ def render_app_html(token: str = "") -> str:
             }
             .failure-panel.active { display: block; }
 
+            .export-feedback-content { display: grid; gap: 10px; overflow-wrap: anywhere; }
+            .export-feedback-content h3 { font-size: 16px; }
+            .export-feedback-reasons { margin: 0; padding-left: 22px; max-height: 240px; overflow: auto; }
+            .export-feedback-reasons li + li { margin-top: 6px; }
+            .export-feedback-content .primary-actions { margin-top: 2px; }
+
             @media (max-width: 900px) {
               .shell {
                 padding: 10px;
@@ -626,6 +632,19 @@ def render_app_html(token: str = "") -> str:
               </aside>
 
               <section class="stack">
+                <section id="export-feedback-panel" class="panel" hidden tabindex="-1" aria-labelledby="export-feedback-heading">
+                  <div class="panel-header panel-heading-row">
+                    <h2 id="export-feedback-heading">导出结果</h2>
+                    <button id="export-feedback-close" class="compact secondary" type="button">收起</button>
+                  </div>
+                  <div class="panel-body stack">
+                    <div id="export-feedback" class="export-feedback-content" role="status" aria-live="polite" aria-atomic="true"></div>
+                    <p id="export-review-notice" class="subtle" hidden>主动纳入会保留质量警告，不代表已完成人工核实。</p>
+                    <div class="primary-actions">
+                      <button id="export-include-button" class="primary" type="button" hidden>仍然导出并保留警告</button>
+                    </div>
+                  </div>
+                </section>
                 <section class="panel">
                   <div class="panel-header">
                     <h1>当前任务</h1>
@@ -787,8 +806,8 @@ def render_app_html(token: str = "") -> str:
               audio: "下载当前视频音频并校验时长",
               media: "下载当前视频音频并校验时长",
               transcript: "优先使用已有字幕，必要时调用 Whisper",
-              chunking: "按时长和上下文拆成可总结片段",
-              summarization: "调用 Codex 生成学习笔记内容",
+              chunking: "按时长和上下文拆分逐字稿，便于分块整理",
+              summarization: "调用 Codex 纠错、断句和分段，保留原意",
               render: "生成 HTML、PDF 和导出文件",
               interrupted: "服务重启或任务中断，需要重新排队",
               canceled: "任务已取消",
@@ -808,6 +827,8 @@ def render_app_html(token: str = "") -> str:
               collectionMode: "all",
               openMenus: new Set(),
               pollingTimer: null,
+              exportBusy: false,
+              exportAction: null,
             };
 
             const elements = {
@@ -847,6 +868,11 @@ def render_app_html(token: str = "") -> str:
               taskLiveness: document.getElementById("task-liveness"),
               resultLinks: document.getElementById("result-links"),
               failurePanel: document.getElementById("failure-panel"),
+              exportFeedbackPanel: document.getElementById("export-feedback-panel"),
+              exportFeedback: document.getElementById("export-feedback"),
+              exportFeedbackClose: document.getElementById("export-feedback-close"),
+              exportReviewNotice: document.getElementById("export-review-notice"),
+              exportIncludeButton: document.getElementById("export-include-button"),
             };
 
             state.followedJobId = typeof sessionStorage !== "undefined" ? sessionStorage.getItem("bilifan-followed-job") : null;
@@ -960,7 +986,9 @@ def render_app_html(token: str = "") -> str:
             function updateStartButton() {
               elements.startButton.disabled = state.authExpired || !state.consentAccepted;
               elements.cancelButton.disabled = state.authExpired || !["running", "queued"].includes(state.currentStatus);
-              elements.batchNabaichuanButton.disabled = state.authExpired || !state.consentAccepted;
+              elements.batchNabaichuanButton.disabled = state.authExpired || !state.consentAccepted || state.exportBusy;
+              elements.exportIncludeButton.disabled = state.authExpired || !state.consentAccepted || state.exportBusy;
+              elements.exportFeedbackClose.disabled = state.exportBusy;
               elements.collectionPreviewButton.disabled = state.authExpired || !state.consentAccepted;
               elements.collectionModeCurrent.disabled = state.authExpired || !state.consentAccepted || !state.collectionPreview;
               elements.collectionModeAll.disabled = state.authExpired || !state.consentAccepted || !state.collectionPreview;
@@ -1047,7 +1075,7 @@ def render_app_html(token: str = "") -> str:
               });
               elements.resultLinks.innerHTML = markup
                 ? markup
-                : '<div class="muted-panel">生成完成后，会在这里显示笔记和导出文件。</div>';
+                : '<div class="muted-panel">生成完成后，会在这里显示原始转录稿、整理逐字稿和导出文件。</div>';
             }
 
             function artifactActionGroups(artifacts, runKey, status = "idle", options = {}) {
@@ -1364,10 +1392,9 @@ def render_app_html(token: str = "") -> str:
 
             function updateQueueControls(queue, totalCounts) {
               const paused = Boolean(queue && queue.paused);
-              const hasQueued = Boolean(totalCounts && Number(totalCounts.queued || 0) > 0);
               elements.queuePauseButton.hidden = paused;
               elements.queueResumeButton.hidden = !paused;
-              elements.queuePauseButton.disabled = state.authExpired || !state.consentAccepted || !hasQueued;
+              elements.queuePauseButton.disabled = state.authExpired || !state.consentAccepted;
               elements.queueResumeButton.disabled = state.authExpired || !state.consentAccepted;
             }
 
@@ -1912,48 +1939,113 @@ def render_app_html(token: str = "") -> str:
               await loadCurrentJob();
             }
 
-            async function exportNabaichuan(runKey) {
+            function exportTitle(runKey) {
+              const item = state.historyItems.find(item => item.run_key === runKey);
+              return item && item.title ? item.title : "选定的视频";
+            }
+
+            function exportDownloadLink(label, href, variant = "") {
+              if (typeof href !== "string" || !href) return "";
+              let url;
+              try { url = new URL(href, location.origin); } catch (_) { return ""; }
+              const allowed = /^\\/api\\/runs\\/[A-Za-z0-9_-]+\\/runs\\/[0-9_-]+\\/files\\/nabaichuan\\.jsonl$/.test(url.pathname)
+                || /^\\/api\\/exports\\/nabaichuan_batch_[0-9_]+(?:\\.jsonl|\\.report\\.json)$/.test(url.pathname);
+              if (url.origin !== location.origin || !allowed) return "";
+              return linkItem(label, url.pathname + url.search, variant);
+            }
+
+            function exportReasons(reasons) {
+              const messages = Array.isArray(reasons)
+                ? reasons.filter(reason => reason && typeof reason.message === "string").map(reason => reason.message)
+                : [];
+              return messages.length
+                ? `<ul class="export-feedback-reasons">${messages.map(message => `<li>${escapeHtml(message)}</li>`).join("")}</ul>`
+                : "<p>自动检查提示需要复查，请对照原始稿核对整理内容。</p>";
+            }
+
+            function showExportFeedback(title, body, action = null, showWarning = false) {
+              const wasHidden = elements.exportFeedbackPanel.hidden;
+              state.exportAction = action;
+              elements.exportFeedbackPanel.hidden = false;
+              elements.exportFeedback.innerHTML = `<h3>${escapeHtml(title)}</h3>${body}`;
+              elements.exportIncludeButton.hidden = !action;
+              elements.exportIncludeButton.textContent = action && action.label || "仍然导出并保留警告";
+              elements.exportReviewNotice.hidden = !showWarning;
+              updateStartButton();
+              if (wasHidden) {
+                elements.exportFeedbackPanel.focus({preventScroll: true});
+                if (elements.exportFeedbackPanel.scrollIntoView) elements.exportFeedbackPanel.scrollIntoView({block: "nearest"});
+              }
+            }
+
+            async function exportNabaichuan(runKey, includeReview = false) {
+              if (state.exportBusy) return;
               if (state.authExpired) {
                 markAuthExpired();
+                showExportFeedback("尚未导出", "<p>当前访问已过期，请刷新页面后重试导出。</p>");
                 return;
               }
               if (!runKey) {
-                setJobMessage("没有可导出的 run。", true);
+                showExportFeedback("尚未导出", "<p>请先选择一个已有结果。</p>");
                 return;
               }
-              let data;
+              const title = exportTitle(runKey);
+              state.exportBusy = true;
+              showExportFeedback("正在导出", `<p>${escapeHtml(title)}</p><p>正在生成纳百川文件，完成后会在这里保留结果。</p>`);
               try {
-                data = await apiFetch(`/api/runs/${runKey}/exports/nabaichuan`, { method: "POST" });
+                const data = await apiFetch(`/api/runs/${runKey}/exports/nabaichuan${includeReview ? "?include_review_required=true" : ""}`, { method: "POST" });
+                const artifact = data && typeof data.artifact === "string" ? exportDownloadLink("下载纳百川 JSONL", data.artifact, "primary-action") : "";
+                showExportFeedback("已导出", `<p>${escapeHtml(title)}</p><p>${includeReview ? "本次允许纳入需复查内容；已有质量警告仍保留在导出记录中。" : "纳百川文件已生成。"}</p>${artifact ? `<div class="primary-actions">${artifact}</div>` : ""}`, null, includeReview);
+                await loadHistory();
               } catch (error) {
-                if (!(error.payload && error.payload.review_required) || !window.confirm("此内容需复查，默认未导出。仍然导出并保留警告？这不代表人工审核通过。")) throw error;
-                data = await apiFetch(`/api/runs/${runKey}/exports/nabaichuan?include_review_required=true`, { method: "POST" });
+                if (error.payload && error.payload.review_required) {
+                  showExportFeedback("尚未导出", `<p>${escapeHtml(title)}</p>${exportReasons(error.payload.quality && error.payload.quality.reasons)}`, {
+                    kind: "single", runKey, includeReview: true, label: "仍然导出并保留警告",
+                  }, true);
+                } else {
+                  showExportFeedback("导出未完成", `<p>${escapeHtml(title)}</p><p>${escapeHtml(error.message || "导出请求失败，请稍后重试。")}</p>`, {
+                    kind: "single", runKey, includeReview, label: includeReview ? "重试导出并保留警告" : "重试导出",
+                  }, includeReview);
+                }
+              } finally {
+                state.exportBusy = false;
+                updateStartButton();
               }
-              await loadHistory();
-              await loadCurrentJob();
-              const artifact = data && typeof data.artifact === "string" ? withToken(data.artifact) : "";
-              setJobMessage(artifact ? `Nabaichuan JSONL 已生成: ${artifact}` : "Nabaichuan JSONL 已生成。");
             }
 
             async function exportNabaichuanBatch(includeReview = false) {
+              if (state.exportBusy) return;
               if (state.authExpired) {
                 markAuthExpired();
+                showExportFeedback("尚未导出", "<p>当前访问已过期，请刷新页面后重试导出。</p>");
                 return;
               }
-              const data = await apiFetch(`/api/exports/nabaichuan/batch${includeReview ? "?include_review_required=true" : ""}`, { method: "POST" });
-              const count = Number.isFinite(Number(data.exported_runs)) ? Number(data.exported_runs) : 0;
-              const skipped = Number.isFinite(Number(data.skipped_runs)) ? Number(data.skipped_runs) : 0;
-              const records = Number.isFinite(Number(data.records_written)) ? Number(data.records_written) : 0;
-              const artifact = data && typeof data.artifact === "string" ? withToken(data.artifact) : "";
-              const report = data && typeof data.report === "string" ? withToken(data.report) : "";
-              const reviewSkipped = (data.items || []).filter(item => item.reason === "quality_review_required");
-              if (!includeReview && reviewSkipped.length && window.confirm(`本次默认跳过 ${reviewSkipped.length} 个需复查结果。是否重新导出并明确纳入这些内容、保留警告？`)) {
-                return exportNabaichuanBatch(true);
+              state.exportBusy = true;
+              showExportFeedback("正在批量导出", "<p>正在检查已有结果，完成后会保留导出和跳过记录。</p>");
+              try {
+                const data = await apiFetch(`/api/exports/nabaichuan/batch${includeReview ? "?include_review_required=true" : ""}`, { method: "POST" });
+                const count = Number.isFinite(Number(data.exported_runs)) ? Number(data.exported_runs) : 0;
+                const skipped = Number.isFinite(Number(data.skipped_runs)) ? Number(data.skipped_runs) : 0;
+                const records = Number.isFinite(Number(data.records_written)) ? Number(data.records_written) : 0;
+                const items = Array.isArray(data.items) ? data.items : [];
+                const skippedItems = items.filter(item => item && item.status === "skipped");
+                const reviewSkipped = skippedItems.filter(item => item.reason === "quality_review_required");
+                const links = [];
+                if (count > 0 && typeof data.artifact === "string") links.push(exportDownloadLink("下载批量 JSONL", data.artifact, "primary-action"));
+                if (typeof data.report === "string") links.push(exportDownloadLink("下载导出报告", data.report));
+                const reasons = skippedItems.length ? `<details open><summary>跳过原因（${skippedItems.length} 项）</summary><ul class="export-feedback-reasons">${skippedItems.map(item => `<li>${escapeHtml(item.run_key || "历史结果")}：${escapeHtml(item.message || (item.reason === "quality_review_required" ? "内容需要复查，默认未纳入。" : item.reason === "run_not_succeeded" ? "尚未成功完成处理。" : "当前结果无法导出，请查看导出报告。"))}</li>`).join("")}</ul></details>` : "";
+                const action = !includeReview && reviewSkipped.length ? {
+                  kind: "batch", includeReview: true, label: "重新导出全部结果并允许需复查内容",
+                } : null;
+                showExportFeedback(count > 0 ? "批量导出完成" : "尚未导出（批量）", `<p>已导出 ${count} 项、${records} 条记录；跳过 ${skipped} 项。</p>${reasons}${action ? "<p>点击后会重新检查当时全部成功结果，包括此后完成的结果；需复查内容也会保留警告导出。</p>" : ""}${links.length ? `<div class="primary-actions">${links.join("")}</div>` : ""}${includeReview ? "<p>本次允许纳入需复查内容；已有质量警告仍保留。</p>" : ""}`, action, Boolean(action) || includeReview);
+              } catch (error) {
+                showExportFeedback("批量导出未完成", `<p>${escapeHtml(error.message || "导出请求失败，请稍后重试。")}</p>`, {
+                  kind: "batch", includeReview, label: includeReview ? "重试批量导出并保留警告" : "重试批量导出",
+                }, includeReview);
+              } finally {
+                state.exportBusy = false;
+                updateStartButton();
               }
-              setJobMessage(
-                artifact
-                  ? `已批量导出 ${count} 个 run、${records} 条记录，跳过 ${skipped} 个: ${artifact}${report ? `；报告: ${report}` : ""}`
-                  : `已批量导出 ${count} 个 run、${records} 条记录，跳过 ${skipped} 个。`
-              );
             }
 
             async function copySourceUrl(sourceUrl) {
@@ -1975,6 +2067,17 @@ def render_app_html(token: str = "") -> str:
               loadCurrentJob();
               loadQueue();
               elements.consentButton.addEventListener("click", acceptConsent);
+              elements.exportFeedbackClose.addEventListener("click", () => {
+                if (state.exportBusy) return;
+                state.exportAction = null;
+                elements.exportFeedbackPanel.hidden = true;
+              });
+              elements.exportIncludeButton.addEventListener("click", async () => {
+                const action = state.exportAction;
+                if (!action || state.exportBusy || state.authExpired || !state.consentAccepted) return;
+                if (action.kind === "single") await exportNabaichuan(action.runKey, action.includeReview);
+                else if (action.kind === "batch") await exportNabaichuanBatch(action.includeReview);
+              });
               elements.jobForm.addEventListener("submit", startJob);
               elements.cancelButton.addEventListener("click", cancelJob);
               elements.historySearch.addEventListener("input", () => {
@@ -2087,7 +2190,7 @@ def render_app_html(token: str = "") -> str:
                     "summarization",
                     resummarizeTarget.getAttribute("data-resummarize-run-key"),
                   ).catch((error) => {
-                    setJobMessage(error.message || "重总结失败。", true);
+                    setJobMessage(error.message || "整理逐字稿失败。", true);
                   });
                   return;
                 }

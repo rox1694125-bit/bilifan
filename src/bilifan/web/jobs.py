@@ -394,7 +394,7 @@ def explain_failure(
     ):
         return {
             "title": "Codex CLI 未找到",
-            "cause": "系统找不到 codex 命令，当前无法调用 Codex 做总结。",
+            "cause": "系统找不到 codex 命令，当前无法调用 Codex 整理逐字稿。",
             "next_action": "在 Terminal 里确认 codex 已安装并能直接运行，然后重启 Bilifan Web UI。",
         }
     if "duration differs" in normalized or "duration_mismatch" in normalized:
@@ -487,7 +487,7 @@ def explain_failure(
     return {
         "title": "任务失败",
         "cause": message or "当前阶段失败，具体原因见 diagnostics.json。",
-        "next_action": "先打开 diagnostics 查看原始错误；如果是总结或渲染阶段，可尝试下游重试。",
+        "next_action": "先查看原始错误；如果是逐字稿整理或文件生成阶段，可尝试从已有原稿继续处理。",
     }
 
 
