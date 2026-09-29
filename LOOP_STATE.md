@@ -2,97 +2,33 @@
 
 ## Objective
 
-分批提交并同步 GitHub，依次完成保护旧成果、备用音频误删修复、超长视频提前拦截；方案、持续进度、独立审查与测试均有记录。
+实施用户确认的逐字稿工作台v2：raw+忠实整理稿，停新主报告；质量闭环；统一持久任务/快速取消/恢复；分块复用与指标；独立review、测试、迁移和公网交付。
 
-## Scope
+## Scope and authority
 
-In scope：当前未提交运维/路径兼容改动，三个明确缺陷及必要的回归测试、诊断文案、文档、GitHub 同步。
+完整范围见 docs/superpowers/specs/2026-09-29-transcript-workbench-v2-prd.md；分批计划见同日期plan。用户已明确授权计划内源码/测试/文档推送与正式升级。无新增Hermes交互、外部消息、模型替换、历史全量重跑、外部知识库写入或凭据变更。
 
-Out of scope：整套架构重写、模型替换、真实历史资料批量重生成、外部通知/入库、凭据修改、自动部署/重启服务。
+## Stop conditions
 
-## Stop Conditions
-
-- [x] 既有 37 个本地提交及现存 9 文件改动按主题同步 GitHub。
-- [x] main 成为可复现且已同步的默认主分支，保留旧分支，无强推。
-- [x] 重生成失败不损伤旧成果；成功发布不混入旧文件。
-- [x] 备用候选成功后音频真实存在且可读取。
-- [x] 超长未授权任务在昂贵步骤前拒绝，确认边界不回归。
-- [x] 每个修复有有效的失败回归与通过结果，独立 review 无未解决阻塞项。
-- [x] 最终全套测试通过；收尾提交推送后现场核对远端 SHA 和工作区。
-
-## Risk Gates
-
-本次用户已授权提交和 GitHub 推送。只追加提交，不强推、不删除历史；仅显式文件清单暂存。测试隔离到临时目录；不删除真实输出、不修改凭据、不发送消息、不重启当前服务。平台审批仍适用。
+- [ ] PRD/方案/10固定样本契约和基线。
+- [ ] 新任务raw+article、零新report，原稿先保留、旧report/chapters/hash/入口保留。
+- [ ] 路由冲突/忠实度定位，统一质量贯穿交付与导出策略。
+- [ ] 所有入口持久FIFO，v1迁移/原子账本/损坏可见/latest成功指针/完成凭证。
+- [ ] 真实计算快速取消、父退出无双执行、CLI共享锁、发布安全。
+- [ ] 缓存跨失败/取消/重启复用，规则变化失效，指标准确。
+- [ ] 11端到端验收有直接证据，独立总review无阻塞、完整测试通过。
+- [ ] 空闲备份迁移、公网验证，GitHub/main/部署一致且工作区干净。
 
 ## Verification
 
-- Full suite：`PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider -q`
-- 定向 regression：tests/test_retry.py、test_media.py、test_pipeline.py、test_chunking.py、test_web_jobs.py、test_cli.py 及相关 UI/历史 tests。
-- 远端：`git ls-remote`、`gh repo view`，完成前对比 main SHA。
-- 实施方案：`docs/superpowers/plans/2026-09-29-delivery-reliability-plan.md`。
+隔离工作树使用主项目venv和PYTHONPATH=src。所有故障注入在tmp；真实资料不入Git。公网只走bilifan.buyaoting.top并先查Web/Tunnel。
 
-## Iterations
+## Progress
 
-### 0 - 基线和方案（验证完成，待同步）
+### 0 - 契约与基线
+- 已核实main=91fc135、干净；已创建隔离分支/工作树，生产源码未改。
+- PRD、开发计划与进度已落库；基线558 passed、3 skipped（5.79s），一项既有Starlette弃用提示。quality、queue、executor互不冲突模块已分派，root集成默认交付。
 
-- 已现场确认当前 main=e252fce，7 个修改文件+2个未跟踪文件。
-- 方案已写入；基线全测 501 passed / 3 skipped（5.32s），一项现有 Starlette 测试客户端弃用提示。
-- 实时远端默认分支仍为 codex/bilifan-foundation=b500633；本地领先 37 个提交，无远端独有提交。
-- 独立审查分工：现存运维改动；成果保护设计；长视频准入兼容性。
-- 现存运维/路径改动独立 review：无 P0/P1，40 项 focused tests 通过；发现 launchd 固定参数与环境变量文档不一致，批次 1 将澄清 legacy 适用范围。
-- 批次 0 已提交 51dfdb3 并推送 origin/main：旧有 37 个提交和方案/进度均已同步，本地 main 已跟踪 origin/main。
+## Current status
 
-### 1 - 既有运维/路径改动（审查完成）
-
-- 运维独立 review 的 P2 文档误导已修：明确环境变量仅适用 foreground/legacy，launchd 使用固定部署参数。
-- 服务管理、脚本与路径兼容 40 项 focused tests 通过；无实际凭据进入待提交内容。
-- 运维批次 303b9e4、路径兼容批次 0fce66f 已分别推送。GitHub 默认分支已设为 main；旧 foundation 分支保留。
-- 平台审批曾因未识别目标授权拒绝公开推送；用户随后直接确认该范围，后续推送成功。未修改服务。
-
-### 2 - 保护旧成果（验证完成）
-
-- 回归先红：7 failed / 1 passed，覆盖文章/摘要/第二个 HTML/第二个 PDF/bundle、缺 chunks，以及尽力 PDF 产生残片。
-- 实现选择：同磁盘隔离副本生成，普通发布失败回滚，保留原 run_key/latest；同 run 文件锁。无需迁移历史目录或改外部结果链接。
-- 成功才替换整套文件；失败另存 retry_diagnostics.json，旧 diagnostics 与成果字节不变。成功后旧显式 JSONL 失效，需重新导出。
-- 独立 review：未见 P0/P1/P2 阻塞，38 项 retry/workspace tests 通过；reviewer另跑2项Web集成测试通过。
-- 主验证 159 passed（1.61s）：retry/workspace/web_jobs/web_history；真实重试路径证明旧HTML仍可读取、成功历史与latest不变、纳百川可导出，本次失败单独呈现。
-- 明确限制：临时复制增加磁盘使用；两次 rename 并非断电原子交换，极端中断备份保留供恢复。README 已记录。
-- 批次提交 b5a67b1 已推送 origin/main。
-
-### 3 - 备用音频误删（验证完成）
-
-- 回归先红：首候选时长/下载/转换/探测失败后备用成功的4项测试全部因最终MP3不存在而失败。
-- 仅在成功候选通过时长检查后清除先前 last_error，保留成功MP3；失败清理和时长容差不变。
-- 主验证 media+pipeline 37 passed（0.14s）。独立 reviewer 无阻塞，另行离线验证16种两候选均失败组合，错误和清理均正确。
-- 批次提交 759cb9e 已推送 origin/main。
-
-### 4 - 超长视频提前拦截（验证完成）
-
-- 新回归修前 20 failed / 4 passed：证明旧实现拒绝前已进入下载/转录，且缺少准确操作反馈。
-- 共享 validate_video_duration 规则前置到 metadata 写入后；尚未开始音频/字幕/Whisper/AI。90–180确认通过后复用标志，未知/错误元数据保留chunking兜底。
-- 失败有 metadata 阶段 diagnostics；无确认callback也记录清楚状态。历史超长错误显示中文提示，明确修改高级设置后重新提交，而非原样重新排队。
-- 171 项定向测试通过（1.74s），覆盖CLI、单条Web、批量与飞书拒绝/允许映射。独立review核心无阻塞，另验9个边界和3个pipeline组合通过。
-- 历史样本只读回放：复制成功P3到临时目录，模拟AI失败后8项旧文件hash不变；真实9月P98元数据（11602秒）重放时下载/转录/文章/摘要调用均为0。未写真实outputs。
-- 第三项入口独立review已收口：单条/批量/飞书×允许/拒绝、CLI及后段确认全部核对，无阻塞。
-- 最终全套 558 passed / 3 skipped（5.72s），一项原有Starlette弃用提示；git diff --check通过。三个跳过项为需显式开关的联网metadata smoke，本次修复不改metadata获取。
-- 批次 5ab1bac 已推送。最后总review未发现代码阻塞项，指出README将“错误元数据兜底”描述得过宽；已澄清：音频用实测时长，仅字幕仍优先元数据，缺失才用末时间戳。本轮没有加入字幕元数据真实性检查。
-
-### 5 - 最终交付
-
-- 最终独立总review通过，无未解决P0/P1/P2；文档P2已关闭。
-- 完整验收记录：`docs/reviews/2026-09-29-delivery-reliability-verification.md`，含批次、先红后绿证据、实际资料隔离回放、review结论与明确边界。
-- 所有业务改动已经分批推送；最终文档单独收尾提交，交付时现场核查本地HEAD=origin/main、GitHub默认分支main及无待提交文件。
-- 未部署/重启常驻服务、未调用外部AI或发送消息、未修改真实outputs/配置/凭据。进程下次正常重启后加载新代码。
-
-### 6 - 用户要求重启并加载（完成）
-
-- 用户明确请求后确认没有活跃或排队任务，执行已有remote restart。
-- Web/Tunnel新PID分别42964/42968，健康检查通过，Tunnel 4连接，watchdog已加载。
-- 公网登录页后实际任务中心恢复，历史163条；新增超长视频中文提示已出现，确认加载73e004b中的修复。
-- 未运行新视频、未改凭据；本轮仅追加运行验收文档，不改业务源码。
-
-## Current Status
-
-State: complete
-
-Next action：本轮源码目标完成。运行验证若随后需要，使用既定公网入口并先核对Web/Tunnel；不自动开展下一轮功能扩展。
+active。保持用户完整范围，不以局部通过代替交付。
