@@ -706,7 +706,7 @@ def render_app_html(token: str = "") -> str:
                               <span>必须生成 PDF</span>
                             </label>
                             <label class="check" for="allow-long-video">
-                              <input id="allow-long-video" name="allow_long_video" type="checkbox">
+                              <input id="allow-long-video" name="allow_long_video" type="checkbox" checked>
                               <span>允许长视频</span>
                             </label>
                           </div>
@@ -1931,7 +1931,7 @@ def render_app_html(token: str = "") -> str:
                 body: JSON.stringify({
                   from_stage: stage,
                   force_article: forceArticle,
-                  ...(elements.allowLongVideo.checked ? {allow_long_video: true} : {}),
+                  allow_long_video: elements.allowLongVideo.checked,
                   format: elements.formatSelect.value,
                   require_pdf: elements.requirePdf.checked,
                 }),

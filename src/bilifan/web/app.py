@@ -47,7 +47,7 @@ WEB_DEFAULTS = {
     "with_frames": False,
     "with_diagrams": False,
     "require_pdf": False,
-    "allow_long_video": False,
+    "allow_long_video": True,
 }
 EXPORT_FILE_PATTERN = re.compile(
     r"nabaichuan_batch_[0-9]{8}_[0-9]{6}_[0-9]{6}(?:\.jsonl|\.report\.json)"

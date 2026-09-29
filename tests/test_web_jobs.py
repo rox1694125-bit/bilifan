@@ -99,7 +99,7 @@ def test_config_and_consent_endpoints(tmp_path, monkeypatch):
         "with_frames": False,
         "with_diagrams": False,
         "require_pdf": False,
-        "allow_long_video": False,
+        "allow_long_video": True,
     }
 
     response = client.post("/api/consent", headers=_headers())
@@ -482,7 +482,7 @@ def test_job_payload_uses_web_defaults(tmp_path, monkeypatch):
     assert calls[0].with_diagrams is False
     assert calls[0].force_whisper is False
     assert calls[0].require_pdf is False
-    assert calls[0].allow_long_video is False
+    assert calls[0].allow_long_video is True
 
 
 def test_batch_jobs_endpoint_runs_queue_and_persists_state(tmp_path, monkeypatch):
