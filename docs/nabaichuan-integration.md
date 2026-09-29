@@ -1,71 +1,39 @@
-# Nabaichuan Integration
+# 纳百川导出文件契约
 
-Bilifan integrates with Nabaichuan by generating JSONL files from
-`content_bundle.json`. A successful Bilifan run automatically writes
-`nabaichuan.jsonl` in the run directory. External systems should read or import
-that JSONL file; they do not write back into Bilifan.
+Bilifan 只在用户主动操作时，从 content_bundle.json 生成本地 JSONL。它不自动写入纳百川，也不调用外部知识库接口。
 
-Stable fields:
+## Bundle v1
 
-- `schema_version`
-- `contract.name`
-- `contract.schema_version`
-- `contract.compatibility`
-- `bundle_id`
-- `source.platform`
-- `source.id`
-- `source.part_id`
-- `source.canonical_url`
-- `source.title`
-- `source.author`
-- `summary.chapters`
-- `summary.chapters[].timestamp_url`
-- `transcript.segments`
-- `provenance`
+保留 schema_version=1、contract、bundle_id、source、transcript、transcript_article、artifacts、provenance。新增 output_profile=transcript_article_v1 和统一 quality。
 
-Generated Nabaichuan records use the same schema as
-`bilifan.exports.build_nabaichuan_records`:
+新结果的 summary 表示未生成：status=not_generated、style为空、chapters为空，summary_validation.status=not_applicable。没有主报告不算缺失。旧带 summary.chapters 的 bundle 仍可读取，但新的逐字稿导出不复制其解读章节。
 
-| Record type | Key fields |
-| --- | --- |
-| `video` | `schema_version`, `export_contract`, `bundle_id`, `run_key`, `record_id`, `content_hash`, `source`, `title`, `text` |
-| `chapter` | `schema_version`, `export_contract`, `bundle_id`, `run_key`, `record_id`, `content_hash`, `source`, `chapter_id`, `parent_record_id`, `chapter_index`, `title`, `summary`, `key_points`, `start`, `end`, `timestamp_url`, `text` |
-| `transcript_segment` | `schema_version`, `export_contract`, `bundle_id`, `run_key`, `record_id`, `content_hash`, `source`, `parent_record_id`, `chapter_id`, `start`, `end`, `timestamp_url`, `text` |
+## JSONL记录
 
-`schema_version` is currently `1`, and `export_contract` is
-`bilifan.nabaichuan.records.v1`. `run_key` is present when the export comes
-from a Bilifan run directory. `content_hash` is deterministic for the record
-content and ignores export metadata such as `schema_version`, `export_contract`,
-and `run_key`.
+| 类型 | 内容 |
+|---|---|
+| video | 视频来源、标题、稳定ID与质量信息 |
+| transcript_segment | 优先整理稿段落，缺整理稿时原稿段落；时间链接、text_source和质量信息 |
 
-Manual conversion remains available when you already have a bundle file:
+不再新导出 chapter 记录。段落的 parent_record_id 指向 video，chapter_id=null。保持 schema_version=1、export_contract=bilifan.nabaichuan.records.v1，以及既有 record_id 生成方式。run_key 仅在从run导出时可得。
+
+每条记录携带 quality；text_source 明确 transcript_article 或 raw_transcript。content_hash 按正文和质量等记录内容计算，忽略run_key等导出元数据；质量变化可以改变hash，记录身份不变。外部已经导入的旧chapter不会被本项目自动删除。
+
+## 复查策略
+
+默认不导出 review_required 内容；单条明确返回未导出，批量跳过并列出原因。显式include_review_required=true仅允许本次纳入，文件仍带警告，不标人工审核通过。
+
+历史导出使用已有原稿和完整metadata执行能做的本地检查；缺失依据保留unknown。升级不批量重写旧HTML/PDF，也不承诺外部纳百川已经消费质量字段。
+
+Web批量导出生成JSONL和report.json，记录exported/skipped、原因、数量与文件链接。
 
 ```bash
-python examples/content_bundle_to_nabaichuan.py \
-  outputs/BV1abcDEF12G_p1/runs/2026-06-09_120000/content_bundle.json \
-  --out /tmp/nabaichuan.jsonl
+python examples/content_bundle_to_nabaichuan.py /path/to/content_bundle.json --out /tmp/nabaichuan.jsonl
+# 只有明确选择纳入需复查内容时加以下选项
+python examples/content_bundle_to_nabaichuan.py /path/to/content_bundle.json --out /tmp/nabaichuan.jsonl --include-review-required
 ```
 
-Transcript segment records are included by default. `--include-transcript` is
-kept for compatibility, and `--no-transcript` disables transcript segments:
-
-```bash
-python examples/content_bundle_to_nabaichuan.py \
-  outputs/BV1abcDEF12G_p1/runs/2026-06-09_120000/content_bundle.json \
-  --out /tmp/nabaichuan-without-transcript.jsonl \
-  --no-transcript
-```
-
-The local Web UI can export one successful run to `nabaichuan.jsonl` and can
-batch-export all successful history runs to a timestamped JSONL file. Batch
-export also writes `nabaichuan_batch_<timestamp>.report.json` with `export_id`,
-exported/skipped counts, `records_written`, and per-run status. These actions
-generate local files only; they do not call Nabaichuan APIs or mutate an
-external system.
-
-The converter does not import Nabaichuan code and does not depend on Bilifan run
-directory internals. It reads only the bundle file passed on the command line
-and writes JSONL to the requested output path.
+--include-transcript保留兼容；--no-transcript仅输出video记录。转换器在同目录原稿/metadata可得时会重检，并只向--out指定位置写JSONL。重新整理后原先显式导出的JSONL失效，请重新导出。
 
 ## Bilifan Feishu Runtime Boundary
 
