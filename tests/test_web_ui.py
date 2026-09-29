@@ -56,14 +56,8 @@ def test_render_app_html_contains_workbench_contract():
         "history-summary",
         "url-input",
         "format-select",
-        "summary-template-select",
         "language-select",
         "force-whisper",
-        "with-diagrams",
-        "with-frames",
-        "实验性图解",
-        "实验性截图",
-        "实验功能仅作为辅助理解",
         "require-pdf",
         "allow-long-video",
         "start-button",
@@ -90,12 +84,11 @@ def test_render_app_html_contains_workbench_contract():
         "/api/jobs",
         "/api/jobs/current",
         "setInterval",
-        "逐字稿文章",
+        "整理逐字稿",
         "主报告",
         "逐字稿 PDF",
         "报告 PDF",
         "导出",
-        "AI 自动判断",
         "更多",
         "纳百川",
         "batch-nabaichuan-button",
@@ -119,14 +112,13 @@ def test_render_app_html_contains_workbench_contract():
         "data-folder-url",
         "openFolder",
         "retryAction",
-        "重新生成总结",
-        "教程步骤",
-        "观点提炼",
-        "会议纪要",
+        "继续整理逐字稿",
     ]
 
     for marker in required_strings:
         assert marker in html
+    for legacy in ("summary-template-select", "with-diagrams", "with-frames"):
+        assert f'id="{legacy}"' not in html
 
 
 def test_render_app_html_can_embed_token_for_fixed_entrypoint():
@@ -175,7 +167,7 @@ def test_render_app_html_contains_frontend_state_guards():
     html = render_app_html()
 
     assert "必要时下载当前 P 音频" in html
-    assert "默认会调用你配置的 Codex CLI 总结逐字稿" in html
+    assert "默认会调用你配置的 Codex CLI 整理逐字稿" in html
     assert "逐字稿文本可能发送到该 Codex 账号背后的模型服务" in html
     assert "local summary workbench" not in html
     assert "latest run / artifacts" not in html
@@ -184,7 +176,7 @@ def test_render_app_html_contains_frontend_state_guards():
     assert "required" in html
     assert "state.currentStatus" in html
     assert (
-        'elements.startButton.disabled = state.authExpired || !state.consentAccepted || ["running", "canceling"].includes(state.currentStatus)'
+        'elements.startButton.disabled = state.authExpired || !state.consentAccepted'
         in html
     )
     assert "markAuthExpired" in html
@@ -273,7 +265,7 @@ def test_current_task_advanced_options_are_collapsed_by_default():
     assert "current-options-summary" in html
 
 
-def test_render_app_script_disables_start_without_consent_or_while_running():
+def test_render_app_script_disables_without_consent_but_allows_queueing_while_running():
     script = _extract_inline_script(render_app_html())
 
     _run_node_ui_harness(
@@ -330,7 +322,7 @@ def test_render_app_script_disables_start_without_consent_or_while_running():
         }
         """,
         assertions="""
-        assert.equal(elements["start-button"].disabled, true);
+        assert.equal(elements["start-button"].disabled, false);
         assert.equal(elements["job-message"].textContent, "Fetching metadata.");
         """,
     )
@@ -374,7 +366,7 @@ def test_render_app_script_blocks_empty_url_before_posting_job():
     )
 
 
-def test_render_app_script_defaults_summary_template_to_auto_when_config_omits_it():
+def test_render_app_script_has_no_report_template_selector():
     script = _extract_inline_script(render_app_html())
 
     _run_node_ui_harness(
@@ -400,7 +392,7 @@ def test_render_app_script_defaults_summary_template_to_auto_when_config_omits_i
         }
         """,
         assertions="""
-        assert.equal(elements["summary-template-select"].value, "AI 自动判断");
+        assert.equal(elements["summary-template-select"], undefined);
         """,
     )
 
@@ -472,14 +464,14 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         """,
         assertions="""
         assert.equal(elements["language-select"].value, "en");
-        assert.equal(elements["summary-template-select"].value, "教程步骤");
-        assert(elements["history-list"].innerHTML.includes("逐字稿文章"));
+        assert.equal(elements["summary-template-select"], undefined);
+        assert(elements["history-list"].innerHTML.includes("整理逐字稿"));
         assert(elements["history-list"].innerHTML.includes("主报告"));
         assert(elements["history-list"].innerHTML.includes("逐字稿 PDF"));
         assert(elements["history-list"].innerHTML.includes("报告 PDF"));
         assert(elements["history-list"].innerHTML.includes("导出到纳百川"));
         assert(elements["history-list"].innerHTML.includes("打开本地文件夹"));
-        assert(elements["result-links"].innerHTML.includes("逐字稿文章"));
+        assert(elements["result-links"].innerHTML.includes("整理逐字稿"));
         assert(elements["result-links"].innerHTML.includes("主报告"));
         assert(elements["result-links"].innerHTML.includes("逐字稿 PDF"));
         assert(elements["result-links"].innerHTML.includes("报告 PDF"));
@@ -504,16 +496,16 @@ def test_render_app_script_submits_language_and_renders_export_actions():
 
         elements["url-input"].value = "https://www.bilibili.com/video/BV1abcDEF12G";
         elements["language-select"].value = "en";
-        elements["summary-template-select"].value = "观点提炼";
-        elements["with-diagrams"].checked = true;
-        elements["with-frames"].checked = true;
+
+
+
         await elements["job-form"].listeners.submit({ preventDefault() {} });
         await flush();
         const jobCall = fetchCalls.find((call) => call.path === "/api/jobs");
         assert.equal(JSON.parse(jobCall.body).language, "en");
-        assert.equal(JSON.parse(jobCall.body).summary_template, "观点提炼");
-        assert.equal(JSON.parse(jobCall.body).with_diagrams, true);
-        assert.equal(JSON.parse(jobCall.body).with_frames, true);
+        assert.equal(JSON.parse(jobCall.body).summary_template, undefined);
+        assert.equal(JSON.parse(jobCall.body).with_diagrams, undefined);
+        assert.equal(JSON.parse(jobCall.body).with_frames, undefined);
 
         elements["batch-urls"].value = "https://www.bilibili.com/video/BV1abcDEF12G\\nhttps://www.youtube.com/watch?v=dQw4w9WgXcQ";
         await elements["batch-submit-button"].listeners.click();
@@ -521,9 +513,9 @@ def test_render_app_script_submits_language_and_renders_export_actions():
         const batchCall = fetchCalls.find((call) => call.path === "/api/jobs/batch");
         const batchBody = JSON.parse(batchCall.body);
         assert.equal(batchBody.urls.length, 2);
-        assert.equal(batchBody.summary_template, "观点提炼");
-        assert.equal(batchBody.with_diagrams, true);
-        assert.equal(batchBody.with_frames, true);
+        assert.equal(batchBody.summary_template, undefined);
+        assert.equal(batchBody.with_diagrams, undefined);
+        assert.equal(batchBody.with_frames, undefined);
 
         const clickTarget = {
           closest(selector) {
@@ -582,21 +574,20 @@ def test_render_app_script_updates_current_options_summary_and_keeps_advanced_op
         """,
         assertions="""
         assert(elements["current-options-summary"].textContent.includes("HTML + PDF"));
-        assert(elements["current-options-summary"].textContent.includes("AI 自动判断"));
+        assert(!elements["current-options-summary"].textContent.includes("AI 自动判断"));
         assert(elements["current-options-summary"].textContent.includes("自动语言"));
 
-        elements["summary-template-select"].value = "观点提炼";
         elements["language-select"].value = "en";
-        elements["with-diagrams"].checked = true;
+
         elements["require-pdf"].checked = true;
-        elements["summary-template-select"].listeners.change();
+
         elements["language-select"].listeners.change();
-        elements["with-diagrams"].listeners.change();
+
         elements["require-pdf"].listeners.change();
 
-        assert(elements["current-options-summary"].textContent.includes("观点提炼"));
+        assert(!elements["current-options-summary"].textContent.includes("观点提炼"));
         assert(elements["current-options-summary"].textContent.includes("英文"));
-        assert(elements["current-options-summary"].textContent.includes("图解"));
+        assert(!elements["current-options-summary"].textContent.includes("图解"));
         assert(elements["current-options-summary"].textContent.includes("必须 PDF"));
 
         elements["url-input"].value = "https://www.bilibili.com/video/BV1abcDEF12G";
@@ -604,9 +595,9 @@ def test_render_app_script_updates_current_options_summary_and_keeps_advanced_op
         await flush();
         const jobCall = fetchCalls.find((call) => call.path === "/api/jobs");
         const jobBody = JSON.parse(jobCall.body);
-        assert.equal(jobBody.summary_template, "观点提炼");
+        assert.equal(jobBody.summary_template, undefined);
         assert.equal(jobBody.language, "en");
-        assert.equal(jobBody.with_diagrams, true);
+        assert.equal(jobBody.with_diagrams, undefined);
         assert.equal(jobBody.require_pdf, true);
 
         elements["batch-urls"].value = "https://www.bilibili.com/video/BV1queueTEST";
@@ -614,9 +605,9 @@ def test_render_app_script_updates_current_options_summary_and_keeps_advanced_op
         await flush();
         const batchCall = fetchCalls.find((call) => call.path === "/api/jobs/batch");
         const batchBody = JSON.parse(batchCall.body);
-        assert.equal(batchBody.summary_template, "观点提炼");
+        assert.equal(batchBody.summary_template, undefined);
         assert.equal(batchBody.language, "en");
-        assert.equal(batchBody.with_diagrams, true);
+        assert.equal(batchBody.with_diagrams, undefined);
         assert.equal(batchBody.require_pdf, true);
         """,
     )
@@ -703,7 +694,7 @@ def test_render_app_script_previews_collection_and_can_submit_current_or_selecte
           { url: "https://www.bilibili.com/video/BV1abcDEF12G?p=2", title: "第二课" },
           { url: "https://www.bilibili.com/video/BV1abcDEF12G?p=3", title: "第三课" }
         ]);
-        assert.equal(batchBody.summary_template, "观点提炼");
+        assert.equal(batchBody.summary_template, undefined);
 
         await elements["collection-mode-current"].listeners.click();
         await elements["collection-submit-button"].listeners.click();
@@ -1341,7 +1332,7 @@ def test_render_app_script_queue_failed_item_shows_friendly_error():
         assert(elements["queue-list"].innerHTML.includes("音频下载超时或中断"));
         assert(elements["queue-list"].innerHTML.includes("B 站音频流读取失败"));
         assert(elements["queue-list"].innerHTML.includes("尝试使用浏览器 cookies"));
-        assert(elements["queue-list"].innerHTML.includes("重新排队"));
+        assert(elements["queue-list"].innerHTML.includes("恢复处理"));
         assert(!elements["queue-list"].innerHTML.includes("阶段: media"));
         """,
     )
@@ -1451,7 +1442,7 @@ def test_render_app_script_task_center_shows_current_job_item():
         assert(elements["queue-list"].innerHTML.includes("单个入口视频标题"));
         assert(!elements["queue-list"].innerHTML.includes("class=\\"queue-url\\""));
         assert(!elements["queue-list"].innerHTML.includes("<span>阶段: 生成文件</span>"));
-        assert(!elements["queue-list"].innerHTML.includes("重新排队"));
+        assert(!elements["queue-list"].innerHTML.includes("恢复处理"));
         assert.equal(elements["queue-clear-completed-button"].disabled, true);
         """,
     )
@@ -1604,7 +1595,7 @@ def test_render_app_script_renders_stage_names_in_chinese():
         assert(elements["stage-list"].innerHTML.includes("任务: 运行中"));
         assert(!elements["stage-list"].innerHTML.includes(">audio<"));
         assert(elements["queue-list"].innerHTML.includes("服务中断"));
-        assert(elements["history-list"].innerHTML.includes("失败阶段: 生成总结"));
+        assert(elements["history-list"].innerHTML.includes("失败阶段: 整理逐字稿"));
         """,
     )
 
@@ -1724,8 +1715,8 @@ def test_render_app_script_exports_nabaichuan_from_history_and_batch_button():
         assertions="""
         assert(elements["history-list"].innerHTML.includes("导出到纳百川"));
         assert(elements["result-links"].innerHTML.includes("导出到纳百川"));
-        assert(elements["history-list"].innerHTML.includes("重新生成总结"));
-        assert(elements["result-links"].innerHTML.includes("重新生成总结"));
+        assert(elements["history-list"].innerHTML.includes("继续整理逐字稿"));
+        assert(elements["result-links"].innerHTML.includes("继续整理逐字稿"));
 
         const nabaichuanTarget = {
           closest(selector) {
@@ -1757,9 +1748,9 @@ def test_render_app_script_exports_nabaichuan_from_history_and_batch_button():
         await flush();
         const resummarizeCall = fetchCalls.find((call) => call.method === "POST" && call.path.endsWith("/retry"));
         assert.equal(JSON.parse(resummarizeCall.body).from_stage, "summarization");
-        assert.equal(JSON.parse(resummarizeCall.body).summary_template, "会议纪要");
-        assert.equal(JSON.parse(resummarizeCall.body).with_diagrams, false);
-        assert.equal(JSON.parse(resummarizeCall.body).with_frames, false);
+        assert.equal(JSON.parse(resummarizeCall.body).summary_template, undefined);
+        assert.equal(JSON.parse(resummarizeCall.body).with_diagrams, undefined);
+        assert.equal(JSON.parse(resummarizeCall.body).with_frames, undefined);
 
         await elements["batch-nabaichuan-button"].listeners.click();
         await flush();
@@ -1826,7 +1817,7 @@ def test_render_app_script_cancels_running_job_and_retries_failed_run():
         assert(elements["failure-panel"].innerHTML.includes("Codex CLI 未找到"));
         assert(elements["failure-panel"].innerHTML.includes("下一步"));
         assert(elements["failure-panel"].innerHTML.includes("优先尝试"));
-        assert(elements["failure-panel"].innerHTML.includes("重试总结"));
+        assert(elements["failure-panel"].innerHTML.includes("继续整理逐字稿"));
         assert(!elements["failure-panel"].innerHTML.includes("诊断信息"));
         assert(!elements["failure-panel"].innerHTML.includes("文件列表"));
 
@@ -1846,9 +1837,9 @@ def test_render_app_script_cancels_running_job_and_retries_failed_run():
         await flush();
         const retryCall = fetchCalls.find((call) => call.method === "POST" && call.path.includes("/retry"));
         assert.equal(JSON.parse(retryCall.body).from_stage, "summarization");
-        assert.equal(JSON.parse(retryCall.body).summary_template, "会议纪要");
-        assert.equal(JSON.parse(retryCall.body).with_diagrams, false);
-        assert.equal(JSON.parse(retryCall.body).with_frames, false);
+        assert.equal(JSON.parse(retryCall.body).summary_template, undefined);
+        assert.equal(JSON.parse(retryCall.body).with_diagrams, undefined);
+        assert.equal(JSON.parse(retryCall.body).with_frames, undefined);
         """,
     )
 
@@ -1900,7 +1891,7 @@ def test_render_app_script_retries_failed_history_item_with_its_run_key():
         assertions="""
         assert(elements["history-list"].innerHTML.includes("Codex CLI 未找到"));
         assert(elements["history-list"].innerHTML.includes("找不到 codex。"));
-        assert(elements["history-list"].innerHTML.includes("重试总结"));
+        assert(elements["history-list"].innerHTML.includes("继续整理逐字稿"));
 
         const retryTarget = {
           closest(selector) {
@@ -1920,9 +1911,9 @@ def test_render_app_script_retries_failed_history_item_with_its_run_key():
         const retryCall = fetchCalls.find((call) => call.method === "POST" && call.path.includes("/retry"));
         assert.equal(retryCall.path, "/api/runs/BV1abcDEF12G_p1/runs/2026-06-08_120000/retry");
         assert.equal(JSON.parse(retryCall.body).from_stage, "summarization");
-        assert.equal(JSON.parse(retryCall.body).summary_template, "观点提炼");
-        assert.equal(JSON.parse(retryCall.body).with_diagrams, false);
-        assert.equal(JSON.parse(retryCall.body).with_frames, false);
+        assert.equal(JSON.parse(retryCall.body).summary_template, undefined);
+        assert.equal(JSON.parse(retryCall.body).with_diagrams, undefined);
+        assert.equal(JSON.parse(retryCall.body).with_frames, undefined);
         """,
     )
 

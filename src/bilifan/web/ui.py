@@ -620,7 +620,8 @@ def render_app_html(token: str = "") -> str:
                       <button id="history-toggle-button" class="compact secondary" type="button" hidden>展开更多</button>
                     </div>
                   </div>
-                  <ul id="history-list" class="history-list"></ul>
+                  <details id="legacy-reports-panel"><summary>历史主报告</summary><ul id="legacy-report-list" class="history-list"></ul></details>
+                    <ul id="history-list" class="history-list"></ul>
                 </div>
               </aside>
 
@@ -639,7 +640,7 @@ def render_app_html(token: str = "") -> str:
                       <div class="banner-row">
                         <div class="stack" style="gap:4px;">
                           <h2>需要先确认本地处理告知</h2>
-                          <p class="subtle">Bilifan 会在这台电脑本地处理任务，必要时下载当前 P 音频，并把输出文件保存到 ./outputs。默认会调用你配置的 Codex CLI 总结逐字稿，逐字稿文本可能发送到该 Codex 账号背后的模型服务。</p>
+                          <p class="subtle">Bilifan 会在这台电脑本地处理任务，必要时下载当前 P 音频，并把输出文件保存到 ./outputs。默认会调用你配置的 Codex CLI 整理逐字稿，逐字稿文本可能发送到该 Codex 账号背后的模型服务。</p>
                           <p class="subtle">未接受前不会启动新任务。</p>
                         </div>
                         <button id="consent-button" type="button">接受并继续</button>
@@ -652,7 +653,7 @@ def render_app_html(token: str = "") -> str:
                         <input id="url-input" name="url" type="url" required autocomplete="off" spellcheck="false">
                       </label>
 
-                      <div id="current-options-summary" class="options-summary">HTML + PDF · AI 自动判断 · 自动语言</div>
+                      <div id="current-options-summary" class="options-summary">原始稿 + 整理逐字稿 · HTML + PDF · 自动语言</div>
 
                       <details id="advanced-settings" class="advanced-settings">
                         <summary>高级设置</summary>
@@ -663,16 +664,6 @@ def render_app_html(token: str = "") -> str:
                               <select id="format-select" name="format">
                                 <option value="html">HTML</option>
                                 <option value="html,pdf">HTML + PDF</option>
-                              </select>
-                            </label>
-                            <label for="summary-template-select">
-                              总结模板
-                              <select id="summary-template-select" name="summary_template">
-                                <option value="AI 自动判断">AI 自动判断</option>
-                                <option value="学习笔记">学习笔记</option>
-                                <option value="教程步骤">教程步骤</option>
-                                <option value="观点提炼">观点提炼</option>
-                                <option value="会议纪要">会议纪要</option>
                               </select>
                             </label>
                             <label for="language-select">
@@ -691,14 +682,6 @@ def render_app_html(token: str = "") -> str:
                               <input id="force-whisper" name="force_whisper" type="checkbox">
                               <span>强制重新转写</span>
                             </label>
-                            <label class="check" for="with-diagrams">
-                              <input id="with-diagrams" name="with_diagrams" type="checkbox">
-                              <span>实验性图解</span>
-                            </label>
-                            <label class="check" for="with-frames">
-                              <input id="with-frames" name="with_frames" type="checkbox">
-                              <span>实验性截图</span>
-                            </label>
                             <label class="check" for="require-pdf">
                               <input id="require-pdf" name="require_pdf" type="checkbox">
                               <span>必须生成 PDF</span>
@@ -708,7 +691,7 @@ def render_app_html(token: str = "") -> str:
                               <span>允许长视频</span>
                             </label>
                           </div>
-                          <p class="hint">批量任务会使用这里的当前设置；实验功能仅作为辅助理解。</p>
+                          <p class="hint">单条、批量与飞书均保存原稿并生成整理稿，不再生成解读式主报告。</p>
                         </div>
                       </details>
 
@@ -793,7 +776,7 @@ def render_app_html(token: str = "") -> str:
               media: "下载音频",
               transcript: "获取逐字稿",
               chunking: "拆分内容",
-              summarization: "生成总结",
+              summarization: "整理逐字稿",
               render: "生成文件",
               interrupted: "服务中断",
               canceled: "已取消",
@@ -836,11 +819,8 @@ def render_app_html(token: str = "") -> str:
               urlInput: document.getElementById("url-input"),
               currentOptionsSummary: document.getElementById("current-options-summary"),
               formatSelect: document.getElementById("format-select"),
-              summaryTemplateSelect: document.getElementById("summary-template-select"),
               languageSelect: document.getElementById("language-select"),
               forceWhisper: document.getElementById("force-whisper"),
-              withDiagrams: document.getElementById("with-diagrams"),
-              withFrames: document.getElementById("with-frames"),
               requirePdf: document.getElementById("require-pdf"),
               allowLongVideo: document.getElementById("allow-long-video"),
               startButton: document.getElementById("start-button"),
@@ -869,6 +849,15 @@ def render_app_html(token: str = "") -> str:
               failurePanel: document.getElementById("failure-panel"),
             };
 
+            state.followedJobId = typeof sessionStorage !== "undefined" ? sessionStorage.getItem("bilifan-followed-job") : null;
+            function followJob(jobId) {
+              state.followedJobId = jobId || null;
+              if (typeof sessionStorage !== "undefined") {
+                if (jobId) sessionStorage.setItem("bilifan-followed-job", jobId);
+                else sessionStorage.removeItem("bilifan-followed-job");
+              }
+            }
+
             function withToken(url) {
               if (!url) return "";
               const resolved = new URL(url, location.origin);
@@ -893,15 +882,19 @@ def render_app_html(token: str = "") -> str:
                   throw new Error(markAuthExpired());
                 }
                 let detail = response.statusText || "Request failed.";
+                let responsePayload = {};
                 try {
                   const payload = await response.json();
+                  responsePayload = payload || {};
                   if (payload && typeof payload.detail === "string") {
                     detail = payload.detail;
                   }
                 } catch (error) {
                   // ignore json parse failure
                 }
-                throw new Error(detail);
+                const requestError = new Error(detail);
+                requestError.payload = responsePayload;
+                throw requestError;
               }
               return response.json();
             }
@@ -965,8 +958,8 @@ def render_app_html(token: str = "") -> str:
             }
 
             function updateStartButton() {
-              elements.startButton.disabled = state.authExpired || !state.consentAccepted || ["running", "canceling"].includes(state.currentStatus);
-              elements.cancelButton.disabled = state.authExpired || state.currentStatus !== "running";
+              elements.startButton.disabled = state.authExpired || !state.consentAccepted;
+              elements.cancelButton.disabled = state.authExpired || !["running", "queued"].includes(state.currentStatus);
               elements.batchNabaichuanButton.disabled = state.authExpired || !state.consentAccepted;
               elements.collectionPreviewButton.disabled = state.authExpired || !state.consentAccepted;
               elements.collectionModeCurrent.disabled = state.authExpired || !state.consentAccepted || !state.collectionPreview;
@@ -1063,16 +1056,19 @@ def render_app_html(token: str = "") -> str:
               const exports = [];
               const advanced = [];
 
-              if (safeArtifacts.transcript_html) primary.push(linkItem("逐字稿文章", safeArtifacts.transcript_html, "primary-action"));
-              if (safeArtifacts.html) primary.push(linkItem("主报告", safeArtifacts.html, "primary-action"));
+              if (safeArtifacts.transcript_html) primary.push(linkItem("整理逐字稿", safeArtifacts.transcript_html, "primary-action"));
+              if (safeArtifacts.html) primary.push(linkItem("历史主报告", safeArtifacts.html, "primary-action"));
               if (safeArtifacts.transcript_pdf) primary.push(linkItem("逐字稿 PDF", safeArtifacts.transcript_pdf, "secondary-action"));
-              if (safeArtifacts.pdf) primary.push(linkItem("报告 PDF", safeArtifacts.pdf, "secondary-action"));
+              if (safeArtifacts.pdf) primary.push(linkItem("历史报告 PDF", safeArtifacts.pdf, "secondary-action"));
               if (runKey && status === "succeeded") {
                 advanced.push(nabaichuanButton("导出到纳百川", runKey));
               }
               if (runKey && status === "succeeded") {
-                advanced.push(resummarizeButton("重新生成总结", runKey));
+                advanced.push(resummarizeButton("继续整理逐字稿", runKey));
               }
+              if (safeArtifacts.raw) primary.push(linkItem("原始转录稿 TXT", safeArtifacts.raw, "secondary-action"));
+              if (safeArtifacts.source_zip) exports.push(linkItem("SRT 与质量说明", safeArtifacts.source_zip, "secondary-action"));
+              if (runKey && status === "succeeded") advanced.push(`<button type="button" class="link-button" data-force-article="${escapeAttr(runKey)}">重新整理全部内容</button>`);
               if (safeArtifacts.folder) advanced.push(folderButton("打开本地文件夹", safeArtifacts.folder));
 
               return actionGroups(primary, exports, advanced, options.menuScope || "");
@@ -1210,6 +1206,7 @@ def render_app_html(token: str = "") -> str:
                       <span class="pill ${(item.status || "").toLowerCase()}">${escapeHtml(statusLabel(item.status))}</span>
                       ${stageMeta}
                       ${transcriptMeta}
+                      ${qualityMeta(item)}
                     </div>
                     ${failureDetail}
                     ${retryButtons}
@@ -1289,6 +1286,7 @@ def render_app_html(token: str = "") -> str:
               elements.queueSummary.textContent = queueSummaryText(queue, counts);
               elements.queueClearCompletedButton.disabled = state.authExpired || !state.consentAccepted || !hasFinishedQueueItems(totalCounts);
               updateQueueControls(queue, totalCounts);
+              if (queue.storage_error || queue.execution_error) elements.queueSummary.textContent = queue.waiting_for_execution ? `等待其他任务退出，随后自动继续：${queue.execution_error}` : `队列已停止：${queue.storage_error || queue.execution_error}`;
               const items = queue && Array.isArray(queue.items) ? queue.items : [];
               if (!items.length) {
                 elements.queueList.innerHTML = '<li class="muted-panel">暂无队列任务。</li>';
@@ -1302,8 +1300,8 @@ def render_app_html(token: str = "") -> str:
                 });
                 const queueControls = [];
                 const isQueueItem = item.source !== "current";
-                if (isQueueItem && item.status === "queued") queueControls.push(`<button class="link-button warning-action" type="button" data-queue-cancel="${escapeAttr(item.job_id || "")}">取消排队</button>`);
-                if (isQueueItem && ["failed", "canceled"].includes(item.status)) queueControls.push(`<button class="link-button warning-action" type="button" data-queue-retry="${escapeAttr(item.job_id || "")}">重新排队</button>`);
+                if (isQueueItem && ["queued", "running"].includes(item.status)) queueControls.push(`<button class="link-button warning-action" type="button" data-queue-cancel="${escapeAttr(item.job_id || "")}">${item.status === "running" ? "取消计算" : "取消排队"}</button>`);
+                if (isQueueItem && ["failed", "canceled", "interrupted"].includes(item.status)) queueControls.push(`<button class="link-button warning-action" type="button" data-queue-retry="${escapeAttr(item.job_id || "")}">恢复处理</button>`);
                 const request = item.request && typeof item.request === "object" ? item.request : {};
                 const requestUrl = typeof request.url === "string" ? request.url : "";
                 const displayTitle = queueDisplayTitle(item, requestUrl);
@@ -1328,6 +1326,8 @@ def render_app_html(token: str = "") -> str:
                       ${transcriptMeta}
                       ${timingMeta}
                     </div>
+                    ${qualityMeta(item)}
+                    ${item.metrics && Number.isFinite(item.metrics.total_chunks) ? `<div class="history-meta">整理块：${item.metrics.completed_chunks || 0}/${item.metrics.total_chunks}；本次复用 ${item.metrics.cache_hits || 0} 块；待处理 ${item.metrics.remaining_chunks || 0} 块</div>` : ""}
                     ${messageMarkup}
                     ${failureDetail}
                     ${queueControls.length ? `<div class="action-groups">${queueControls.join("")}</div>` : ""}
@@ -1375,6 +1375,13 @@ def render_app_html(token: str = "") -> str:
               return STAGE_LABELS[stage] || stage || "-";
             }
 
+            function qualityMeta(item) {
+              const quality = item && item.quality || {status: "unknown", reasons: []};
+              const labels = {clean: "自动检查未发现明显异常", needs_review: "需复查", unusable: "不可用", unknown: "未检查"};
+              const detail = (Array.isArray(quality.reasons) ? quality.reasons : []).map(reason => reason.message || "").join("；");
+              return `<span class="pill ${quality.review_required ? "failed" : ""}" title="${escapeAttr(detail)}">质量：${escapeHtml(labels[quality.status] || "未检查")}</span>`;
+            }
+
             function transcriptSourceMeta(item) {
               const label = item && typeof item.transcript_source_label === "string"
                 ? item.transcript_source_label.trim()
@@ -1418,6 +1425,7 @@ def render_app_html(token: str = "") -> str:
                 failed: "失败",
                 canceled: "已取消",
                 canceling: "取消中",
+                interrupted: "中断待恢复",
                 idle: "空闲",
                 pending: "待处理",
                 done: "完成",
@@ -1449,7 +1457,7 @@ def render_app_html(token: str = "") -> str:
                 return "本地 Whisper 转写可能需要较长时间，视频越长等待越久，可以继续等待。";
               }
               if (stage === "summarization" && elapsed >= 180) {
-                return "Codex 正在整理长视频内容，长视频总结会更久，可以继续等待。";
+                return "Codex 正在整理长视频内容，长视频整理会更久，可以继续等待。";
               }
               if (stage === "render" && elapsed >= 90) {
                 return "正在生成文件；PDF 可能较慢，HTML 成功后通常已经可用。";
@@ -1470,12 +1478,9 @@ def render_app_html(token: str = "") -> str:
             function updateOptionsSummary() {
               const parts = [
                 formatLabel(elements.formatSelect.value),
-                elements.summaryTemplateSelect.value || "AI 自动判断",
                 languageLabel(elements.languageSelect.value),
               ];
               if (elements.forceWhisper.checked) parts.push("强制重新转写");
-              if (elements.withDiagrams.checked) parts.push("实验性图解");
-              if (elements.withFrames.checked) parts.push("实验性截图");
               if (elements.requirePdf.checked) parts.push("必须 PDF");
               if (elements.allowLongVideo.checked) parts.push("长视频");
               elements.currentOptionsSummary.textContent = parts.join(" · ");
@@ -1510,7 +1515,7 @@ def render_app_html(token: str = "") -> str:
             }
 
             function retryLabel(stage) {
-              if (stage === "summarization") return "重试总结";
+              if (stage === "summarization") return "继续整理逐字稿";
               if (stage === "render") return "重试渲染";
               if (stage === "bundle") return "重试结构化导出";
               return `重试 ${stage}`;
@@ -1527,11 +1532,8 @@ def render_app_html(token: str = "") -> str:
               const consent = data.consent || {};
               state.consentAccepted = Boolean(consent.local_processing);
               elements.formatSelect.value = defaults.format || "html,pdf";
-              elements.summaryTemplateSelect.value = defaults.summary_template || "AI 自动判断";
               elements.languageSelect.value = defaults.language || "auto";
               elements.forceWhisper.checked = Boolean(defaults.force_whisper);
-              elements.withDiagrams.checked = Boolean(defaults.with_diagrams);
-              elements.withFrames.checked = Boolean(defaults.with_frames);
               elements.requirePdf.checked = Boolean(defaults.require_pdf);
               elements.allowLongVideo.checked = Boolean(defaults.allow_long_video);
               updateOptionsSummary();
@@ -1544,6 +1546,9 @@ def render_app_html(token: str = "") -> str:
               try {
                 const data = await apiFetch("/api/history");
                 renderHistory(data.items || []);
+                const legacy = data.legacy_reports || [];
+                document.getElementById("legacy-reports-panel").hidden = !legacy.length;
+                document.getElementById("legacy-report-list").innerHTML = legacy.map(item => `<li class="history-item"><div class="history-item-title">${escapeHtml(item.title || "历史主报告")}</div><div class="history-meta">${escapeHtml(item.run_id || "")}</div>${item.artifacts.html ? linkItem("历史主报告", item.artifacts.html) : ""}${item.artifacts.pdf ? linkItem("历史报告 PDF", item.artifacts.pdf) : ""}</li>`).join("");
               } catch (error) {
                 if (state.authExpired) return;
                 elements.historyList.innerHTML = `<li class="muted-panel">${escapeHtml(error.message || "History load failed.")}</li>`;
@@ -1577,7 +1582,7 @@ def render_app_html(token: str = "") -> str:
             async function loadCurrentJob() {
               if (state.authExpired) return;
               try {
-                const data = await apiFetch("/api/jobs/current");
+                const data = await apiFetch(state.followedJobId ? `/api/jobs/${state.followedJobId}` : "/api/jobs/current");
                 state.currentStatus = typeof data.status === "string" ? data.status : "idle";
                 state.currentRunKey = typeof data.run_key === "string" ? data.run_key : "";
                 updateStartButton();
@@ -1595,16 +1600,24 @@ def render_app_html(token: str = "") -> str:
                     setJobMessage(data.message || "正在取消任务。");
                   } else if (data.status === "canceled") {
                     setJobMessage(data.message || "任务已取消。");
+                  } else if (data.status === "queued") {
+                    setJobMessage("任务已排队，前面的任务结束后自动开始。");
+                  } else if (data.status === "interrupted") {
+                    setJobMessage("任务因服务中断而停止，已完成内容保留，请在任务中心恢复。", true);
                   } else if (data.status === "succeeded") {
                     setJobMessage(data.message || "Report ready.");
-                    loadHistory();
-                    loadQueue();
+                    if (state.lastCompletedRun !== data.run_key) {
+                      state.lastCompletedRun = data.run_key;
+                      loadHistory();
+                      loadQueue();
+                    }
                   } else {
                     setJobMessage("等待输入。");
                   }
                 }
               } catch (error) {
                 if (state.authExpired) return;
+                if (state.followedJobId && (error.message || "").includes("Task not found")) followJob(null);
                 setJobMessage(error.message || "状态读取失败。", true);
               }
             }
@@ -1634,11 +1647,8 @@ def render_app_html(token: str = "") -> str:
               const payload = {
                 url: elements.urlInput.value.trim(),
                 format: elements.formatSelect.value,
-                summary_template: elements.summaryTemplateSelect.value,
                 language: elements.languageSelect.value,
                 force_whisper: elements.forceWhisper.checked,
-                with_diagrams: elements.withDiagrams.checked,
-                with_frames: elements.withFrames.checked,
                 require_pdf: elements.requirePdf.checked,
                 allow_long_video: elements.allowLongVideo.checked,
               };
@@ -1655,6 +1665,7 @@ def render_app_html(token: str = "") -> str:
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify(payload),
                 });
+                followJob(data.job_id);
                 setJobMessage(`任务已提交: ${data.job_id || "-"}`);
                 await loadCurrentJob();
               } catch (error) {
@@ -1679,11 +1690,8 @@ def render_app_html(token: str = "") -> str:
             function currentOptionsPayload() {
               return {
                 format: elements.formatSelect.value,
-                summary_template: elements.summaryTemplateSelect.value,
                 language: elements.languageSelect.value,
                 force_whisper: elements.forceWhisper.checked,
-                with_diagrams: elements.withDiagrams.checked,
-                with_frames: elements.withFrames.checked,
                 require_pdf: elements.requirePdf.checked,
                 allow_long_video: elements.allowLongVideo.checked,
               };
@@ -1864,7 +1872,7 @@ def render_app_html(token: str = "") -> str:
                 return;
               }
               try {
-                const data = await apiFetch("/api/jobs/current/cancel", { method: "POST" });
+                const data = await apiFetch(state.followedJobId ? `/api/jobs/queue/${state.followedJobId}/cancel` : "/api/jobs/current/cancel", { method: "POST" });
                 state.currentStatus = typeof data.status === "string" ? data.status : "canceling";
                 updateStartButton();
                 setJobMessage("正在取消任务。");
@@ -1874,7 +1882,7 @@ def render_app_html(token: str = "") -> str:
               }
             }
 
-            async function retryAction(stage, runKey) {
+            async function retryAction(stage, runKey, forceArticle = false) {
               if (state.authExpired) {
                 markAuthExpired();
                 return;
@@ -1890,14 +1898,14 @@ def render_app_html(token: str = "") -> str:
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   from_stage: stage,
+                  force_article: forceArticle,
+                  ...(elements.allowLongVideo.checked ? {allow_long_video: true} : {}),
                   format: elements.formatSelect.value,
-                  summary_template: elements.summaryTemplateSelect.value,
-                  with_diagrams: elements.withDiagrams.checked,
-                  with_frames: elements.withFrames.checked,
                   require_pdf: elements.requirePdf.checked,
                 }),
               });
-              state.currentStatus = typeof data.status === "string" ? data.status : "running";
+              followJob(data.job_id);
+              state.currentStatus = typeof data.status === "string" ? data.status : "queued";
               updateStartButton();
               clearFailure();
               setJobMessage(`${retryLabel(stage)}已提交。`);
@@ -1913,24 +1921,34 @@ def render_app_html(token: str = "") -> str:
                 setJobMessage("没有可导出的 run。", true);
                 return;
               }
-              const data = await apiFetch(`/api/runs/${runKey}/exports/nabaichuan`, { method: "POST" });
+              let data;
+              try {
+                data = await apiFetch(`/api/runs/${runKey}/exports/nabaichuan`, { method: "POST" });
+              } catch (error) {
+                if (!(error.payload && error.payload.review_required) || !window.confirm("此内容需复查，默认未导出。仍然导出并保留警告？这不代表人工审核通过。")) throw error;
+                data = await apiFetch(`/api/runs/${runKey}/exports/nabaichuan?include_review_required=true`, { method: "POST" });
+              }
               await loadHistory();
               await loadCurrentJob();
               const artifact = data && typeof data.artifact === "string" ? withToken(data.artifact) : "";
               setJobMessage(artifact ? `Nabaichuan JSONL 已生成: ${artifact}` : "Nabaichuan JSONL 已生成。");
             }
 
-            async function exportNabaichuanBatch() {
+            async function exportNabaichuanBatch(includeReview = false) {
               if (state.authExpired) {
                 markAuthExpired();
                 return;
               }
-              const data = await apiFetch("/api/exports/nabaichuan/batch", { method: "POST" });
+              const data = await apiFetch(`/api/exports/nabaichuan/batch${includeReview ? "?include_review_required=true" : ""}`, { method: "POST" });
               const count = Number.isFinite(Number(data.exported_runs)) ? Number(data.exported_runs) : 0;
               const skipped = Number.isFinite(Number(data.skipped_runs)) ? Number(data.skipped_runs) : 0;
               const records = Number.isFinite(Number(data.records_written)) ? Number(data.records_written) : 0;
               const artifact = data && typeof data.artifact === "string" ? withToken(data.artifact) : "";
               const report = data && typeof data.report === "string" ? withToken(data.report) : "";
+              const reviewSkipped = (data.items || []).filter(item => item.reason === "quality_review_required");
+              if (!includeReview && reviewSkipped.length && window.confirm(`本次默认跳过 ${reviewSkipped.length} 个需复查结果。是否重新导出并明确纳入这些内容、保留警告？`)) {
+                return exportNabaichuanBatch(true);
+              }
               setJobMessage(
                 artifact
                   ? `已批量导出 ${count} 个 run、${records} 条记录，跳过 ${skipped} 个: ${artifact}${report ? `；报告: ${report}` : ""}`
@@ -1969,11 +1987,8 @@ def render_app_html(token: str = "") -> str:
               });
               [
                 elements.formatSelect,
-                elements.summaryTemplateSelect,
                 elements.languageSelect,
                 elements.forceWhisper,
-                elements.withDiagrams,
-                elements.withFrames,
                 elements.requirePdf,
                 elements.allowLongVideo,
               ].forEach((element) => element.addEventListener("change", updateOptionsSummary));
@@ -2020,6 +2035,11 @@ def render_app_html(token: str = "") -> str:
                 rememberOpenMenu(target.getAttribute("data-menu-key"), Boolean(target.open));
               }, true);
               document.addEventListener("click", (event) => {
+                const forceTarget = event.target && event.target.closest ? event.target.closest("[data-force-article]") : null;
+                if (forceTarget) {
+                  if (window.confirm("重新整理全部内容将忽略已有文章块缓存；旧成果在新版成功前保留。继续？")) retryAction("article", forceTarget.getAttribute("data-force-article"), true).catch(error => setJobMessage(error.message, true));
+                  return;
+                }
                 const queueCancelTarget = event.target && event.target.closest
                   ? event.target.closest("[data-queue-cancel]")
                   : null;

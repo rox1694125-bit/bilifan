@@ -588,3 +588,38 @@ def test_marker_fallback_rejects_mismatched_durable_execution_binding(tmp_path, 
     write_run_link(tmp_path / "outputs", "old-job", nonce="different-nonce" if mismatch == "nonce" else "published-nonce", run_key=key)
     with pytest.raises(QueueStorageError, match="绑定不一致"):
         read_completion_receipt(tmp_path / "outputs", "old-job", run_key=completed.run_key)
+
+
+def test_migration_does_not_relabel_historical_outcomes_as_new_article_deliveries(tmp_path):
+    seed(tmp_path, [entry(tmp_path, job_id=f"old-{status}", status=status)
+                    for status in ("succeeded", "failed", "canceled", "queued")], paused=True)
+    queue = manager(tmp_path, paused=True)
+    for status in ("succeeded", "failed", "canceled"):
+        assert queue.get(f"old-{status}").output_profile == "legacy_report"
+        assert queue.get(f"old-{status}").status == status
+    assert queue.get("old-queued").output_profile == "transcript_article_v1"
+    queue.close()
+
+
+def test_canceled_task_exposes_preserved_original_without_claiming_delivery(tmp_path):
+    from bilifan.execution import OperationCanceled
+    saved = result(tmp_path)
+    (saved.run_dir / "transcript.json").write_text('{"segments":[]}')
+    (saved.run_dir / "transcript.txt").write_text('原始转录保留')
+    entered = threading.Event()
+    def run(req, *, event_callback, cancel_event, **kwargs):
+        event_callback({"type": "run_created", "run_key": saved.run_key})
+        entered.set()
+        assert cancel_event.wait(2)
+        raise OperationCanceled("fixture stopped")
+    queue = manager(tmp_path, runner=run)
+    item = queue.submit_one(request(tmp_path))
+    assert entered.wait(2)
+    queue.cancel(item.job_id)
+    queue.close(timeout=2)
+    canceled = queue.get(item.job_id)
+    assert canceled.status == "canceled"
+    assert canceled.artifacts["raw"].endswith('/files/transcript.txt')
+    assert canceled.retry_actions == ["summarization"]
+    assert "html" not in canceled.artifacts and "transcript_html" not in canceled.artifacts
+    queue.close()

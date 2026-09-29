@@ -465,6 +465,19 @@ class BatchQueueManager:
                     job.status, job.stage = "canceled", "canceled"
                     job.message = "任务已取消，实际计算已停止；已完成内容保留。"
                     job.cancel_requested = True
+                    if not job.run_key:
+                        try:
+                            linked = read_run_link(self._outputs_root, job.job_id)
+                        except QueueStorageError as binding_error:
+                            self._halt_storage(binding_error)
+                            return
+                        if linked is not None:
+                            job.run_key = linked["run_key"]
+                    if job.run_key:
+                        run_dir = self._safe_run_dir(job.run_key)
+                        raw_paths, _ = _retry_failure_artifacts(run_dir, None)
+                        job.artifacts.update(_artifact_links(job.run_key, raw_paths))
+                        job.retry_actions = ["summarization"] if (run_dir / "transcript.json").is_file() else ["pipeline"]
                     self._finalize_canceled_metrics(job)
                 else:
                     job.status = "failed"
@@ -599,6 +612,8 @@ class BatchQueueManager:
             if data.get("schema_version", 1) == 1 and job.status == "queued":
                 job.output_profile = OUTPUT_PROFILE
                 job.warnings.append("升级后按逐字稿规则执行：保留原请求参数，不再生成解读主报告。")
+            elif data.get("schema_version", 1) == 1 and "output_profile" not in raw:
+                job.output_profile = "legacy_report"
             if job.status in {"running", "canceling", "interrupted"} and not job.run_key:
                 linked = read_run_link(self._outputs_root, job.job_id)
                 if linked is not None:
