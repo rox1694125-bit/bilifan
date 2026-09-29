@@ -15,7 +15,7 @@ from typing import Any
 from .transcript_quality import check_transcript_quality
 from .transcription_routing import COMMAND_RE
 
-QUALITY_RULE_VERSION = "transcript-quality-v2.1"
+QUALITY_RULE_VERSION = "transcript-quality-v2.2"
 QUALITY_LABELS = {
     "clean": "自动检查未发现明显异常",
     "needs_review": "需复查",
@@ -45,8 +45,14 @@ _UNIT_ALIASES = {
     "米": "m", "厘米": "cm", "毫米": "mm", "千米": "km", "公斤": "kg", "千克": "kg",
     "克": "g", "毫克": "mg", "％": "%", "℃": "celsius", "°c": "celsius",
 }
+# Only number/unit spellings are folded for quantity comparison. This is not a
+# general Traditional-to-Simplified text conversion and never rewrites sources.
+_QUANTITY_SPELLING_FOLD = str.maketrans({
+    "兩": "两", "萬": "万", "億": "亿", "個": "个", "鐘": "钟",
+    "時": "时", "噸": "吨", "幣": "币", "釐": "厘",
+})
 _CHINESE_QUANTITY_RE = re.compile(
-    r"([零〇一二两三四五六七八九十百千万亿]+)(?=(?:人民币|美元|万元|亿元|毫秒|分钟|小时|千米|厘米|毫米|公斤|千克|毫克|元|秒|分|米|克|吨|年|月|天|日|次|个|倍|度))"
+    r"([零〇一二两三四五六七八九十百千万亿]+)(?=\s*(?:人民币|美元|万元|亿元|毫秒|分钟|小时|千米|厘米|毫米|公斤|千克|毫克|元|秒|分|米|克|吨|年|月|天|日|次|个|倍|度))"
 )
 _FILLERS_RE = re.compile(r"嗯+|呃+|额+|那个|这个嘛|就是说|就是|其实|然后然后|\b(?:um+|uh+|you know)\b", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"[\u4e00-\u9fff]|[A-Za-z0-9_]+")
@@ -245,7 +251,7 @@ def _units(text: str) -> set[tuple[str, str]]:
 
 
 def _number_forms(text: str) -> str:
-    text = unicodedata.normalize("NFKC", text)
+    text = unicodedata.normalize("NFKC", text).translate(_QUANTITY_SPELLING_FOLD)
     return _CHINESE_QUANTITY_RE.sub(lambda m: str(_chinese_integer(m[1])), text)
 
 

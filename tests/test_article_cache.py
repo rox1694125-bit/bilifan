@@ -85,7 +85,7 @@ def test_cache_payload_is_revalidated_before_reuse(tmp_path):
     assert calls == [damaged]
 
 
-@pytest.mark.parametrize("change", ["model", "prompt", "rules", "transcript"])
+@pytest.mark.parametrize("change", ["model", "prompt", "rules", "quality_rules", "transcript"])
 def test_changed_generation_inputs_invalidate_checkpoints(tmp_path, monkeypatch, change):
     cache = cache_directory(tmp_path / "runs" / "stable")
     calls = []
@@ -99,6 +99,8 @@ def test_changed_generation_inputs_invalidate_checkpoints(tmp_path, monkeypatch,
         monkeypatch.setattr(article_module, "build_article_prompt", lambda **kw: "规则变更\n" + original(**kw))
     elif change == "rules":
         monkeypatch.setattr(article_module, "ARTICLE_NORMALIZATION_VERSION", "test-new-version")
+    elif change == "quality_rules":
+        monkeypatch.setattr(article_module, "QUALITY_RULE_VERSION", "test-quality-new-version")
     else:
         chunks["chunks"][0]["text"] += "追加一个新的来源说明。"
         chunks["chunks"][0]["segments"][0]["text"] = chunks["chunks"][0]["text"]

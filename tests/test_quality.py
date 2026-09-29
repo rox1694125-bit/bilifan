@@ -173,3 +173,48 @@ def test_malformed_historical_paragraphs_are_not_clean():
     article["sections"][0]["paragraphs"] = None
     quality = build_quality(_transcript(), article)
     assert quality["status"] != "clean"
+
+
+@pytest.mark.parametrize("original, edited", [
+    ("三個文件", "三个文件"),
+    ("第一個文件和第二個文件", "第一个文件和第二个文件"),
+    ("兩個文件", "两个文件"),
+    ("三 個文件", "三个文件"),
+    ("三十分鐘", "三十分钟"),
+    ("兩小時", "两小时"),
+    ("三噸材料", "三吨材料"),
+    ("兩萬元人民幣", "两万元人民币"),
+    ("三億元", "三亿元"),
+    ("兩億個記錄", "两亿个記錄"),
+    ("三釐米", "三厘米"),
+    ("30分鐘", "30分钟"),
+])
+def test_traditional_quantity_spelling_does_not_change_numeric_meaning(original, edited):
+    template = "请核对{value}，保留原始记录并检查来源，完成以后再继续后续操作。"
+    raw = template.format(value=original)
+    cleaned = template.format(value=edited)
+    quality = build_quality(_transcript(raw), _article(cleaned))
+    assert quality["status"] == "clean", quality["reasons"]
+
+
+@pytest.mark.parametrize("original, edited, code", [
+    ("三個文件", "五个文件", "article_numbers_changed"),
+    ("三十分鐘", "三十小时", "article_units_changed"),
+    ("三噸材料", "三克材料", "article_units_changed"),
+    ("三億元", "三万元", "article_numbers_changed"),
+    ("5.4個單位", "5.2个單位", "article_numbers_changed"),
+])
+def test_traditional_normalization_preserves_real_quantity_change_warnings(original, edited, code):
+    template = "请核对{value}，保留原始记录并检查来源，完成以后再继续后续操作。"
+    quality = build_quality(_transcript(template.format(value=original)), _article(template.format(value=edited)))
+    assert quality["status"] == "needs_review"
+    assert code in {r["code"] for r in quality["reasons"]}
+
+
+def test_script_spelling_does_not_hide_decimal_change_in_same_section():
+    raw = "先核对三個文件：第一個和第二個需要保留，参考值是5.4。最后保存原始记录并检查来源。"
+    clean = "先核对三个文件：第一个和第二个需要保留，参考值是5.2。最后保存原始记录并检查来源。"
+    quality = build_quality(_transcript(raw), _article(clean))
+    codes = {r["code"] for r in quality["reasons"]}
+    assert "article_numbers_changed" in codes
+    assert "article_units_changed" not in codes
